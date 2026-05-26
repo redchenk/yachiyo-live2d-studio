@@ -120,6 +120,181 @@ export const roomLive2DManifest = {
       max: 10
     },
     {
+      id: 'PositionZ',
+      label: 'Body depth input',
+      prompt: 'physics input for leaning closer or pulling back from the viewer',
+      min: -30,
+      max: 30
+    },
+    {
+      id: 'ParamPosition_Z',
+      label: 'Body depth output',
+      prompt: 'visible model depth response from forward-back movement',
+      min: -30,
+      max: 30
+    },
+    {
+      id: 'ParamBodyInput_BodyX',
+      label: 'Body physics X input',
+      prompt: 'physics input for broad left-right torso travel',
+      min: -30,
+      max: 30
+    },
+    {
+      id: 'ParamBodyInput_BodyY',
+      label: 'Body physics Y input',
+      prompt: 'physics input for broad forward-back torso travel',
+      min: -30,
+      max: 30
+    },
+    {
+      id: 'ParamBodyInput_BodyZ',
+      label: 'Body physics Z input',
+      prompt: 'physics input for broad torso roll and sway',
+      min: -30,
+      max: 30
+    },
+    {
+      id: 'ParamBodyInput_ChestZ',
+      label: 'Chest physics input',
+      prompt: 'physics input for chest counter-rotation during body movement',
+      min: -30,
+      max: 30
+    },
+    {
+      id: 'ParamBodyInput_HipZ',
+      label: 'Hip physics input',
+      prompt: 'physics input for hip counter-rotation during body movement',
+      min: -30,
+      max: 30
+    },
+    {
+      id: 'ParamOutput_BodyX',
+      label: 'Body physics X output',
+      prompt: 'physics output that drives model-specific side body deformation',
+      min: -30,
+      max: 30
+    },
+    {
+      id: 'ParamOutput_BodyY',
+      label: 'Body physics Y output',
+      prompt: 'physics output that drives model-specific forward-back body deformation',
+      min: -30,
+      max: 30
+    },
+    {
+      id: 'ParamOutput_BodyZ',
+      label: 'Body physics Z output',
+      prompt: 'physics output that drives model-specific torso roll deformation',
+      min: -30,
+      max: 30
+    },
+    {
+      id: 'ParamOutput_ChestZ',
+      label: 'Chest physics output',
+      prompt: 'physics output for chest sway and counter-rotation',
+      min: -30,
+      max: 30
+    },
+    {
+      id: 'ParamOutput_HipZ',
+      label: 'Hip physics output',
+      prompt: 'physics output for hip sway and counter-rotation',
+      min: -30,
+      max: 30
+    },
+    {
+      id: 'ParamAngle_BodyX',
+      label: 'Yachiyo body X',
+      prompt: 'model-specific torso side angle; stronger than generic body lean',
+      min: -30,
+      max: 30
+    },
+    {
+      id: 'ParamAngle_BodyX2',
+      label: 'Yachiyo body X secondary',
+      prompt: 'secondary side body deformation for more visible torso motion',
+      min: -30,
+      max: 30
+    },
+    {
+      id: 'ParamAngle_BodyX3',
+      label: 'Yachiyo body X tertiary',
+      prompt: 'additional side body deformation for lively body follow-through',
+      min: -30,
+      max: 30
+    },
+    {
+      id: 'ParamAngle_BodyY',
+      label: 'Yachiyo body Y',
+      prompt: 'model-specific forward-back body angle',
+      min: -30,
+      max: 30
+    },
+    {
+      id: 'ParamAngle_BodyY2',
+      label: 'Yachiyo body Y secondary',
+      prompt: 'secondary forward-back body deformation for nods and bounce',
+      min: -30,
+      max: 30
+    },
+    {
+      id: 'ParamAngle_BodyZ',
+      label: 'Yachiyo body Z',
+      prompt: 'model-specific torso roll and side sway',
+      min: -30,
+      max: 30
+    },
+    {
+      id: 'ParamAngle_BodyZ2',
+      label: 'Yachiyo body Z secondary',
+      prompt: 'secondary torso roll for stronger body sway',
+      min: -30,
+      max: 30
+    },
+    {
+      id: 'ParamAngle_ChestZ',
+      label: 'Chest Z',
+      prompt: 'chest roll for split upper-body motion',
+      min: -30,
+      max: 30
+    },
+    {
+      id: 'ParamAngle_HipZ',
+      label: 'Hip Z',
+      prompt: 'hip roll for lower-body counter-motion',
+      min: -30,
+      max: 30
+    },
+    {
+      id: 'ParamAngle_ShoulderL',
+      label: 'Left shoulder',
+      prompt: 'left shoulder lift or drop for asymmetrical body acting',
+      min: -30,
+      max: 30
+    },
+    {
+      id: 'ParamAngle_ShoulderR',
+      label: 'Right shoulder',
+      prompt: 'right shoulder lift or drop for asymmetrical body acting',
+      min: -30,
+      max: 30
+    },
+    {
+      id: 'ParamAngle_HipUp',
+      label: 'Hip up',
+      prompt: 'hip lift accent for bounce, nod, and lively emphasis',
+      min: -30,
+      max: 30
+    },
+    {
+      id: 'ParamAngle_HipDown',
+      label: 'Hip down',
+      prompt: 'hip drop accent for bounce recovery and body weight shifts',
+      min: -30,
+      max: 30
+    },
+    {
       id: 'ParamEyeBallX',
       label: 'Gaze X',
       prompt: 'look left-right without moving the whole head too much',
@@ -206,6 +381,6 @@ export function live2DPromptCatalog(manifest = roomLive2DManifest) {
     motions,
     'Available fine parameter ids:',
     parameters,
-    'Control rules: only use listed ids. Use bodyPose for posture/body movement. Pair visible bodyPose choices with precise ParamAngle and ParamBodyAngle targets. Use parameters for gaze, head, torso, brow, mouth-shape, cheek, and breathing changes. Use bodyPose none when no body movement is needed.'
+    'Control rules: only use listed ids. Use bodyPose for posture/body movement. Pair visible bodyPose choices with precise head, torso, chest, hip, shoulder, and body-physics targets. For visible Yachiyo body movement, prefer the model-specific chain ParamBodyInput_BodyX, ParamBodyInput_BodyY, ParamBodyInput_BodyZ, ParamOutput_BodyX, ParamOutput_BodyY, ParamOutput_BodyZ, ParamAngle_BodyX, ParamAngle_BodyY, ParamAngle_BodyZ, ParamAngle_ChestZ, ParamAngle_HipZ, PositionZ, and ParamPosition_Z instead of relying only on generic ParamBodyAngleX/Y/Z. Use parameters for gaze, head, torso, brow, mouth-shape, cheek, and breathing changes. Use bodyPose none when no body movement is needed.'
   ].join('\n');
 }

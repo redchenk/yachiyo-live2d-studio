@@ -289,7 +289,7 @@ function normalizeExpressionMix(value, fallbackExpression, manifest) {
 }
 
 function bodyPoseScale(intensity) {
-  return 0.45 + clamp01(intensity, 0.65) * 0.7;
+  return 0.7 + clamp01(intensity, 0.72) * 1.05;
 }
 
 function poseParameter(id, value, weight, durationMs, delayMs = 0) {
@@ -304,56 +304,113 @@ function poseParameter(id, value, weight, durationMs, delayMs = 0) {
 
 function bodyPoseParameterTargets(bodyPose, intensity, durationMs, manifest) {
   const scale = bodyPoseScale(intensity);
-  const baseDuration = Math.min(Math.max(Math.round(durationMs * 0.72), 650), 2600);
-  const longDuration = Math.min(Math.max(Math.round(durationMs * 0.95), 900), 4200);
-  const subtleBreath = Math.min(1, 0.34 + scale * 0.22);
+  const baseDuration = Math.min(Math.max(Math.round(durationMs * 0.78), 750), 3200);
+  const longDuration = Math.min(Math.max(Math.round(durationMs * 1.02), 1100), 5200);
+  const subtleBreath = Math.min(1, 0.42 + scale * 0.22);
   const rawTargets = {
     nod: [
-      poseParameter('ParamAngleY', 6 * scale, 0.82, baseDuration),
-      poseParameter('ParamBodyAngleY', 2 * scale, 0.72, longDuration),
-      poseParameter('ParamBreath', subtleBreath, 0.36, longDuration)
+      poseParameter('ParamAngleY', 8 * scale, 0.84, baseDuration),
+      poseParameter('ParamBodyAngleY', 3.8 * scale, 0.8, longDuration),
+      poseParameter('ParamBodyInput_BodyY', 8.5 * scale, 0.88, longDuration),
+      poseParameter('ParamOutput_BodyY', 6.8 * scale, 0.82, longDuration),
+      poseParameter('ParamAngle_BodyY', 5.8 * scale, 0.82, longDuration),
+      poseParameter('ParamAngle_BodyY2', 4.2 * scale, 0.68, longDuration),
+      poseParameter('ParamAngle_HipUp', 3.6 * scale, 0.58, baseDuration),
+      poseParameter('ParamBreath', subtleBreath, 0.44, longDuration)
     ],
     shake_head: [
-      poseParameter('ParamAngleX', -7 * scale, 0.78, baseDuration),
-      poseParameter('ParamBodyAngleX', -1.8 * scale, 0.62, longDuration),
-      poseParameter('ParamAngleZ', 2 * scale, 0.46, baseDuration)
+      poseParameter('ParamAngleX', -9.5 * scale, 0.82, baseDuration),
+      poseParameter('ParamAngleZ', 2.8 * scale, 0.5, baseDuration),
+      poseParameter('ParamBodyAngleX', -3.2 * scale, 0.72, longDuration),
+      poseParameter('ParamBodyInput_BodyX', -8.5 * scale, 0.88, longDuration),
+      poseParameter('ParamOutput_BodyX', -6.8 * scale, 0.82, longDuration),
+      poseParameter('ParamAngle_BodyX', -6.2 * scale, 0.82, longDuration),
+      poseParameter('ParamAngle_BodyX2', -4.6 * scale, 0.68, longDuration),
+      poseParameter('ParamAngle_BodyX3', -3.4 * scale, 0.56, longDuration),
+      poseParameter('ParamEyeBallX', -0.26 * scale, 0.48, baseDuration)
     ],
     lean_in: [
-      poseParameter('ParamBodyAngleY', -3.4 * scale, 0.8, longDuration),
-      poseParameter('ParamAngleY', -2.6 * scale, 0.58, baseDuration),
-      poseParameter('ParamEyeBallY', -0.16 * scale, 0.52, baseDuration),
-      poseParameter('ParamBrowLY', 0.1 * scale, 0.36, baseDuration),
-      poseParameter('ParamBrowRY', 0.1 * scale, 0.36, baseDuration)
+      poseParameter('ParamAngleY', -4.2 * scale, 0.62, baseDuration),
+      poseParameter('ParamBodyAngleY', -5.2 * scale, 0.84, longDuration),
+      poseParameter('PositionZ', -7.5 * scale, 0.86, longDuration),
+      poseParameter('ParamPosition_Z', -5.6 * scale, 0.78, longDuration),
+      poseParameter('ParamBodyInput_BodyY', -9.2 * scale, 0.9, longDuration),
+      poseParameter('ParamOutput_BodyY', -7.2 * scale, 0.84, longDuration),
+      poseParameter('ParamAngle_BodyY', -6.2 * scale, 0.82, longDuration),
+      poseParameter('ParamAngle_BodyY2', -4.6 * scale, 0.68, longDuration),
+      poseParameter('ParamEyeBallY', -0.2 * scale, 0.54, baseDuration),
+      poseParameter('ParamBrowLY', 0.12 * scale, 0.36, baseDuration),
+      poseParameter('ParamBrowRY', 0.12 * scale, 0.36, baseDuration)
     ],
     lean_left: [
-      poseParameter('ParamBodyAngleX', -3.5 * scale, 0.78, longDuration),
-      poseParameter('ParamBodyAngleZ', -2.2 * scale, 0.64, longDuration),
-      poseParameter('ParamAngleZ', -3.8 * scale, 0.58, baseDuration),
-      poseParameter('ParamEyeBallX', -0.2 * scale, 0.48, baseDuration)
+      poseParameter('ParamAngleZ', -5.4 * scale, 0.62, baseDuration),
+      poseParameter('ParamBodyInput_BodyX', -9.5 * scale, 0.9, longDuration),
+      poseParameter('ParamOutput_BodyX', -7.5 * scale, 0.84, longDuration),
+      poseParameter('ParamAngle_BodyX', -6.8 * scale, 0.86, longDuration),
+      poseParameter('ParamAngle_BodyX2', -5.2 * scale, 0.72, longDuration),
+      poseParameter('ParamBodyInput_BodyZ', -6.8 * scale, 0.84, longDuration),
+      poseParameter('ParamOutput_BodyZ', -5.3 * scale, 0.76, longDuration),
+      poseParameter('ParamBodyInput_ChestZ', -6.2 * scale, 0.82, longDuration),
+      poseParameter('ParamBodyInput_HipZ', 5.4 * scale, 0.76, longDuration),
+      poseParameter('ParamAngle_ChestZ', -5.6 * scale, 0.76, longDuration),
+      poseParameter('ParamAngle_HipZ', 4.8 * scale, 0.7, longDuration),
+      poseParameter('ParamAngle_ShoulderL', -3.4 * scale, 0.48, baseDuration)
     ],
     lean_right: [
-      poseParameter('ParamBodyAngleX', 3.5 * scale, 0.78, longDuration),
-      poseParameter('ParamBodyAngleZ', 2.2 * scale, 0.64, longDuration),
-      poseParameter('ParamAngleZ', 3.8 * scale, 0.58, baseDuration),
-      poseParameter('ParamEyeBallX', 0.2 * scale, 0.48, baseDuration)
+      poseParameter('ParamAngleZ', 5.4 * scale, 0.62, baseDuration),
+      poseParameter('ParamBodyInput_BodyX', 9.5 * scale, 0.9, longDuration),
+      poseParameter('ParamOutput_BodyX', 7.5 * scale, 0.84, longDuration),
+      poseParameter('ParamAngle_BodyX', 6.8 * scale, 0.86, longDuration),
+      poseParameter('ParamAngle_BodyX2', 5.2 * scale, 0.72, longDuration),
+      poseParameter('ParamBodyInput_BodyZ', 6.8 * scale, 0.84, longDuration),
+      poseParameter('ParamOutput_BodyZ', 5.3 * scale, 0.76, longDuration),
+      poseParameter('ParamBodyInput_ChestZ', 6.2 * scale, 0.82, longDuration),
+      poseParameter('ParamBodyInput_HipZ', -5.4 * scale, 0.76, longDuration),
+      poseParameter('ParamAngle_ChestZ', 5.6 * scale, 0.76, longDuration),
+      poseParameter('ParamAngle_HipZ', -4.8 * scale, 0.7, longDuration),
+      poseParameter('ParamAngle_ShoulderR', -3.4 * scale, 0.48, baseDuration)
     ],
     sway: [
-      poseParameter('ParamBodyAngleX', 2.7 * scale, 0.56, longDuration),
-      poseParameter('ParamBodyAngleZ', 1.8 * scale, 0.52, longDuration),
-      poseParameter('ParamAngleZ', 1.7 * scale, 0.42, baseDuration),
-      poseParameter('ParamBreath', subtleBreath, 0.38, longDuration)
+      poseParameter('ParamBodyInput_BodyX', 5.8 * scale, 0.68, longDuration),
+      poseParameter('ParamOutput_BodyX', 4.8 * scale, 0.64, longDuration),
+      poseParameter('ParamAngle_BodyX', 4.4 * scale, 0.62, longDuration),
+      poseParameter('ParamAngle_BodyX2', 3.4 * scale, 0.5, longDuration),
+      poseParameter('ParamBodyInput_BodyZ', 4.5 * scale, 0.66, longDuration),
+      poseParameter('ParamOutput_BodyZ', 3.8 * scale, 0.58, longDuration),
+      poseParameter('ParamAngle_BodyZ', 3.5 * scale, 0.56, longDuration),
+      poseParameter('ParamAngle_ChestZ', 3.2 * scale, 0.5, longDuration),
+      poseParameter('ParamAngle_HipZ', -2.8 * scale, 0.46, longDuration),
+      poseParameter('ParamAngle_ShoulderL', 2 * scale, 0.36, baseDuration),
+      poseParameter('ParamAngle_ShoulderR', -1.8 * scale, 0.36, baseDuration),
+      poseParameter('ParamBreath', subtleBreath, 0.44, longDuration)
     ],
     bounce: [
-      poseParameter('ParamBodyAngleY', 2.9 * scale, 0.76, baseDuration),
-      poseParameter('ParamAngleY', 2.2 * scale, 0.54, baseDuration),
-      poseParameter('ParamMouthForm', 0.18 * scale, 0.38, baseDuration),
-      poseParameter('ParamBreath', Math.min(1, 0.44 + scale * 0.2), 0.4, longDuration)
+      poseParameter('ParamAngleY', 3.8 * scale, 0.56, baseDuration),
+      poseParameter('ParamBodyAngleY', 5.4 * scale, 0.82, baseDuration),
+      poseParameter('PositionZ', 5.5 * scale, 0.74, baseDuration),
+      poseParameter('ParamPosition_Z', 4.6 * scale, 0.66, baseDuration),
+      poseParameter('ParamBodyInput_BodyY', 9.5 * scale, 0.86, baseDuration),
+      poseParameter('ParamOutput_BodyY', 7.6 * scale, 0.8, baseDuration),
+      poseParameter('ParamAngle_BodyY', 6.8 * scale, 0.78, baseDuration),
+      poseParameter('ParamAngle_BodyY2', 5 * scale, 0.64, baseDuration),
+      poseParameter('ParamAngle_HipUp', 5.5 * scale, 0.62, baseDuration),
+      poseParameter('ParamAngle_HipDown', -3.8 * scale, 0.48, baseDuration),
+      poseParameter('ParamMouthForm', 0.22 * scale, 0.38, baseDuration),
+      poseParameter('ParamBreath', Math.min(1, 0.5 + scale * 0.22), 0.44, longDuration)
     ],
     emphasis: [
-      poseParameter('ParamBodyAngleY', -2.1 * scale, 0.7, baseDuration),
-      poseParameter('ParamBodyAngleZ', -1.8 * scale, 0.54, baseDuration),
-      poseParameter('ParamAngleZ', -3.2 * scale, 0.58, baseDuration),
-      poseParameter('ParamMouthForm', 0.2 * scale, 0.42, baseDuration)
+      poseParameter('ParamAngleZ', -6 * scale, 0.68, baseDuration),
+      poseParameter('ParamBodyAngleY', -4 * scale, 0.72, baseDuration),
+      poseParameter('ParamBodyInput_BodyY', -6 * scale, 0.78, baseDuration),
+      poseParameter('ParamOutput_BodyY', -5 * scale, 0.7, baseDuration),
+      poseParameter('ParamBodyInput_BodyZ', -8 * scale, 0.84, baseDuration),
+      poseParameter('ParamOutput_BodyZ', -6.5 * scale, 0.78, baseDuration),
+      poseParameter('ParamAngle_BodyZ', -6 * scale, 0.78, baseDuration),
+      poseParameter('ParamAngle_BodyZ2', -4.8 * scale, 0.62, baseDuration),
+      poseParameter('ParamAngle_ChestZ', -6.4 * scale, 0.76, baseDuration),
+      poseParameter('ParamAngle_HipZ', 5.4 * scale, 0.7, baseDuration),
+      poseParameter('ParamAngle_ShoulderL', -3.4 * scale, 0.48, baseDuration),
+      poseParameter('ParamAngle_ShoulderR', 3.1 * scale, 0.48, baseDuration)
     ]
   }[bodyPose] || [];
 

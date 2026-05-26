@@ -163,7 +163,7 @@ function runExpression(expression) {
 function runBodyPose(bodyPose) {
   dispatchRoomLive2D({
     bodyPose,
-    intensity: 0.85,
+    intensity: 1,
     durationMs: 2600
   });
 }
@@ -279,7 +279,8 @@ function buildLiveDirectorPrompt(audienceLines) {
     'Do not wait passively for instructions. React, tease gently, ask a tiny hook, or continue the topic.',
     'Choose a visible bodyPose or precise parameter set every turn unless the moment is intentionally calm.',
     'Prefer nod, lean_in, sway, bounce, shake_head, or emphasis. Use expression and expressionMix too.',
-    'Use parameters for gaze, head tilt, brow shape, mouth form, cheek, and breathing nuance.',
+    'For visible body acting, include Yachiyo body-chain parameters such as ParamOutput_BodyX, ParamOutput_BodyY, ParamOutput_BodyZ, ParamAngle_BodyX, ParamAngle_BodyY, ParamAngle_BodyZ, ParamAngle_ChestZ, ParamAngle_HipZ, PositionZ, or ParamPosition_Z.',
+    'Use parameters for gaze, head tilt, torso, chest/hip split, shoulder accents, brow shape, mouth form, cheek, and breathing nuance.',
     'Return the required JSON object only.'
   ].join('\n');
 }
