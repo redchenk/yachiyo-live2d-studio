@@ -137,6 +137,109 @@ const emotionAliases = {
   default: 'neutral'
 };
 
+Object.assign(expressionAliases, {
+  开心: 'smile',
+  高兴: 'smile',
+  愉快: 'smile',
+  微笑: 'smile',
+  笑: 'smile',
+  害羞: 'bsmile',
+  脸红: 'bsmile',
+  臉紅: 'bsmile',
+  调皮: 'bsmile',
+  調皮: 'bsmile',
+  生气: 'bsmile',
+  生氣: 'bsmile',
+  难过: 'namida',
+  難過: 'namida',
+  悲伤: 'namida',
+  悲傷: 'namida',
+  伤心: 'namida',
+  傷心: 'namida',
+  眼泪: 'namida',
+  眼淚: 'namida',
+  哭: 'tears',
+  哭泣: 'tears',
+  流泪: 'tears',
+  流淚: 'tears',
+  大哭: 'tears'
+});
+
+Object.assign(motionAliases, {
+  点头: 'tap_body',
+  點頭: 'tap_body',
+  靠近: 'tap_body',
+  前倾: 'tap_body',
+  前傾: 'tap_body',
+  强调: 'tap_body',
+  強調: 'tap_body'
+});
+
+Object.assign(bodyPoseAliases, {
+  点头: 'nod',
+  點頭: 'nod',
+  颔首: 'nod',
+  頷首: 'nod',
+  摇头: 'shake_head',
+  搖頭: 'shake_head',
+  摆头: 'shake_head',
+  擺頭: 'shake_head',
+  靠近: 'lean_in',
+  凑近: 'lean_in',
+  湊近: 'lean_in',
+  贴近: 'lean_in',
+  貼近: 'lean_in',
+  前倾: 'lean_in',
+  前傾: 'lean_in',
+  左倾: 'lean_left',
+  左傾: 'lean_left',
+  向左: 'lean_left',
+  右倾: 'lean_right',
+  右傾: 'lean_right',
+  向右: 'lean_right',
+  摇摆: 'sway',
+  搖擺: 'sway',
+  晃动: 'sway',
+  晃動: 'sway',
+  轻晃: 'sway',
+  輕晃: 'sway',
+  蹦: 'bounce',
+  跳: 'bounce',
+  弹跳: 'bounce',
+  彈跳: 'bounce',
+  强调: 'emphasis',
+  強調: 'emphasis',
+  重音: 'emphasis',
+  拍: 'emphasis'
+});
+
+Object.assign(emotionAliases, {
+  开心: 'smile',
+  高兴: 'smile',
+  愉快: 'smile',
+  微笑: 'smile',
+  害羞: 'bsmile',
+  脸红: 'bsmile',
+  臉紅: 'bsmile',
+  调皮: 'bsmile',
+  調皮: 'bsmile',
+  生气: 'bsmile',
+  生氣: 'bsmile',
+  难过: 'namida',
+  難過: 'namida',
+  悲伤: 'namida',
+  悲傷: 'namida',
+  伤心: 'namida',
+  傷心: 'namida',
+  眼泪: 'namida',
+  眼淚: 'namida',
+  哭: 'tears',
+  哭泣: 'tears',
+  流泪: 'tears',
+  流淚: 'tears',
+  大哭: 'tears'
+});
+
 function manifestIds(items) {
   return new Set(items.map((item) => item.id));
 }
@@ -417,6 +520,100 @@ function bodyPoseParameterTargets(bodyPose, intensity, durationMs, manifest) {
   return normalizeLive2DParameterTargets(rawTargets, manifest);
 }
 
+const bodyPoseWindupFactors = {
+  nod: -0.34,
+  shake_head: -0.55,
+  lean_in: -0.3,
+  lean_left: -0.34,
+  lean_right: -0.34,
+  sway: -0.56,
+  bounce: -0.42,
+  emphasis: -0.28
+};
+
+const bodyPosePeakFactors = {
+  nod: 1.18,
+  shake_head: 1.22,
+  lean_in: 1.2,
+  lean_left: 1.18,
+  lean_right: 1.18,
+  sway: 1.16,
+  bounce: 1.22,
+  emphasis: 1.24
+};
+
+function neutralParameterValue(id) {
+  if (id === 'ParamBreath') return 0.38;
+  if (id === 'ParamEyeLOpen' || id === 'ParamEyeROpen') return 1;
+  return 0;
+}
+
+function transformPoseValue(target, factor) {
+  const id = String(target?.id || '');
+  const value = Number(target?.value);
+  if (!Number.isFinite(value)) return neutralParameterValue(id);
+  if (id === 'ParamBreath') {
+    if (factor <= 0) return 0.34;
+    return Math.min(1, Math.max(0.42, value * Math.min(factor, 1.15)));
+  }
+  if (id === 'ParamCheek') return factor > 0 ? value * Math.min(factor, 1.1) : 0;
+  if (id === 'ParamEyeLOpen' || id === 'ParamEyeROpen') return factor > 0 ? value : 1;
+  if (factor === 0) return neutralParameterValue(id);
+  return value * factor;
+}
+
+function transformPoseTargets(targets, factor, durationMs, manifest, weightScale = 1) {
+  return normalizeLive2DParameterTargets(
+    (Array.isArray(targets) ? targets : []).map((target) => ({
+      ...target,
+      value: transformPoseValue(target, factor),
+      weight: clamp01((Number(target?.weight) || 0.72) * weightScale, 0.72),
+      durationMs,
+      delayMs: 0
+    })),
+    manifest
+  );
+}
+
+function bodyPosePerformanceSequence(baseStep, manifest) {
+  if (!baseStep?.bodyPose) return baseStep ? [baseStep] : [];
+  const intensity = Math.min(1, Math.max(Number(baseStep.intensity) || 0, 0.82));
+  const totalDuration = normalizeDuration(baseStep.durationMs);
+  const poseTargets = bodyPoseParameterTargets(baseStep.bodyPose, intensity, totalDuration, manifest);
+  if (!poseTargets.length) return [baseStep];
+
+  const windupDuration = Math.min(Math.max(Math.round(totalDuration * 0.16), 280), 640);
+  const peakDuration = Math.min(Math.max(Math.round(totalDuration * 0.58), 1050), 2800);
+  const settleDuration = Math.min(Math.max(Math.round(totalDuration * 0.22), 500), 1400);
+  const windupFactor = bodyPoseWindupFactors[baseStep.bodyPose] ?? -0.32;
+  const peakFactor = bodyPosePeakFactors[baseStep.bodyPose] ?? 1.16;
+
+  const windup = normalizeLive2DStep({
+    emotion: baseStep.emotion,
+    expression: baseStep.expression,
+    expressionMix: baseStep.expressionMix,
+    parameters: transformPoseTargets(poseTargets, windupFactor, windupDuration, manifest, 0.78),
+    intensity,
+    durationMs: windupDuration,
+    delayMs: baseStep.delayMs
+  }, manifest);
+  const peak = normalizeLive2DStep({
+    ...baseStep,
+    parameters: transformPoseTargets(baseStep.parameters, peakFactor, peakDuration, manifest, 1.08),
+    intensity,
+    durationMs: peakDuration,
+    delayMs: 0
+  }, manifest);
+  const settle = normalizeLive2DStep({
+    parameters: transformPoseTargets(poseTargets, 0, settleDuration, manifest, 0.62),
+    intensity: 0.5,
+    durationMs: settleDuration,
+    delayMs: 0
+  }, manifest);
+
+  return [windup, peak, settle].filter(Boolean);
+}
+
 function mergeParameterTargets(explicitTargets, fallbackTargets) {
   const merged = [...explicitTargets];
   const seen = new Set(merged.map((item) => String(item.id || '').toLowerCase()));
@@ -471,7 +668,9 @@ export function normalizeLive2DIntent(input, manifest = roomLive2DManifest) {
   if (!input || typeof input !== 'object') return null;
   const sequence = normalizeSequence(input, manifest);
   const baseStep = normalizeLive2DStep(input, manifest);
-  const steps = sequence.length ? sequence : (baseStep ? [baseStep] : []);
+  const steps = sequence.length
+    ? sequence
+    : (baseStep?.bodyPose ? bodyPosePerformanceSequence(baseStep, manifest) : (baseStep ? [baseStep] : []));
   if (!steps.length) return null;
   const primary = baseStep || steps[0];
   return {
@@ -480,7 +679,39 @@ export function normalizeLive2DIntent(input, manifest = roomLive2DManifest) {
   };
 }
 
+function inferActionLive2DIntent(text, manifest) {
+  const value = String(text || '').toLowerCase();
+  const expressionMatchers = [
+    { expression: 'tears', pattern: /(大哭|哭泣|流泪|流淚|痛哭|crying|tears|泣く)/iu, emotion: 'crying' },
+    { expression: 'namida', pattern: /(难过|難過|悲伤|悲傷|伤心|傷心|寂寞|眼泪|眼淚|sad|sorrow|悲しい)/iu, emotion: 'sad' },
+    { expression: 'bsmile', pattern: /(害羞|脸红|臉紅|调皮|調皮|生气|生氣|愤怒|憤怒|shy|blush|angry|annoyed|照れ)/iu, emotion: 'shy' },
+    { expression: 'smile', pattern: /(开心|開心|高兴|高興|愉快|微笑|笑|happy|smile|joy|嬉しい|優しい)/iu, emotion: 'happy' }
+  ];
+  const bodyMatchers = [
+    { bodyPose: 'shake_head', pattern: /(摇头|搖頭|摆头|擺頭|否认|否認|拒绝|拒絕|shake(?:s|ing)?(?:\s|-|_)?head|headshake|nope|首を振)/iu, intensity: 0.9, durationMs: 2600 },
+    { bodyPose: 'nod', pattern: /(点头|點頭|颔首|頷首|同意|认可|認可|nod|nodd?ing|うなず|頷)/iu, intensity: 0.88, durationMs: 2400 },
+    { bodyPose: 'lean_left', pattern: /(左倾|左傾|向左|lean(?:s|ing)?(?:\s|-|_)?left|tilt(?:s|ing)?(?:\s|-|_)?left)/iu, intensity: 0.86, durationMs: 3200 },
+    { bodyPose: 'lean_right', pattern: /(右倾|右傾|向右|lean(?:s|ing)?(?:\s|-|_)?right|tilt(?:s|ing)?(?:\s|-|_)?right)/iu, intensity: 0.86, durationMs: 3200 },
+    { bodyPose: 'lean_in', pattern: /(靠近|凑近|湊近|贴近|貼近|前倾|前傾|lean(?:s|ing)?(?:\s|-|_)?(?:in|forward)|closer|近づ)/iu, intensity: 0.92, durationMs: 3200 },
+    { bodyPose: 'bounce', pattern: /(蹦|跳|弹跳|彈跳|雀跃|雀躍|兴奋|興奮|bounce|jump|excited|跳ね)/iu, intensity: 0.96, durationMs: 2800 },
+    { bodyPose: 'sway', pattern: /(摇摆|搖擺|晃动|晃動|轻晃|輕晃|摆动|擺動|sway|swing|ゆら)/iu, intensity: 0.82, durationMs: 3600 },
+    { bodyPose: 'emphasis', pattern: /(强调|強調|重音|拍|用力|认真|認真|emphasis|accent|punchline|hit|ドン)/iu, intensity: 0.9, durationMs: 2200 }
+  ];
+  const expressionMatch = expressionMatchers.find((item) => item.pattern.test(value));
+  const bodyMatch = bodyMatchers.find((item) => item.pattern.test(value));
+  if (!expressionMatch && !bodyMatch) return null;
+  return normalizeLive2DIntent({
+    emotion: expressionMatch?.emotion || null,
+    expression: expressionMatch?.expression || null,
+    bodyPose: bodyMatch?.bodyPose || null,
+    intensity: bodyMatch?.intensity || 0.55,
+    durationMs: bodyMatch?.durationMs || 5000
+  }, manifest);
+}
+
 export function inferLive2DIntentFromText(text, manifest = roomLive2DManifest) {
+  const structured = inferActionLive2DIntent(text, manifest);
+  if (structured) return structured;
   const value = String(text || '').toLowerCase();
   const matchers = [
     { expression: 'tears', pattern: /(大哭|哭泣|流泪|崩溃|crying|tears|泣く)/u, emotion: 'crying' },

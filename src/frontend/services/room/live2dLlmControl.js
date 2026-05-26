@@ -3,6 +3,10 @@ import {
   inferLive2DIntentFromText,
   normalizeLive2DIntent
 } from './live2dControl';
+import {
+  cleanLive2DReply,
+  extractLive2DStageDirections
+} from './live2dText';
 import { readJson, writeJson } from './roomStorage';
 
 const HISTORY_KEY = 'live2dLLMControlHistory';
@@ -45,22 +49,98 @@ function cleanReply(text) {
     .trim();
 }
 
+function cleanReplyForSpeech(text) {
+  return cleanLive2DReply(text);
+}
+
+function hasBodyPose(intent) {
+  return Boolean(intent?.bodyPose || intent?.sequence?.some((step) => step?.bodyPose));
+}
+
+function hasExpression(intent) {
+  return Boolean(
+    intent?.expression ||
+    intent?.expressionMix?.length ||
+    intent?.sequence?.some((step) => step?.expression || step?.expressionMix?.length)
+  );
+}
+
+function mergeParameterTargets(primary = [], fallback = []) {
+  const merged = Array.isArray(primary) ? [...primary] : [];
+  const seen = new Set(merged.map((item) => String(item?.id || '').toLowerCase()).filter(Boolean));
+  for (const target of Array.isArray(fallback) ? fallback : []) {
+    const key = String(target?.id || '').toLowerCase();
+    if (!key || seen.has(key)) continue;
+    merged.push(target);
+    seen.add(key);
+  }
+  return merged;
+}
+
+function mergeInferredLive2DIntent(explicitIntent, inferredIntent) {
+  if (!explicitIntent) return inferredIntent;
+  if (!inferredIntent) return explicitIntent;
+
+  const explicitHasBody = hasBodyPose(explicitIntent);
+  const explicitHasExpression = hasExpression(explicitIntent);
+  const strongerIntensity = Math.max(Number(explicitIntent.intensity) || 0, Number(inferredIntent.intensity) || 0) || undefined;
+  const next = {
+    ...explicitIntent,
+    emotion: explicitIntent.emotion || inferredIntent.emotion,
+    expression: explicitHasExpression ? explicitIntent.expression : inferredIntent.expression,
+    expressionMix: explicitHasExpression ? explicitIntent.expressionMix : inferredIntent.expressionMix,
+    motion: explicitIntent.motion || (!explicitHasBody ? inferredIntent.motion : null),
+    bodyPose: explicitHasBody ? explicitIntent.bodyPose : inferredIntent.bodyPose,
+    intensity: strongerIntensity || explicitIntent.intensity || inferredIntent.intensity,
+    durationMs: explicitIntent.durationMs || inferredIntent.durationMs,
+    parameters: mergeParameterTargets(
+      explicitIntent.parameters,
+      explicitHasBody ? [] : inferredIntent.parameters
+    )
+  };
+
+  if (Array.isArray(explicitIntent.sequence) && explicitIntent.sequence.length) {
+    if (!explicitHasBody && explicitIntent.sequence.length === 1) {
+      delete next.sequence;
+    } else {
+      next.sequence = explicitIntent.sequence.map((step, index) => {
+        if (explicitHasBody || index > 0) return step;
+        return {
+          ...step,
+          bodyPose: step.bodyPose || inferredIntent.bodyPose,
+          motion: step.motion || inferredIntent.motion,
+          intensity: Math.max(Number(step.intensity) || 0, Number(inferredIntent.intensity) || 0) || step.intensity || inferredIntent.intensity,
+          durationMs: step.durationMs || inferredIntent.durationMs,
+          parameters: mergeParameterTargets(step.parameters, inferredIntent.parameters)
+        };
+      });
+    }
+  }
+
+  return normalizeLive2DIntent(next) || explicitIntent;
+}
+
 function parsePayload(rawText) {
   const jsonText = extractJsonObject(rawText);
   try {
     const data = JSON.parse(jsonText);
-    const reply = cleanReply(data.reply || data.text || data.message || '');
-    const live2d = normalizeLive2DIntent(data.live2d || data.act || data.pose || data);
+    const rawReply = data.reply || data.text || data.message || '';
+    const stageText = extractLive2DStageDirections(`${rawReply}\n${rawText}`);
+    const reply = cleanReplyForSpeech(rawReply);
+    const explicitLive2D = normalizeLive2DIntent(data.live2d || data.act || data.pose || data);
+    const inferredLive2D = inferLive2DIntentFromText([stageText, reply].filter(Boolean).join('\n'));
+    const live2d = mergeInferredLive2DIntent(explicitLive2D, inferredLive2D);
     return {
       reply: reply || 'OK.',
-      live2d: live2d || inferLive2DIntentFromText(reply),
+      live2d,
       raw: data
     };
   } catch (_) {
-    const reply = cleanReply(rawText) || 'OK.';
+    const stageText = extractLive2DStageDirections(rawText);
+    const reply = cleanReplyForSpeech(rawText) || 'OK.';
     return {
       reply,
-      live2d: inferLive2DIntentFromText(reply),
+      live2d: inferLive2DIntentFromText([stageText, reply].filter(Boolean).join('\n')),
       raw: rawText
     };
   }
@@ -127,6 +207,7 @@ export function live2DControlSystemPrompt() {
     'JSON schema:',
     '{"reply":"short visible reply","live2d":{"emotion":"happy|shy|sad|crying|neutral","expression":"neutral|smile|bsmile|namida|tears","expressionMix":[{"expression":"smile","weight":1}],"bodyPose":"none|nod|shake_head|lean_in|lean_left|lean_right|sway|bounce|emphasis","parameters":[{"id":"ParamOutput_BodyX","value":6,"weight":0.8,"durationMs":1200}],"intensity":0.8,"durationMs":4200,"sequence":[]}}',
     'The reply field must contain only natural dialogue. Never put stage directions, parenthesized action hints, or labels in reply.',
+    'If you need Yachiyo to nod, lean, sway, bounce, shake her head, or emphasize a line, put that only in live2d.bodyPose, live2d.parameters, or live2d.sequence.',
     'For live-stream turns, choose a visible bodyPose unless the line is intentionally quiet. Do not only change the face.',
     'Vary bodyPose across turns: nod for acknowledgement, lean_in for focus, sway for idle talk, bounce for excitement, shake_head for playful refusal, emphasis for punchlines.',
     'Use parameters for precise acting: gaze, small head motion, torso lean, body roll, chest/hip split, shoulders, brows, mouth shape, cheek, and breathing. Prefer 3-7 parameter targets per active turn.',
