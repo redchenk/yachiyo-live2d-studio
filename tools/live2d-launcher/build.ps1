@@ -18,28 +18,49 @@ $dependencyRoots = @(
     'C:\Program Files (x86)\Microsoft Office\root\Office16\ADDINS\Microsoft Power Query for Excel Integrated\bin'
 ) | Where-Object { Test-Path $_ }
 
+function Get-PeMachine {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path
+    )
+
+    $bytes = [System.IO.File]::ReadAllBytes($Path)
+    $peOffset = [BitConverter]::ToInt32($bytes, 0x3c)
+    $machine = [BitConverter]::ToUInt16($bytes, $peOffset + 4)
+    switch ($machine) {
+        0x8664 { return 'x64' }
+        0x14c { return 'x86' }
+        0xaa64 { return 'arm64' }
+        default { return ('0x{0:x}' -f $machine) }
+    }
+}
+
 function Find-DependencyFile {
     param(
-        [Parameter(Mandatory = $true)][string]$FileName
+        [Parameter(Mandatory = $true)][string]$FileName,
+        [string]$ExpectedMachine = ''
     )
 
     foreach ($root in $dependencyRoots) {
         $direct = Join-Path $root $FileName
         if (Test-Path $direct) {
-            return $direct
+            if (-not $ExpectedMachine -or (Get-PeMachine $direct) -eq $ExpectedMachine) {
+                return $direct
+            }
         }
-        $found = Get-ChildItem -Path $root -Recurse -Filter $FileName -ErrorAction SilentlyContinue | Select-Object -First 1
-        if ($found) {
-            return $found.FullName
+        foreach ($candidate in @(Get-ChildItem -Path $root -Recurse -Filter $FileName -ErrorAction SilentlyContinue)) {
+            if (-not $ExpectedMachine -or (Get-PeMachine $candidate.FullName) -eq $ExpectedMachine) {
+                return $candidate.FullName
+            }
         }
     }
 
-    throw "Missing WebView2 dependency: $FileName"
+    $machineText = if ($ExpectedMachine) { " ($ExpectedMachine)" } else { '' }
+    throw "Missing WebView2 dependency: $FileName$machineText"
 }
 
 $webViewCore = Find-DependencyFile 'Microsoft.Web.WebView2.Core.dll'
 $webViewWinForms = Find-DependencyFile 'Microsoft.Web.WebView2.WinForms.dll'
-$webViewLoader = Find-DependencyFile 'WebView2Loader.dll'
+$webViewLoader = Find-DependencyFile 'WebView2Loader.dll' 'x64'
 $icon = Join-Path $repoRoot 'favicon.ico'
 
 $arguments = @(
@@ -62,8 +83,21 @@ $arguments += $source
 
 & $csc @arguments
 
-Copy-Item -LiteralPath $webViewCore -Destination (Join-Path $repoRoot 'Microsoft.Web.WebView2.Core.dll') -Force
-Copy-Item -LiteralPath $webViewWinForms -Destination (Join-Path $repoRoot 'Microsoft.Web.WebView2.WinForms.dll') -Force
-Copy-Item -LiteralPath $webViewLoader -Destination (Join-Path $repoRoot 'WebView2Loader.dll') -Force
+function Copy-Dependency {
+    param(
+        [Parameter(Mandatory = $true)][string]$Source,
+        [Parameter(Mandatory = $true)][string]$Destination
+    )
+
+    if ([System.IO.Path]::GetFullPath($Source) -ieq [System.IO.Path]::GetFullPath($Destination)) {
+        return
+    }
+
+    Copy-Item -LiteralPath $Source -Destination $Destination -Force
+}
+
+Copy-Dependency $webViewCore (Join-Path $repoRoot 'Microsoft.Web.WebView2.Core.dll')
+Copy-Dependency $webViewWinForms (Join-Path $repoRoot 'Microsoft.Web.WebView2.WinForms.dll')
+Copy-Dependency $webViewLoader (Join-Path $repoRoot 'WebView2Loader.dll')
 
 Write-Host "Built $output"
