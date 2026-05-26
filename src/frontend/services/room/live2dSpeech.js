@@ -1,4 +1,4 @@
-import { readRoomTTSSettings } from './roomSettings';
+import { readRoomLLMSettings, readRoomTTSSettings } from './roomSettings';
 import { stripLive2DStageDirections } from './live2dText';
 
 const DEFAULT_GPT_SOVITS_GPT_WEIGHT = 'GPT_weights_v2ProPlus/yachiyo-v2pro-e15.ckpt';
@@ -36,6 +36,53 @@ function normalizeGptSovitsLang(value, fallback = 'zh') {
     : fallback;
 }
 
+function pickReply(data) {
+  if (data?.output_text) return String(data.output_text || '').trim();
+  if (Array.isArray(data?.output)) {
+    return data.output
+      .flatMap((item) => (Array.isArray(item?.content) ? item.content : []))
+      .filter((block) => block?.type === 'output_text' || block?.type === 'text')
+      .map((block) => block.text || '')
+      .join('\n')
+      .trim();
+  }
+  if (Array.isArray(data?.content)) {
+    return data.content
+      .filter((block) => block?.type === 'text')
+      .map((block) => block.text || '')
+      .join('\n')
+      .trim();
+  }
+  return data?.choices?.[0]?.message?.content || data?.choices?.[0]?.text || data?.reply || '';
+}
+
+function normalizeOpenAIUrl(apiUrl = '') {
+  const url = String(apiUrl || '').trim();
+  if (/(api\.openai\.com|api\.x\.ai)\/v1\/?$/i.test(url)) return `${url.replace(/\/$/, '')}/responses`;
+  if (/(xiaomimimo\.com|token-plan-cn\.xiaomimimo\.com)\/v1\/?$/i.test(url)) return `${url.replace(/\/$/, '')}/chat/completions`;
+  return url;
+}
+
+function isOpenAIResponsesApi(apiUrl = '') {
+  return /(api\.openai\.com|api\.x\.ai)\/v1\/responses\/?$/i.test(String(apiUrl || '').replace(/\/$/, ''));
+}
+
+function isOpenRouterApi(apiUrl = '') {
+  return /openrouter\.ai\/api\/v1\/chat\/completions\/?$/i.test(String(apiUrl || '').replace(/\/$/, ''));
+}
+
+function isKimiChatTarget(apiUrl = '', modelName = '') {
+  return /api\.moonshot\.cn|moonshot|kimi/i.test(`${apiUrl || ''} ${modelName || ''}`);
+}
+
+function openRouterHeaders(apiUrl = '') {
+  if (!isOpenRouterApi(apiUrl)) return {};
+  return {
+    'HTTP-Referer': window.location.origin,
+    'X-OpenRouter-Title': 'Yachiyo Live2D Studio'
+  };
+}
+
 function detectTextLang(text) {
   const value = String(text || '');
   if (/[\u3040-\u30ff]/u.test(value)) return 'ja';
@@ -50,6 +97,81 @@ function compactSpeechText(text) {
     .replace(/\s+/g, '')
     .replace(/[,.!?;:'"()[\]{}<>\u3001\u3002\uff0c\uff01\uff1f\uff1b\uff1a\u201c\u201d\u2018\u2019\uff08\uff09\u3010\u3011\u300a\u300b~\-]/g, '')
     .trim();
+}
+
+function cleanTtsText(text) {
+  return stripLive2DStageDirections(text)
+    .replace(/[ \t]{2,}/g, ' ')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+function japaneseTtsTranslatorPrompt() {
+  return [
+    '你是给 TTS 使用的日文翻译器。',
+    '把用户提供的文本翻译成自然、适合朗读的日文。',
+    '只输出日文正文，不要解释，不要 Markdown。',
+    '不要输出括号里的动作提示、星号动作、舞台提示、表情提示、姿势描述、语气标签或旁白。',
+    '如果原文里夹着动作、表情、姿势、语气或旁白提示，请彻底删除，只保留角色真正要说出口的话。',
+    '保留昵称、专有名词和直播语气，让台词听起来像自然的日语 VTuber 发言。'
+  ].join('\n');
+}
+
+async function translateForJapaneseTts(text) {
+  const source = cleanTtsText(text);
+  if (!source) return '';
+  const settings = readRoomLLMSettings();
+  if (!settings.apiKey || !settings.apiUrl) {
+    throw new Error('请先在 Studio Settings 里配置 LLM，用于把 GPT-SoVITS 文本翻译成日文后再播放。');
+  }
+
+  const systemPrompt = japaneseTtsTranslatorPrompt();
+  if (settings.useProxy) {
+    const response = await fetch('/api/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        message: source,
+        conversation: [],
+        apiKey: settings.apiKey,
+        apiUrl: settings.apiUrl,
+        model: settings.model,
+        systemPrompt
+      })
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok || !result.success) throw new Error(result.message || `日文翻译失败：LLM ${response.status}`);
+    return cleanTtsText(result.data?.reply || '');
+  }
+
+  const apiUrl = normalizeOpenAIUrl(settings.apiUrl);
+  const model = settings.model || 'gpt-4o-mini';
+  const response = await fetch(apiUrl, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${settings.apiKey}`,
+      ...openRouterHeaders(apiUrl)
+    },
+    body: JSON.stringify(isOpenAIResponsesApi(apiUrl)
+      ? {
+          model: settings.model || 'gpt-5.5',
+          instructions: systemPrompt,
+          input: source,
+          max_output_tokens: 240
+        }
+      : {
+          model,
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: source }
+          ],
+          temperature: isKimiChatTarget(apiUrl, model) ? 1 : 0.2,
+          max_tokens: 240
+        })
+  });
+  if (!response.ok) throw new Error(`日文翻译失败：LLM ${response.status}`);
+  return cleanTtsText(pickReply(await response.json()));
 }
 
 function pickSplitMethod(text) {
@@ -207,9 +329,16 @@ export function createLive2DSpeechPlayer({ onState } = {}) {
   async function makeAudio(text, settings) {
     const directLocalGptSovits = settings.provider === 'gpt-sovits' && !settings.useProxy;
     if (directLocalGptSovits) {
+      const ttsText = await translateForJapaneseTts(text);
+      if (!ttsText) throw new Error('日文翻译结果为空，已取消语音播放。');
       await ensureGptSovitsWeights(settings);
-      const audio = new Audio(buildGptSovitsAudioUrl(text, settings));
+      const audio = new Audio(buildGptSovitsAudioUrl(ttsText, {
+        ...settings,
+        textLang: 'ja',
+        promptLang: settings.promptLang || 'ja'
+      }));
       audio.dataset.mouthMode = 'synthetic';
+      audio.dataset.speechText = ttsText;
       return audio;
     }
 
@@ -227,7 +356,7 @@ export function createLive2DSpeechPlayer({ onState } = {}) {
   }
 
   async function play(text) {
-    const speechText = stripLive2DStageDirections(text);
+    const speechText = cleanTtsText(text);
     if (!speechText) return;
     const settings = readRoomTTSSettings();
     if (!settings.enabled) {
@@ -242,10 +371,11 @@ export function createLive2DSpeechPlayer({ onState } = {}) {
       audio.preload = 'auto';
       audio.onplay = () => {
         setState({ status: 'playing', error: '' });
+        const mouthText = audio.dataset.speechText || speechText;
         if (audio.dataset.mouthMode === 'synthetic') {
-          startSyntheticMouth(speechText, audio);
+          startSyntheticMouth(mouthText, audio);
         } else {
-          startAnalysedMouth(speechText, audio);
+          startAnalysedMouth(mouthText, audio);
         }
       };
       await new Promise((resolve, reject) => {
