@@ -8,6 +8,7 @@ import {
 } from '../services/room/live2dLlmControl';
 import { dispatchRoomLive2D } from '../services/room/live2dControl';
 import { createLive2DSpeechPlayer } from '../services/room/live2dSpeech';
+import { stripLive2DStageDirections } from '../services/room/live2dText';
 
 const live2d = useLive2D();
 const booted = ref(false);
@@ -56,7 +57,7 @@ const liveStateLabel = computed(() => {
 
 const latestCaption = computed(() => {
   const line = [...showLog.value].reverse().find((item) => item.role === 'yachiyo');
-  return line?.text || llmState.value.reply || '';
+  return visibleYachiyoText(line?.text || llmState.value.reply || '');
 });
 
 const testActions = [
@@ -125,8 +126,14 @@ function uid(prefix = 'line') {
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
 }
 
+function visibleYachiyoText(text) {
+  return stripLive2DStageDirections(text).replace(/[ \t]{2,}/g, ' ').trim();
+}
+
 function pushLog(role, text, meta = {}) {
-  const value = String(text || '').trim();
+  const value = role === 'yachiyo'
+    ? visibleYachiyoText(text)
+    : String(text || '').trim();
   if (!value) return;
   showLog.value = [
     ...showLog.value,
@@ -225,17 +232,18 @@ async function performLLMAct(message, source = 'manual') {
   try {
     const result = await requestLive2DControl(value);
     if (result.live2d) dispatchRoomLive2D(result.live2d);
+    const visibleReply = visibleYachiyoText(result.reply) || 'OK.';
     llmState.value = {
       loading: false,
       error: '',
-      reply: result.reply,
+      reply: visibleReply,
       raw: result.raw,
       live2d: result.live2d
     };
     if (source === 'live') {
-      pushLog('yachiyo', result.reply, { live2d: result.live2d });
+      pushLog('yachiyo', visibleReply, { live2d: result.live2d });
     }
-    return result;
+    return { ...result, reply: visibleReply };
   } catch (error) {
     llmState.value = {
       ...llmState.value,
@@ -277,10 +285,11 @@ function buildLiveDirectorPrompt(audienceLines) {
     chat,
     'Act like an autonomous AI VTuber streamer. Reply with 1-2 short spoken sentences.',
     'Do not wait passively for instructions. React, tease gently, ask a tiny hook, or continue the topic.',
-    'Choose a visible bodyPose or precise parameter set every turn unless the moment is intentionally calm.',
+    'Choose a visible bodyPose or precise parameter set every turn unless the moment is intentionally calm. Use intensity 0.95-1.0 for visible body acting.',
     'Prefer nod, lean_in, sway, bounce, shake_head, or emphasis. Use expression and expressionMix too.',
     'For visible body acting, include Yachiyo body-chain parameters such as ParamOutput_BodyX, ParamOutput_BodyY, ParamOutput_BodyZ, ParamAngle_BodyX, ParamAngle_BodyY, ParamAngle_BodyZ, ParamAngle_ChestZ, ParamAngle_HipZ, PositionZ, or ParamPosition_Z.',
-    'Use parameters for gaze, head tilt, torso, chest/hip split, shoulder accents, brow shape, mouth form, cheek, and breathing nuance.',
+    'Use parameters for gaze, head tilt, torso, chest/hip split, shoulder accents, hair follow-through, brow shape, mouth form, cheek, and breathing nuance.',
+    'Never show action cues in the spoken reply or caption: no parentheses, no asterisk actions, no Action/Pose labels, and no body descriptions in reply. Put movement only in live2d JSON.',
     'Return the required JSON object only.'
   ].join('\n');
 }
@@ -480,7 +489,7 @@ onUnmounted(() => {
       <div v-if="llmState.error || llmState.live2d" class="live2d-llm-result" :class="{ error: llmState.error }">
         <strong>{{ llmState.error ? 'ERROR' : 'ACT' }}</strong>
         <p v-if="llmState.error">{{ llmState.error }}</p>
-        <pre v-if="llmState.live2d">{{ JSON.stringify(llmState.live2d, null, 2) }}</pre>
+        <p v-else>Motion queued.</p>
       </div>
     </aside>
 

@@ -204,6 +204,41 @@ export const roomLive2DManifest = {
       max: 30
     },
     {
+      id: 'ParamPhysicsRAM_BodyX',
+      label: 'Body inertia X',
+      prompt: 'model-specific body inertia cache for stronger side travel and follow-through',
+      min: -30,
+      max: 30
+    },
+    {
+      id: 'ParamPhysicsRAM_BodyY',
+      label: 'Body inertia Y',
+      prompt: 'model-specific body inertia cache for stronger forward-back travel and bounce',
+      min: -30,
+      max: 30
+    },
+    {
+      id: 'ParamPhysicsRAM_BodyZ',
+      label: 'Body inertia Z',
+      prompt: 'model-specific body inertia cache for stronger torso roll',
+      min: -30,
+      max: 30
+    },
+    {
+      id: 'ParamPhysicsRAM_ChestZ',
+      label: 'Chest inertia Z',
+      prompt: 'model-specific chest follow-through during torso motion',
+      min: -30,
+      max: 30
+    },
+    {
+      id: 'ParamPhysicsRAM_HipZ',
+      label: 'Hip inertia Z',
+      prompt: 'model-specific hip follow-through during torso motion',
+      min: -30,
+      max: 30
+    },
+    {
       id: 'ParamAngle_BodyX',
       label: 'Yachiyo body X',
       prompt: 'model-specific torso side angle; stronger than generic body lean',
@@ -353,9 +388,44 @@ export const roomLive2DManifest = {
       max: 1
     },
     {
+      id: 'ParamHairFront',
+      label: 'Front hair swing',
+      prompt: 'front hair follow-through that makes body movement read more clearly',
+      min: -30,
+      max: 30
+    },
+    {
+      id: 'ParamHairSide',
+      label: 'Side hair swing',
+      prompt: 'side hair follow-through for turns, leans, and sway',
+      min: -30,
+      max: 30
+    },
+    {
+      id: 'ParamHairBack',
+      label: 'Back hair swing',
+      prompt: 'back hair follow-through for body motion and bounce recovery',
+      min: -30,
+      max: 30
+    },
+    {
       id: 'ParamBreath',
       label: 'Breath',
       prompt: 'subtle idle breathing',
+      min: 0,
+      max: 1
+    },
+    {
+      id: 'ParamBreath2',
+      label: 'Breath follow 1',
+      prompt: 'secondary breath channel for visible chest presence',
+      min: 0,
+      max: 1
+    },
+    {
+      id: 'ParamBreath3',
+      label: 'Breath follow 2',
+      prompt: 'secondary breath channel for smooth body follow-through',
       min: 0,
       max: 1
     }
@@ -381,6 +451,6 @@ export function live2DPromptCatalog(manifest = roomLive2DManifest) {
     motions,
     'Available fine parameter ids:',
     parameters,
-    'Control rules: only use listed ids. Use bodyPose for posture/body movement. Pair visible bodyPose choices with precise head, torso, chest, hip, shoulder, and body-physics targets. For visible Yachiyo body movement, prefer the model-specific chain ParamBodyInput_BodyX, ParamBodyInput_BodyY, ParamBodyInput_BodyZ, ParamOutput_BodyX, ParamOutput_BodyY, ParamOutput_BodyZ, ParamAngle_BodyX, ParamAngle_BodyY, ParamAngle_BodyZ, ParamAngle_ChestZ, ParamAngle_HipZ, PositionZ, and ParamPosition_Z instead of relying only on generic ParamBodyAngleX/Y/Z. Use parameters for gaze, head, torso, brow, mouth-shape, cheek, and breathing changes. Use bodyPose none when no body movement is needed.'
+    'Control rules: only use listed ids. Use bodyPose for posture/body movement. Pair visible bodyPose choices with precise head, torso, chest, hip, shoulder, body-physics, inertia, hair-follow, and breath targets. For visible Yachiyo body movement, prefer the model-specific chain ParamBodyInput_BodyX, ParamBodyInput_BodyY, ParamBodyInput_BodyZ, ParamOutput_BodyX, ParamOutput_BodyY, ParamOutput_BodyZ, ParamPhysicsRAM_BodyX, ParamPhysicsRAM_BodyY, ParamPhysicsRAM_BodyZ, ParamAngle_BodyX, ParamAngle_BodyY, ParamAngle_BodyZ, ParamAngle_ChestZ, ParamAngle_HipZ, PositionZ, and ParamPosition_Z instead of relying only on generic ParamBodyAngleX/Y/Z. Use ParamHairFront, ParamHairSide, ParamHairBack, ParamBreath2, and ParamBreath3 as follow-through accents. Use parameters for gaze, head, torso, brow, mouth-shape, cheek, and breathing changes. Use bodyPose none when no body movement is needed.'
   ].join('\n');
 }

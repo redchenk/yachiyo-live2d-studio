@@ -361,7 +361,7 @@ function normalizeLive2DParameterTargets(value, manifest = roomLive2DManifest) {
     });
   }
 
-  return merged.slice(0, 12);
+  return merged.slice(0, 18);
 }
 
 export function normalizeLive2DEmotion(value, manifest = roomLive2DManifest) {
@@ -392,7 +392,7 @@ function normalizeExpressionMix(value, fallbackExpression, manifest) {
 }
 
 function bodyPoseScale(intensity) {
-  return 0.7 + clamp01(intensity, 0.72) * 1.05;
+  return 1.1 + clamp01(intensity, 0.92) * 1.9;
 }
 
 function poseParameter(id, value, weight, durationMs, delayMs = 0) {
@@ -416,10 +416,15 @@ function bodyPoseParameterTargets(bodyPose, intensity, durationMs, manifest) {
       poseParameter('ParamBodyAngleY', 3.8 * scale, 0.8, longDuration),
       poseParameter('ParamBodyInput_BodyY', 8.5 * scale, 0.88, longDuration),
       poseParameter('ParamOutput_BodyY', 6.8 * scale, 0.82, longDuration),
+      poseParameter('ParamPhysicsRAM_BodyY', 7.2 * scale, 0.82, longDuration),
       poseParameter('ParamAngle_BodyY', 5.8 * scale, 0.82, longDuration),
       poseParameter('ParamAngle_BodyY2', 4.2 * scale, 0.68, longDuration),
       poseParameter('ParamAngle_HipUp', 3.6 * scale, 0.58, baseDuration),
-      poseParameter('ParamBreath', subtleBreath, 0.44, longDuration)
+      poseParameter('ParamHairFront', -3.4 * scale, 0.42, longDuration),
+      poseParameter('ParamHairBack', 2.4 * scale, 0.34, longDuration),
+      poseParameter('ParamBreath', subtleBreath, 0.44, longDuration),
+      poseParameter('ParamBreath2', subtleBreath, 0.36, longDuration),
+      poseParameter('ParamBreath3', Math.max(0.38, subtleBreath - 0.08), 0.32, longDuration)
     ],
     shake_head: [
       poseParameter('ParamAngleX', -9.5 * scale, 0.82, baseDuration),
@@ -427,9 +432,12 @@ function bodyPoseParameterTargets(bodyPose, intensity, durationMs, manifest) {
       poseParameter('ParamBodyAngleX', -3.2 * scale, 0.72, longDuration),
       poseParameter('ParamBodyInput_BodyX', -8.5 * scale, 0.88, longDuration),
       poseParameter('ParamOutput_BodyX', -6.8 * scale, 0.82, longDuration),
+      poseParameter('ParamPhysicsRAM_BodyX', -7.4 * scale, 0.82, longDuration),
       poseParameter('ParamAngle_BodyX', -6.2 * scale, 0.82, longDuration),
       poseParameter('ParamAngle_BodyX2', -4.6 * scale, 0.68, longDuration),
       poseParameter('ParamAngle_BodyX3', -3.4 * scale, 0.56, longDuration),
+      poseParameter('ParamHairSide', 4.6 * scale, 0.46, longDuration),
+      poseParameter('ParamHairBack', -3.2 * scale, 0.38, longDuration),
       poseParameter('ParamEyeBallX', -0.26 * scale, 0.48, baseDuration)
     ],
     lean_in: [
@@ -439,8 +447,13 @@ function bodyPoseParameterTargets(bodyPose, intensity, durationMs, manifest) {
       poseParameter('ParamPosition_Z', -5.6 * scale, 0.78, longDuration),
       poseParameter('ParamBodyInput_BodyY', -9.2 * scale, 0.9, longDuration),
       poseParameter('ParamOutput_BodyY', -7.2 * scale, 0.84, longDuration),
+      poseParameter('ParamPhysicsRAM_BodyY', -8 * scale, 0.84, longDuration),
       poseParameter('ParamAngle_BodyY', -6.2 * scale, 0.82, longDuration),
       poseParameter('ParamAngle_BodyY2', -4.6 * scale, 0.68, longDuration),
+      poseParameter('ParamHairFront', 4.2 * scale, 0.44, longDuration),
+      poseParameter('ParamHairBack', -3 * scale, 0.36, longDuration),
+      poseParameter('ParamBreath2', 0.72, 0.36, longDuration),
+      poseParameter('ParamBreath3', 0.58, 0.32, longDuration),
       poseParameter('ParamEyeBallY', -0.2 * scale, 0.54, baseDuration),
       poseParameter('ParamBrowLY', 0.12 * scale, 0.36, baseDuration),
       poseParameter('ParamBrowRY', 0.12 * scale, 0.36, baseDuration)
@@ -449,43 +462,61 @@ function bodyPoseParameterTargets(bodyPose, intensity, durationMs, manifest) {
       poseParameter('ParamAngleZ', -5.4 * scale, 0.62, baseDuration),
       poseParameter('ParamBodyInput_BodyX', -9.5 * scale, 0.9, longDuration),
       poseParameter('ParamOutput_BodyX', -7.5 * scale, 0.84, longDuration),
+      poseParameter('ParamPhysicsRAM_BodyX', -8.2 * scale, 0.84, longDuration),
       poseParameter('ParamAngle_BodyX', -6.8 * scale, 0.86, longDuration),
       poseParameter('ParamAngle_BodyX2', -5.2 * scale, 0.72, longDuration),
       poseParameter('ParamBodyInput_BodyZ', -6.8 * scale, 0.84, longDuration),
       poseParameter('ParamOutput_BodyZ', -5.3 * scale, 0.76, longDuration),
+      poseParameter('ParamPhysicsRAM_BodyZ', -5.8 * scale, 0.76, longDuration),
       poseParameter('ParamBodyInput_ChestZ', -6.2 * scale, 0.82, longDuration),
+      poseParameter('ParamPhysicsRAM_ChestZ', -6.5 * scale, 0.78, longDuration),
       poseParameter('ParamBodyInput_HipZ', 5.4 * scale, 0.76, longDuration),
+      poseParameter('ParamPhysicsRAM_HipZ', 5.8 * scale, 0.72, longDuration),
       poseParameter('ParamAngle_ChestZ', -5.6 * scale, 0.76, longDuration),
       poseParameter('ParamAngle_HipZ', 4.8 * scale, 0.7, longDuration),
-      poseParameter('ParamAngle_ShoulderL', -3.4 * scale, 0.48, baseDuration)
+      poseParameter('ParamAngle_ShoulderL', -3.4 * scale, 0.48, baseDuration),
+      poseParameter('ParamHairSide', 4.8 * scale, 0.44, longDuration),
+      poseParameter('ParamHairBack', -3.6 * scale, 0.36, longDuration)
     ],
     lean_right: [
       poseParameter('ParamAngleZ', 5.4 * scale, 0.62, baseDuration),
       poseParameter('ParamBodyInput_BodyX', 9.5 * scale, 0.9, longDuration),
       poseParameter('ParamOutput_BodyX', 7.5 * scale, 0.84, longDuration),
+      poseParameter('ParamPhysicsRAM_BodyX', 8.2 * scale, 0.84, longDuration),
       poseParameter('ParamAngle_BodyX', 6.8 * scale, 0.86, longDuration),
       poseParameter('ParamAngle_BodyX2', 5.2 * scale, 0.72, longDuration),
       poseParameter('ParamBodyInput_BodyZ', 6.8 * scale, 0.84, longDuration),
       poseParameter('ParamOutput_BodyZ', 5.3 * scale, 0.76, longDuration),
+      poseParameter('ParamPhysicsRAM_BodyZ', 5.8 * scale, 0.76, longDuration),
       poseParameter('ParamBodyInput_ChestZ', 6.2 * scale, 0.82, longDuration),
+      poseParameter('ParamPhysicsRAM_ChestZ', 6.5 * scale, 0.78, longDuration),
       poseParameter('ParamBodyInput_HipZ', -5.4 * scale, 0.76, longDuration),
+      poseParameter('ParamPhysicsRAM_HipZ', -5.8 * scale, 0.72, longDuration),
       poseParameter('ParamAngle_ChestZ', 5.6 * scale, 0.76, longDuration),
       poseParameter('ParamAngle_HipZ', -4.8 * scale, 0.7, longDuration),
-      poseParameter('ParamAngle_ShoulderR', -3.4 * scale, 0.48, baseDuration)
+      poseParameter('ParamAngle_ShoulderR', -3.4 * scale, 0.48, baseDuration),
+      poseParameter('ParamHairSide', -4.8 * scale, 0.44, longDuration),
+      poseParameter('ParamHairBack', 3.6 * scale, 0.36, longDuration)
     ],
     sway: [
       poseParameter('ParamBodyInput_BodyX', 5.8 * scale, 0.68, longDuration),
       poseParameter('ParamOutput_BodyX', 4.8 * scale, 0.64, longDuration),
+      poseParameter('ParamPhysicsRAM_BodyX', 5.6 * scale, 0.66, longDuration),
       poseParameter('ParamAngle_BodyX', 4.4 * scale, 0.62, longDuration),
       poseParameter('ParamAngle_BodyX2', 3.4 * scale, 0.5, longDuration),
       poseParameter('ParamBodyInput_BodyZ', 4.5 * scale, 0.66, longDuration),
       poseParameter('ParamOutput_BodyZ', 3.8 * scale, 0.58, longDuration),
+      poseParameter('ParamPhysicsRAM_BodyZ', 4.6 * scale, 0.6, longDuration),
       poseParameter('ParamAngle_BodyZ', 3.5 * scale, 0.56, longDuration),
       poseParameter('ParamAngle_ChestZ', 3.2 * scale, 0.5, longDuration),
       poseParameter('ParamAngle_HipZ', -2.8 * scale, 0.46, longDuration),
       poseParameter('ParamAngle_ShoulderL', 2 * scale, 0.36, baseDuration),
       poseParameter('ParamAngle_ShoulderR', -1.8 * scale, 0.36, baseDuration),
-      poseParameter('ParamBreath', subtleBreath, 0.44, longDuration)
+      poseParameter('ParamHairSide', -3.6 * scale, 0.34, longDuration),
+      poseParameter('ParamHairBack', 3.2 * scale, 0.3, longDuration),
+      poseParameter('ParamBreath', subtleBreath, 0.44, longDuration),
+      poseParameter('ParamBreath2', subtleBreath, 0.36, longDuration),
+      poseParameter('ParamBreath3', Math.max(0.36, subtleBreath - 0.1), 0.32, longDuration)
     ],
     bounce: [
       poseParameter('ParamAngleY', 3.8 * scale, 0.56, baseDuration),
@@ -494,26 +525,37 @@ function bodyPoseParameterTargets(bodyPose, intensity, durationMs, manifest) {
       poseParameter('ParamPosition_Z', 4.6 * scale, 0.66, baseDuration),
       poseParameter('ParamBodyInput_BodyY', 9.5 * scale, 0.86, baseDuration),
       poseParameter('ParamOutput_BodyY', 7.6 * scale, 0.8, baseDuration),
+      poseParameter('ParamPhysicsRAM_BodyY', 8.4 * scale, 0.8, baseDuration),
       poseParameter('ParamAngle_BodyY', 6.8 * scale, 0.78, baseDuration),
       poseParameter('ParamAngle_BodyY2', 5 * scale, 0.64, baseDuration),
       poseParameter('ParamAngle_HipUp', 5.5 * scale, 0.62, baseDuration),
       poseParameter('ParamAngle_HipDown', -3.8 * scale, 0.48, baseDuration),
+      poseParameter('ParamHairFront', -5.2 * scale, 0.42, longDuration),
+      poseParameter('ParamHairBack', 4.2 * scale, 0.36, longDuration),
       poseParameter('ParamMouthForm', 0.22 * scale, 0.38, baseDuration),
-      poseParameter('ParamBreath', Math.min(1, 0.5 + scale * 0.22), 0.44, longDuration)
+      poseParameter('ParamBreath', Math.min(1, 0.5 + scale * 0.22), 0.44, longDuration),
+      poseParameter('ParamBreath2', Math.min(1, 0.48 + scale * 0.2), 0.36, longDuration),
+      poseParameter('ParamBreath3', Math.min(1, 0.44 + scale * 0.18), 0.32, longDuration)
     ],
     emphasis: [
       poseParameter('ParamAngleZ', -6 * scale, 0.68, baseDuration),
       poseParameter('ParamBodyAngleY', -4 * scale, 0.72, baseDuration),
       poseParameter('ParamBodyInput_BodyY', -6 * scale, 0.78, baseDuration),
       poseParameter('ParamOutput_BodyY', -5 * scale, 0.7, baseDuration),
+      poseParameter('ParamPhysicsRAM_BodyY', -5.8 * scale, 0.72, baseDuration),
       poseParameter('ParamBodyInput_BodyZ', -8 * scale, 0.84, baseDuration),
       poseParameter('ParamOutput_BodyZ', -6.5 * scale, 0.78, baseDuration),
+      poseParameter('ParamPhysicsRAM_BodyZ', -7.2 * scale, 0.78, baseDuration),
       poseParameter('ParamAngle_BodyZ', -6 * scale, 0.78, baseDuration),
       poseParameter('ParamAngle_BodyZ2', -4.8 * scale, 0.62, baseDuration),
       poseParameter('ParamAngle_ChestZ', -6.4 * scale, 0.76, baseDuration),
+      poseParameter('ParamPhysicsRAM_ChestZ', -6.6 * scale, 0.74, baseDuration),
       poseParameter('ParamAngle_HipZ', 5.4 * scale, 0.7, baseDuration),
+      poseParameter('ParamPhysicsRAM_HipZ', 5.8 * scale, 0.68, baseDuration),
       poseParameter('ParamAngle_ShoulderL', -3.4 * scale, 0.48, baseDuration),
-      poseParameter('ParamAngle_ShoulderR', 3.1 * scale, 0.48, baseDuration)
+      poseParameter('ParamAngle_ShoulderR', 3.1 * scale, 0.48, baseDuration),
+      poseParameter('ParamHairSide', 4.2 * scale, 0.34, longDuration),
+      poseParameter('ParamHairBack', -3.2 * scale, 0.3, longDuration)
     ]
   }[bodyPose] || [];
 
@@ -521,29 +563,29 @@ function bodyPoseParameterTargets(bodyPose, intensity, durationMs, manifest) {
 }
 
 const bodyPoseWindupFactors = {
-  nod: -0.34,
-  shake_head: -0.55,
-  lean_in: -0.3,
-  lean_left: -0.34,
-  lean_right: -0.34,
-  sway: -0.56,
-  bounce: -0.42,
-  emphasis: -0.28
+  nod: -0.68,
+  shake_head: -1,
+  lean_in: -0.62,
+  lean_left: -0.68,
+  lean_right: -0.68,
+  sway: -1.02,
+  bounce: -0.78,
+  emphasis: -0.64
 };
 
 const bodyPosePeakFactors = {
-  nod: 1.18,
-  shake_head: 1.22,
-  lean_in: 1.2,
-  lean_left: 1.18,
-  lean_right: 1.18,
-  sway: 1.16,
-  bounce: 1.22,
-  emphasis: 1.24
+  nod: 1.7,
+  shake_head: 1.86,
+  lean_in: 1.78,
+  lean_left: 1.78,
+  lean_right: 1.78,
+  sway: 1.72,
+  bounce: 1.92,
+  emphasis: 1.9
 };
 
 function neutralParameterValue(id) {
-  if (id === 'ParamBreath') return 0.38;
+  if (id === 'ParamBreath' || id === 'ParamBreath2' || id === 'ParamBreath3') return 0.38;
   if (id === 'ParamEyeLOpen' || id === 'ParamEyeROpen') return 1;
   return 0;
 }
@@ -552,7 +594,7 @@ function transformPoseValue(target, factor) {
   const id = String(target?.id || '');
   const value = Number(target?.value);
   if (!Number.isFinite(value)) return neutralParameterValue(id);
-  if (id === 'ParamBreath') {
+  if (id === 'ParamBreath' || id === 'ParamBreath2' || id === 'ParamBreath3') {
     if (factor <= 0) return 0.34;
     return Math.min(1, Math.max(0.42, value * Math.min(factor, 1.15)));
   }
@@ -577,7 +619,7 @@ function transformPoseTargets(targets, factor, durationMs, manifest, weightScale
 
 function bodyPosePerformanceSequence(baseStep, manifest) {
   if (!baseStep?.bodyPose) return baseStep ? [baseStep] : [];
-  const intensity = Math.min(1, Math.max(Number(baseStep.intensity) || 0, 0.82));
+  const intensity = Math.min(1, Math.max(Number(baseStep.intensity) || 0, 0.96));
   const totalDuration = normalizeDuration(baseStep.durationMs);
   const poseTargets = bodyPoseParameterTargets(baseStep.bodyPose, intensity, totalDuration, manifest);
   if (!poseTargets.length) return [baseStep];
@@ -592,20 +634,20 @@ function bodyPosePerformanceSequence(baseStep, manifest) {
     emotion: baseStep.emotion,
     expression: baseStep.expression,
     expressionMix: baseStep.expressionMix,
-    parameters: transformPoseTargets(poseTargets, windupFactor, windupDuration, manifest, 0.78),
+    parameters: transformPoseTargets(poseTargets, windupFactor, windupDuration, manifest, 1.02),
     intensity,
     durationMs: windupDuration,
     delayMs: baseStep.delayMs
   }, manifest);
   const peak = normalizeLive2DStep({
     ...baseStep,
-    parameters: transformPoseTargets(baseStep.parameters, peakFactor, peakDuration, manifest, 1.08),
+    parameters: transformPoseTargets(baseStep.parameters, peakFactor, peakDuration, manifest, 1.24),
     intensity,
     durationMs: peakDuration,
     delayMs: 0
   }, manifest);
   const settle = normalizeLive2DStep({
-    parameters: transformPoseTargets(poseTargets, 0, settleDuration, manifest, 0.62),
+    parameters: transformPoseTargets(poseTargets, 0, settleDuration, manifest, 0.72),
     intensity: 0.5,
     durationMs: settleDuration,
     delayMs: 0
@@ -623,7 +665,7 @@ function mergeParameterTargets(explicitTargets, fallbackTargets) {
     merged.push(target);
     seen.add(key);
   }
-  return merged.slice(0, 12);
+  return merged.slice(0, 18);
 }
 
 function normalizeLive2DStep(input, manifest = roomLive2DManifest) {
@@ -661,7 +703,8 @@ function normalizeSequence(input, manifest = roomLive2DManifest) {
   return rawSequence
     .map((step) => normalizeLive2DStep(step, manifest))
     .filter(Boolean)
-    .slice(0, 8);
+    .flatMap((step) => (step.bodyPose ? bodyPosePerformanceSequence(step, manifest) : [step]))
+    .slice(0, 12);
 }
 
 export function normalizeLive2DIntent(input, manifest = roomLive2DManifest) {
