@@ -4,6 +4,7 @@ import {
   ROOM_LIVE2D_PENDING_INTENT_KEY
 } from '../../services/room/live2dControl';
 import { mountLive2DStageBodyActuator } from '../../services/room/live2dBodyActuator';
+import { mountLive2DFaceCaptureSimulator } from '../../services/room/live2dFaceCaptureSimulator';
 import { destroyLive2DRoom, initLive2DRoom, preloadLive2DResources, speakLive2D } from '../../services/room/live2dBridge';
 
 export function useLive2D() {
@@ -11,6 +12,7 @@ export function useLive2D() {
   const ready = ref(false);
   const error = ref('');
   let destroyBodyActuator = null;
+  let destroyFaceCapture = null;
 
   function consumePendingSoon() {
     window.setTimeout(() => consumePendingRoomLive2DIntent(), 250);
@@ -31,7 +33,9 @@ export function useLive2D() {
     try {
       await initLive2DRoom();
       destroyBodyActuator?.();
+      destroyFaceCapture?.();
       destroyBodyActuator = mountLive2DStageBodyActuator();
+      destroyFaceCapture = mountLive2DFaceCaptureSimulator();
       ready.value = true;
       loading.value = false;
       consumePendingSoon();
@@ -52,7 +56,9 @@ export function useLive2D() {
     ready.value = false;
     loading.value = false;
     destroyBodyActuator?.();
+    destroyFaceCapture?.();
     destroyBodyActuator = null;
+    destroyFaceCapture = null;
     destroyLive2DRoom();
   }
 

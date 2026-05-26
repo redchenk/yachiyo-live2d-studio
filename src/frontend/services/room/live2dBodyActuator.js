@@ -1,5 +1,5 @@
 const ROOM_ACT_EVENT = 'tsukuyomi:room-act';
-const DEFAULT_STAGE_MOTION_SCALE = 1.35;
+const DEFAULT_STAGE_MOTION_SCALE = 0.5;
 const BODY_PARAMETER_HINTS = [
   'ParamBodyInput_BodyX',
   'ParamBodyInput_BodyY',
