@@ -163,6 +163,12 @@ function normalizeDelay(value) {
   return Math.min(Math.max(Math.round(numeric), 0), 12000);
 }
 
+function normalizeParameterDuration(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return 900;
+  return Math.min(Math.max(Math.round(numeric), 250), 12000);
+}
+
 function readDebugState() {
   if (typeof localStorage === 'undefined') return {};
   try {
@@ -222,6 +228,39 @@ export function normalizeLive2DBodyPose(value, manifest = roomLive2DManifest) {
   return ids.has(aliased) ? aliased : '';
 }
 
+function manifestParameterMap(manifest = roomLive2DManifest) {
+  return new Map((manifest.parameterControls || []).map((item) => [String(item.id || '').trim().toLowerCase(), item]));
+}
+
+function normalizeLive2DParameterTargets(value, manifest = roomLive2DManifest) {
+  const controlMap = manifestParameterMap(manifest);
+  const rawTargets = Array.isArray(value)
+    ? value
+    : value && typeof value === 'object'
+      ? Object.entries(value).map(([id, target]) => (target && typeof target === 'object' ? { id, ...target } : { id, value: target }))
+      : [];
+
+  const merged = [];
+  for (const target of rawTargets) {
+    const key = String(target?.id || target?.parameterId || target?.param || target?.key || target?.name || '').trim().toLowerCase();
+    const control = key ? controlMap.get(key) : null;
+    if (!control) continue;
+    const numericValue = Number(target?.value ?? target?.target ?? target?.amount ?? target?.to);
+    if (!Number.isFinite(numericValue)) continue;
+    const min = Number.isFinite(Number(control.min)) ? Number(control.min) : -1;
+    const max = Number.isFinite(Number(control.max)) ? Number(control.max) : 1;
+    merged.push({
+      id: control.id,
+      value: Math.min(Math.max(numericValue, min), max),
+      weight: clamp01(target?.weight, 0.85),
+      durationMs: normalizeParameterDuration(target?.durationMs || target?.duration || target?.timeMs || target?.time),
+      delayMs: normalizeDelay(target?.delayMs || target?.delay || target?.offsetMs)
+    });
+  }
+
+  return merged.slice(0, 8);
+}
+
 export function normalizeLive2DEmotion(value, manifest = roomLive2DManifest) {
   const key = normalizeToken(value);
   const aliased = emotionAliases[key] || key;
@@ -256,8 +295,9 @@ function normalizeLive2DStep(input, manifest = roomLive2DManifest) {
   const motion = normalizeLive2DMotion(input.motion || input.action, manifest);
   const bodyPose = normalizeLive2DBodyPose(input.bodyPose || input.pose || input.posture || input.motion || input.action, manifest);
   const expressionMix = normalizeExpressionMix(input.expressionMix, expression, manifest);
+  const parameters = normalizeLive2DParameterTargets(input.parameters || input.parameterTargets || input.params, manifest);
   const primaryExpression = expressionMix[0]?.expression || expression;
-  const hasControl = primaryExpression || motion || bodyPose;
+  const hasControl = primaryExpression || motion || bodyPose || parameters.length;
   if (!hasControl) return null;
   return {
     emotion: String(input.emotion || input.mood || '').trim() || null,
@@ -265,6 +305,7 @@ function normalizeLive2DStep(input, manifest = roomLive2DManifest) {
     expressionMix,
     motion: motion || null,
     bodyPose: bodyPose || null,
+    parameters,
     intensity: clamp01(input.intensity, 0.65),
     durationMs: normalizeDuration(input.durationMs || input.duration),
     delayMs: normalizeDelay(input.delayMs || input.delay)

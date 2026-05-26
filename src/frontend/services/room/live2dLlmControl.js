@@ -104,7 +104,7 @@ function buildDirectRequestBody(settings, systemPrompt, history, message) {
         ...history.map((item) => ({ role: item.role === 'assistant' ? 'assistant' : 'user', content: String(item.content || '') })),
         { role: 'user', content: String(message || '') }
       ],
-      max_output_tokens: 320
+      max_output_tokens: 420
     };
   }
   return {
@@ -115,7 +115,7 @@ function buildDirectRequestBody(settings, systemPrompt, history, message) {
       { role: 'user', content: String(message || '') }
     ],
     temperature: isKimiChatTarget(apiUrl, model) ? 1 : 0.4,
-    max_tokens: 320
+    max_tokens: 420
   };
 }
 
@@ -125,10 +125,13 @@ export function live2DControlSystemPrompt() {
     'Yachiyo is being tested as an autonomous AI VTuber streamer: keep her present, reactive, playful, and concise.',
     'Return exactly one JSON object. Do not use Markdown. Do not add prose outside JSON.',
     'JSON schema:',
-    '{"reply":"short visible reply","live2d":{"emotion":"happy|shy|sad|crying|neutral","expression":"neutral|smile|bsmile|namida|tears","expressionMix":[{"expression":"smile","weight":1}],"bodyPose":"none|nod|shake_head|lean_in|lean_left|lean_right|sway|bounce|emphasis","intensity":0.6,"durationMs":4200,"sequence":[]}}',
+    '{"reply":"short visible reply","live2d":{"emotion":"happy|shy|sad|crying|neutral","expression":"neutral|smile|bsmile|namida|tears","expressionMix":[{"expression":"smile","weight":1}],"bodyPose":"none|nod|shake_head|lean_in|lean_left|lean_right|sway|bounce|emphasis","parameters":[{"id":"ParamAngleX","value":-8,"weight":0.7,"durationMs":900}],"intensity":0.6,"durationMs":4200,"sequence":[]}}',
     'The reply field must contain only natural dialogue. Never put stage directions, parenthesized action hints, or labels in reply.',
     'For live-stream turns, choose a visible bodyPose unless the line is intentionally quiet. Do not only change the face.',
     'Vary bodyPose across turns: nod for acknowledgement, lean_in for focus, sway for idle talk, bounce for excitement, shake_head for playful refusal, emphasis for punchlines.',
+    'Use parameters for precise acting: gaze, small head motion, brows, mouth shape, cheek, and breathing. Prefer 1-4 parameter targets per turn. Keep them subtle and natural.',
+    'Avoid fighting TTS mouth opening. Use ParamMouthForm for smile/frown shape and leave ParamMouthOpenY to voice unless you intentionally need a manual mouth override.',
+    'Use durationMs on each parameter target when you want a quick glance or eyebrow shift, and keep the value within the listed range.',
     'Use sequence only when a multi-step performance is clearly helpful. Keep sequence to 3 steps or fewer.',
     live2DPromptCatalog()
   ].join('\n');

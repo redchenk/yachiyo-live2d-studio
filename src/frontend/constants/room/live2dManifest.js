@@ -78,12 +78,111 @@ export const roomLive2DManifest = {
   ],
   parameterControls: [
     {
-      id: 'ParamMouthOpenY',
-      label: 'Mouth open',
-      prompt: 'reserved for TTS or later lip sync; LLM should not actively control it yet',
+      id: 'ParamAngleX',
+      label: 'Head yaw',
+      prompt: 'small left-right head turns',
+      min: -30,
+      max: 30
+    },
+    {
+      id: 'ParamAngleY',
+      label: 'Head pitch',
+      prompt: 'small up-down head motion or a subtle nod',
+      min: -30,
+      max: 30
+    },
+    {
+      id: 'ParamAngleZ',
+      label: 'Head roll',
+      prompt: 'gentle head tilt or playful roll',
+      min: -30,
+      max: 30
+    },
+    {
+      id: 'ParamBodyAngleX',
+      label: 'Body lean',
+      prompt: 'torso lean left-right',
+      min: -10,
+      max: 10
+    },
+    {
+      id: 'ParamBodyAngleY',
+      label: 'Body pitch',
+      prompt: 'torso forward-back movement',
+      min: -10,
+      max: 10
+    },
+    {
+      id: 'ParamBodyAngleZ',
+      label: 'Body roll',
+      prompt: 'torso twist or side sway',
+      min: -10,
+      max: 10
+    },
+    {
+      id: 'ParamEyeBallX',
+      label: 'Gaze X',
+      prompt: 'look left-right without moving the whole head too much',
+      min: -1,
+      max: 1
+    },
+    {
+      id: 'ParamEyeBallY',
+      label: 'Gaze Y',
+      prompt: 'look up-down without moving the whole head too much',
+      min: -1,
+      max: 1
+    },
+    {
+      id: 'ParamEyeLOpen',
+      label: 'Left eye open',
+      prompt: 'temporary eye openness or a wink',
       min: 0,
       max: 1,
       experimental: true
+    },
+    {
+      id: 'ParamEyeROpen',
+      label: 'Right eye open',
+      prompt: 'temporary eye openness or a wink',
+      min: 0,
+      max: 1,
+      experimental: true
+    },
+    {
+      id: 'ParamBrowLY',
+      label: 'Left brow',
+      prompt: 'left eyebrow raise, frown, or concern',
+      min: -1,
+      max: 1
+    },
+    {
+      id: 'ParamBrowRY',
+      label: 'Right brow',
+      prompt: 'right eyebrow raise, frown, or concern',
+      min: -1,
+      max: 1
+    },
+    {
+      id: 'ParamMouthForm',
+      label: 'Mouth shape',
+      prompt: 'smile or frown shape without forcing lip opening',
+      min: -1,
+      max: 1
+    },
+    {
+      id: 'ParamCheek',
+      label: 'Cheek',
+      prompt: 'blush or cheek tension',
+      min: 0,
+      max: 1
+    },
+    {
+      id: 'ParamBreath',
+      label: 'Breath',
+      prompt: 'subtle idle breathing',
+      min: 0,
+      max: 1
     }
   ]
 };
@@ -95,6 +194,9 @@ export function live2DPromptCatalog(manifest = roomLive2DManifest) {
   const motions = manifest.motions
     .map((item) => `- ${item.id}: ${item.label}; use for ${item.prompt}`)
     .join('\n');
+  const parameters = manifest.parameterControls
+    .map((item) => `- ${item.id}: ${item.label}; use for ${item.prompt}; range ${item.min}..${item.max}${item.experimental ? '; experimental' : ''}`)
+    .join('\n');
 
   return [
     'Live2D control whitelist:',
@@ -102,6 +204,8 @@ export function live2DPromptCatalog(manifest = roomLive2DManifest) {
     expressions,
     'Available bodyPose ids:',
     motions,
-    'Control rules: only use listed ids. Use bodyPose for posture/body movement. Use bodyPose none when no body movement is needed.'
+    'Available fine parameter ids:',
+    parameters,
+    'Control rules: only use listed ids. Use bodyPose for posture/body movement. Use parameters for precise gaze, head, brow, mouth-shape, cheek, and breathing changes. Use bodyPose none when no body movement is needed.'
   ].join('\n');
 }

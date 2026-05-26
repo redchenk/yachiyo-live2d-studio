@@ -79,6 +79,50 @@ const bodyActions = [
   { label: 'Hit', bodyPose: 'emphasis' }
 ];
 
+const parameterActions = [
+  {
+    label: 'Look L',
+    parameters: [
+      { id: 'ParamEyeBallX', value: -0.35, weight: 0.95, durationMs: 900 },
+      { id: 'ParamAngleY', value: 5, weight: 0.45, durationMs: 900 }
+    ]
+  },
+  {
+    label: 'Look R',
+    parameters: [
+      { id: 'ParamEyeBallX', value: 0.35, weight: 0.95, durationMs: 900 },
+      { id: 'ParamAngleY', value: -5, weight: 0.45, durationMs: 900 }
+    ]
+  },
+  {
+    label: 'Tilt',
+    parameters: [
+      { id: 'ParamAngleZ', value: 8, weight: 0.85, durationMs: 1100 }
+    ]
+  },
+  {
+    label: 'Focus',
+    parameters: [
+      { id: 'ParamAngleX', value: -6, weight: 0.65, durationMs: 1000 },
+      { id: 'ParamBrowLY', value: 0.24, weight: 0.7, durationMs: 900 },
+      { id: 'ParamBrowRY', value: 0.24, weight: 0.7, durationMs: 900 }
+    ]
+  },
+  {
+    label: 'Warm',
+    parameters: [
+      { id: 'ParamMouthForm', value: 0.42, weight: 0.9, durationMs: 1000 },
+      { id: 'ParamCheek', value: 0.2, weight: 0.55, durationMs: 1100 }
+    ]
+  },
+  {
+    label: 'Breath',
+    parameters: [
+      { id: 'ParamBreath', value: 0.8, weight: 0.5, durationMs: 1800 }
+    ]
+  }
+];
+
 function uid(prefix = 'line') {
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
 }
@@ -159,6 +203,17 @@ function runBodyPose(bodyPose) {
     bodyPose,
     intensity: 0.85,
     durationMs: 2600
+  });
+}
+
+function runParameterTargets(parameters) {
+  const durationMs = Math.max(
+    1200,
+    ...parameters.map((item) => Number(item.durationMs) || 0)
+  );
+  dispatchRoomLive2D({
+    parameters,
+    durationMs
   });
 }
 
@@ -260,8 +315,9 @@ function buildLiveDirectorPrompt(audienceLines) {
     chat,
     'Act like an autonomous AI VTuber streamer. Reply with 1-2 short spoken sentences.',
     'Do not wait passively for instructions. React, tease gently, ask a tiny hook, or continue the topic.',
-    'Choose a visible bodyPose every turn unless the moment is intentionally calm.',
+    'Choose a visible bodyPose or precise parameter set every turn unless the moment is intentionally calm.',
     'Prefer nod, lean_in, sway, bounce, shake_head, or emphasis. Use expression and expressionMix too.',
+    'Use parameters for gaze, head tilt, brow shape, mouth form, cheek, and breathing nuance.',
     'Return the required JSON object only.'
   ].join('\n');
 }
@@ -427,6 +483,18 @@ onUnmounted(() => {
           type="button"
           :disabled="!live2d.ready.value"
           @click="runBodyPose(action.bodyPose)"
+        >
+          {{ action.label }}
+        </button>
+      </div>
+      <div class="live2d-actions live2d-parameter-actions">
+        <button
+          v-for="action in parameterActions"
+          :key="action.label"
+          class="live2d-action-btn"
+          type="button"
+          :disabled="!live2d.ready.value"
+          @click="runParameterTargets(action.parameters)"
         >
           {{ action.label }}
         </button>
