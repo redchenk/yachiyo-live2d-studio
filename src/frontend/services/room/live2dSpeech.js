@@ -1,5 +1,5 @@
 import { readRoomLLMSettings, readRoomTTSSettings } from './roomSettings';
-import { stripLive2DStageDirections } from './live2dText';
+import { cleanLive2DReply } from './live2dText';
 
 const DEFAULT_GPT_SOVITS_GPT_WEIGHT = 'GPT_weights_v2ProPlus/yachiyo-v2pro-e15.ckpt';
 const DEFAULT_GPT_SOVITS_SOVITS_WEIGHT = 'SoVITS_weights_v2ProPlus/yachiyo-v2pro_e8_s456.pth';
@@ -100,7 +100,7 @@ function compactSpeechText(text) {
 }
 
 function cleanTtsText(text) {
-  return stripLive2DStageDirections(text)
+  return cleanLive2DReply(text)
     .replace(/[ \t]{2,}/g, ' ')
     .replace(/\n{3,}/g, '\n\n')
     .trim();

@@ -8,7 +8,7 @@ import {
 } from '../services/room/live2dLlmControl';
 import { dispatchRoomLive2D } from '../services/room/live2dControl';
 import { createLive2DSpeechPlayer } from '../services/room/live2dSpeech';
-import { stripLive2DStageDirections } from '../services/room/live2dText';
+import { cleanLive2DReply } from '../services/room/live2dText';
 
 const live2d = useLive2D();
 const booted = ref(false);
@@ -127,7 +127,7 @@ function uid(prefix = 'line') {
 }
 
 function visibleYachiyoText(text) {
-  return stripLive2DStageDirections(text).replace(/[ \t]{2,}/g, ' ').trim();
+  return cleanLive2DReply(text).replace(/[ \t]{2,}/g, ' ').trim();
 }
 
 function pushLog(role, text, meta = {}) {

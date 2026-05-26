@@ -921,7 +921,7 @@ internal static class DesktopApiProxy
                 { "model", string.IsNullOrWhiteSpace(model) ? "gpt-4o-mini" : model },
                 { "instructions", systemPrompt },
                 { "input", inputList },
-                { "max_output_tokens", 420 }
+                { "max_output_tokens", 1000 }
             };
         }
 
@@ -941,7 +941,7 @@ internal static class DesktopApiProxy
             { "model", string.IsNullOrWhiteSpace(model) ? "gpt-4o-mini" : model },
             { "messages", messages },
             { "temperature", RegexContains(apiUrl + " " + model, @"moonshot|kimi") ? 1 : 0.4 },
-            { "max_tokens", 420 },
+            { "max_tokens", 1000 },
             { "stream", false }
         };
     }

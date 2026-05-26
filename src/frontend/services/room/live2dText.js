@@ -6,8 +6,75 @@ const LEADING_CUE_PATTERN = /^\s*([^，。！？,.!?;:、\n]{1,36})\s*[，。！
 const CUE_CLAUSE_SEPARATOR_PATTERN = /([，。！？,.!?;:、-]+)/u;
 const INLINE_STAGE_CUE_START_PATTERN = /^(?:我|她|他|八千代|yachiyo|角色|模型)?\s*(?:轻轻地?|微微|稍微|缓缓|慢慢|快速|用力|开心地?|害羞地?|认真地?|俏皮地?|gently|softly|slightly|slowly|quickly|playfully)?\s*(?:点头|點頭|颔首|頷首|摇头|搖頭|摆头|擺頭|靠近|凑近|湊近|贴近|貼近|前倾|前傾|后仰|後仰|左倾|左傾|右倾|右傾|摇摆|搖擺|晃动|晃動|轻晃|輕晃|蹦|跳|弹|彈|强调|強調|重音|眨眼|眨眼睛|微笑|害羞|脸红|臉紅|哭|流泪|流淚|清嗓|清了清嗓子|清喉咙|清了清喉咙|咳嗽|咳咳|干咳|輕咳|轻咳|clears?(?:\s|-|_)?(?:her|his|their)?(?:\s|-|_)?throat|cough(?:s|ing)?|nods?|nodding|shake(?:s|ing)?(?:\s|-|_)?head|lean(?:s|ing)?(?:\s|-|_)?(?:in|forward|left|right)?|sways?|swaying|bounces?|bouncing|emphasizes?|accent|hits?|tilts?(?:\s|-|_)?head|wink(?:s|ing)?|smiles?|smiling|blush(?:es|ing)?|cries|crying|tears)/iu;
 
+const LIVE2D_CONTROL_JSON_FIELD_PATTERN = /"(?:reply|text|message|live2d|act|pose|motion|emotion|expression|expressionMix|bodyPose|parameters|sequence|durationMs|intensity)"\s*:/i;
+
 function normalizeStageText(text) {
   return String(text || '').replace(/<think>[\s\S]*?<\/think>/gi, '');
+}
+
+function unwrapJsonFence(text) {
+  const value = String(text || '').trim();
+  const fenced = value.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
+  return fenced ? fenced[1].trim() : value;
+}
+
+function escapeRegExp(text) {
+  return String(text || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function decodeJsonEscape(char, tail) {
+  if (char === 'n') return ['\n', 0];
+  if (char === 'r') return ['\r', 0];
+  if (char === 't') return ['\t', 0];
+  if (char === 'b') return ['\b', 0];
+  if (char === 'f') return ['\f', 0];
+  if (char === 'u') {
+    const hex = tail.slice(0, 4);
+    if (/^[0-9a-f]{4}$/i.test(hex)) {
+      return [String.fromCharCode(parseInt(hex, 16)), 4];
+    }
+  }
+  return [char, 0];
+}
+
+export function readLive2DJsonStringField(text, fieldName) {
+  const value = unwrapJsonFence(normalizeStageText(text));
+  const marker = new RegExp(`"${escapeRegExp(fieldName)}"\\s*:\\s*"`, 'i').exec(value);
+  if (!marker) return '';
+
+  let result = '';
+  let index = marker.index + marker[0].length;
+  while (index < value.length) {
+    const char = value[index];
+    if (char === '"') return result.trim();
+    if (char === '\\') {
+      const next = value[index + 1];
+      if (!next) break;
+      const [decoded, consumed] = decodeJsonEscape(next, value.slice(index + 2));
+      result += decoded;
+      index += 2 + consumed;
+      continue;
+    }
+    result += char;
+    index += 1;
+  }
+  return result.trim();
+}
+
+export function stripLive2DControlJson(text) {
+  const value = unwrapJsonFence(normalizeStageText(text));
+  if (!value.trim() || !LIVE2D_CONTROL_JSON_FIELD_PATTERN.test(value)) return value;
+
+  const reply =
+    readLive2DJsonStringField(value, 'reply') ||
+    readLive2DJsonStringField(value, 'text') ||
+    readLive2DJsonStringField(value, 'message');
+  if (reply) return reply;
+
+  const startsLikeJson = /^[\s`]*[{[]/.test(String(text || ''));
+  return startsLikeJson || /"\s*(?:live2d|parameters|bodyPose|expressionMix)\s*"\s*:/i.test(value)
+    ? ''
+    : value;
 }
 
 function isStageDirection(text) {
@@ -103,5 +170,5 @@ export function stripLive2DStageDirections(text) {
 }
 
 export function cleanLive2DReply(text) {
-  return stripLive2DStageDirections(text) || '';
+  return stripLive2DStageDirections(stripLive2DControlJson(text)) || '';
 }

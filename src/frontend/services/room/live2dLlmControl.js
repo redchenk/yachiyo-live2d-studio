@@ -120,7 +120,7 @@ function mergeInferredLive2DIntent(explicitIntent, inferredIntent) {
   return normalizeLive2DIntent(next) || explicitIntent;
 }
 
-function parsePayload(rawText) {
+export function parseLive2DControlPayload(rawText) {
   const jsonText = extractJsonObject(rawText);
   try {
     const data = JSON.parse(jsonText);
@@ -184,7 +184,7 @@ function buildDirectRequestBody(settings, systemPrompt, history, message) {
         ...history.map((item) => ({ role: item.role === 'assistant' ? 'assistant' : 'user', content: String(item.content || '') })),
         { role: 'user', content: String(message || '') }
       ],
-      max_output_tokens: 420
+      max_output_tokens: 1000
     };
   }
   return {
@@ -195,7 +195,7 @@ function buildDirectRequestBody(settings, systemPrompt, history, message) {
       { role: 'user', content: String(message || '') }
     ],
     temperature: isKimiChatTarget(apiUrl, model) ? 1 : 0.4,
-    max_tokens: 420
+    max_tokens: 1000
   };
 }
 
@@ -270,7 +270,7 @@ export async function requestLive2DControl(message) {
     rawReply = pickReply(await response.json());
   }
 
-  const parsed = parsePayload(rawReply);
+  const parsed = parseLive2DControlPayload(rawReply);
   const nextHistory = [
     ...history,
     { role: 'user', content: String(message || '') },
