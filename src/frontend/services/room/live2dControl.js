@@ -258,7 +258,7 @@ function normalizeLive2DParameterTargets(value, manifest = roomLive2DManifest) {
     });
   }
 
-  return merged.slice(0, 8);
+  return merged.slice(0, 12);
 }
 
 export function normalizeLive2DEmotion(value, manifest = roomLive2DManifest) {
@@ -288,6 +288,90 @@ function normalizeExpressionMix(value, fallbackExpression, manifest) {
   return fallbackExpression ? [{ expression: fallbackExpression, weight: 1 }] : [];
 }
 
+function bodyPoseScale(intensity) {
+  return 0.45 + clamp01(intensity, 0.65) * 0.7;
+}
+
+function poseParameter(id, value, weight, durationMs, delayMs = 0) {
+  return {
+    id,
+    value,
+    weight,
+    durationMs,
+    delayMs
+  };
+}
+
+function bodyPoseParameterTargets(bodyPose, intensity, durationMs, manifest) {
+  const scale = bodyPoseScale(intensity);
+  const baseDuration = Math.min(Math.max(Math.round(durationMs * 0.72), 650), 2600);
+  const longDuration = Math.min(Math.max(Math.round(durationMs * 0.95), 900), 4200);
+  const subtleBreath = Math.min(1, 0.34 + scale * 0.22);
+  const rawTargets = {
+    nod: [
+      poseParameter('ParamAngleY', 6 * scale, 0.82, baseDuration),
+      poseParameter('ParamBodyAngleY', 2 * scale, 0.72, longDuration),
+      poseParameter('ParamBreath', subtleBreath, 0.36, longDuration)
+    ],
+    shake_head: [
+      poseParameter('ParamAngleX', -7 * scale, 0.78, baseDuration),
+      poseParameter('ParamBodyAngleX', -1.8 * scale, 0.62, longDuration),
+      poseParameter('ParamAngleZ', 2 * scale, 0.46, baseDuration)
+    ],
+    lean_in: [
+      poseParameter('ParamBodyAngleY', -3.4 * scale, 0.8, longDuration),
+      poseParameter('ParamAngleY', -2.6 * scale, 0.58, baseDuration),
+      poseParameter('ParamEyeBallY', -0.16 * scale, 0.52, baseDuration),
+      poseParameter('ParamBrowLY', 0.1 * scale, 0.36, baseDuration),
+      poseParameter('ParamBrowRY', 0.1 * scale, 0.36, baseDuration)
+    ],
+    lean_left: [
+      poseParameter('ParamBodyAngleX', -3.5 * scale, 0.78, longDuration),
+      poseParameter('ParamBodyAngleZ', -2.2 * scale, 0.64, longDuration),
+      poseParameter('ParamAngleZ', -3.8 * scale, 0.58, baseDuration),
+      poseParameter('ParamEyeBallX', -0.2 * scale, 0.48, baseDuration)
+    ],
+    lean_right: [
+      poseParameter('ParamBodyAngleX', 3.5 * scale, 0.78, longDuration),
+      poseParameter('ParamBodyAngleZ', 2.2 * scale, 0.64, longDuration),
+      poseParameter('ParamAngleZ', 3.8 * scale, 0.58, baseDuration),
+      poseParameter('ParamEyeBallX', 0.2 * scale, 0.48, baseDuration)
+    ],
+    sway: [
+      poseParameter('ParamBodyAngleX', 2.7 * scale, 0.56, longDuration),
+      poseParameter('ParamBodyAngleZ', 1.8 * scale, 0.52, longDuration),
+      poseParameter('ParamAngleZ', 1.7 * scale, 0.42, baseDuration),
+      poseParameter('ParamBreath', subtleBreath, 0.38, longDuration)
+    ],
+    bounce: [
+      poseParameter('ParamBodyAngleY', 2.9 * scale, 0.76, baseDuration),
+      poseParameter('ParamAngleY', 2.2 * scale, 0.54, baseDuration),
+      poseParameter('ParamMouthForm', 0.18 * scale, 0.38, baseDuration),
+      poseParameter('ParamBreath', Math.min(1, 0.44 + scale * 0.2), 0.4, longDuration)
+    ],
+    emphasis: [
+      poseParameter('ParamBodyAngleY', -2.1 * scale, 0.7, baseDuration),
+      poseParameter('ParamBodyAngleZ', -1.8 * scale, 0.54, baseDuration),
+      poseParameter('ParamAngleZ', -3.2 * scale, 0.58, baseDuration),
+      poseParameter('ParamMouthForm', 0.2 * scale, 0.42, baseDuration)
+    ]
+  }[bodyPose] || [];
+
+  return normalizeLive2DParameterTargets(rawTargets, manifest);
+}
+
+function mergeParameterTargets(explicitTargets, fallbackTargets) {
+  const merged = [...explicitTargets];
+  const seen = new Set(merged.map((item) => String(item.id || '').toLowerCase()));
+  for (const target of fallbackTargets) {
+    const key = String(target.id || '').toLowerCase();
+    if (!key || seen.has(key)) continue;
+    merged.push(target);
+    seen.add(key);
+  }
+  return merged.slice(0, 12);
+}
+
 function normalizeLive2DStep(input, manifest = roomLive2DManifest) {
   if (!input || typeof input !== 'object') return null;
   const rawExpression = input.expression || input.expressionId || input.face || input.mood || input.emotion || '';
@@ -295,7 +379,13 @@ function normalizeLive2DStep(input, manifest = roomLive2DManifest) {
   const motion = normalizeLive2DMotion(input.motion || input.action, manifest);
   const bodyPose = normalizeLive2DBodyPose(input.bodyPose || input.pose || input.posture || input.motion || input.action, manifest);
   const expressionMix = normalizeExpressionMix(input.expressionMix, expression, manifest);
-  const parameters = normalizeLive2DParameterTargets(input.parameters || input.parameterTargets || input.params, manifest);
+  const intensity = clamp01(input.intensity, 0.65);
+  const durationMs = normalizeDuration(input.durationMs || input.duration);
+  const explicitParameters = normalizeLive2DParameterTargets(input.parameters || input.parameterTargets || input.params, manifest);
+  const parameters = mergeParameterTargets(
+    explicitParameters,
+    bodyPose ? bodyPoseParameterTargets(bodyPose, intensity, durationMs, manifest) : []
+  );
   const primaryExpression = expressionMix[0]?.expression || expression;
   const hasControl = primaryExpression || motion || bodyPose || parameters.length;
   if (!hasControl) return null;
@@ -306,8 +396,8 @@ function normalizeLive2DStep(input, manifest = roomLive2DManifest) {
     motion: motion || null,
     bodyPose: bodyPose || null,
     parameters,
-    intensity: clamp01(input.intensity, 0.65),
-    durationMs: normalizeDuration(input.durationMs || input.duration),
+    intensity,
+    durationMs,
     delayMs: normalizeDelay(input.delayMs || input.delay)
   };
 }

@@ -6,6 +6,9 @@ export const ROOM_MODEL_SETTINGS_KEY = 'roomModelSettings';
 
 export const DEFAULT_GPT_SOVITS_GPT_WEIGHT = 'GPT_weights_v2ProPlus/yachiyo-v2pro-e15.ckpt';
 export const DEFAULT_GPT_SOVITS_SOVITS_WEIGHT = 'SoVITS_weights_v2ProPlus/yachiyo-v2pro_e8_s456.pth';
+export const DEFAULT_MIMO_TTS_API_URL = 'https://api.xiaomimimo.com/v1/chat/completions';
+export const DEFAULT_MIMO_TTS_MODEL = 'mimo-v2.5-tts';
+export const DEFAULT_MIMO_TTS_VOICE = 'mimo_default';
 
 export const DEFAULT_ROOM_LLM_SETTINGS = {
   apiUrl: 'https://api.openai.com/v1/chat/completions',
@@ -32,7 +35,8 @@ export const DEFAULT_ROOM_TTS_SETTINGS = {
 };
 
 export const DEFAULT_ROOM_MODEL_SETTINGS = {
-  lowQualityModel: false
+  lowQualityModel: false,
+  renderDpr: 2.5
 };
 
 function clone(value) {
@@ -45,6 +49,32 @@ function asText(value) {
 
 function asBoolean(value) {
   return Boolean(value);
+}
+
+function asNumber(value, fallback, min, max) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return fallback;
+  return Math.min(Math.max(numeric, min), max);
+}
+
+function defaultTtsApiUrl(provider) {
+  if (provider === 'gpt-sovits') return DEFAULT_ROOM_TTS_SETTINGS.apiUrl;
+  if (provider === 'mimo') return DEFAULT_MIMO_TTS_API_URL;
+  if (provider === 'openai' || provider === 'openai-compatible') return 'https://api.openai.com/v1/audio/speech';
+  return '';
+}
+
+function defaultTtsModel(provider) {
+  if (provider === 'gpt-sovits') return 'auto';
+  if (provider === 'mimo') return DEFAULT_MIMO_TTS_MODEL;
+  if (provider === 'openai' || provider === 'openai-compatible' || provider === 'custom') return 'tts-1';
+  return '';
+}
+
+function defaultTtsVoice(provider) {
+  if (provider === 'mimo') return DEFAULT_MIMO_TTS_VOICE;
+  if (provider === 'openai' || provider === 'openai-compatible' || provider === 'custom') return 'alloy';
+  return '';
 }
 
 export function normalizeRoomLLMSettings(settings = {}) {
@@ -62,13 +92,14 @@ export function normalizeRoomTTSSettings(settings = {}) {
   const merged = { ...DEFAULT_ROOM_TTS_SETTINGS, ...(settings || {}) };
   const provider = asText(merged.provider) || DEFAULT_ROOM_TTS_SETTINGS.provider;
   const localGptSovits = provider === 'gpt-sovits';
+  const providerDefaultUrl = defaultTtsApiUrl(provider);
   return {
     enabled: asBoolean(merged.enabled),
     provider,
-    apiUrl: asText(merged.apiUrl) || (localGptSovits ? DEFAULT_ROOM_TTS_SETTINGS.apiUrl : ''),
+    apiUrl: asText(merged.apiUrl) || providerDefaultUrl,
     apiKey: asText(merged.apiKey),
-    model: asText(merged.model) || (localGptSovits ? 'auto' : ''),
-    voice: asText(merged.voice),
+    model: asText(merged.model) || defaultTtsModel(provider),
+    voice: asText(merged.voice) || defaultTtsVoice(provider),
     refAudioPath: asText(merged.refAudioPath),
     promptText: String(merged.promptText || '').trim(),
     textLang: asText(merged.textLang) || 'auto',
@@ -82,7 +113,8 @@ export function normalizeRoomTTSSettings(settings = {}) {
 export function normalizeRoomModelSettings(settings = {}) {
   const merged = { ...DEFAULT_ROOM_MODEL_SETTINGS, ...(settings || {}) };
   return {
-    lowQualityModel: asBoolean(merged.lowQualityModel)
+    lowQualityModel: asBoolean(merged.lowQualityModel),
+    renderDpr: asNumber(merged.renderDpr, DEFAULT_ROOM_MODEL_SETTINGS.renderDpr, 1, 3)
   };
 }
 

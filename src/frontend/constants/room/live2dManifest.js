@@ -206,6 +206,6 @@ export function live2DPromptCatalog(manifest = roomLive2DManifest) {
     motions,
     'Available fine parameter ids:',
     parameters,
-    'Control rules: only use listed ids. Use bodyPose for posture/body movement. Use parameters for precise gaze, head, brow, mouth-shape, cheek, and breathing changes. Use bodyPose none when no body movement is needed.'
+    'Control rules: only use listed ids. Use bodyPose for posture/body movement. Pair visible bodyPose choices with precise ParamAngle and ParamBodyAngle targets. Use parameters for gaze, head, torso, brow, mouth-shape, cheek, and breathing changes. Use bodyPose none when no body movement is needed.'
   ].join('\n');
 }

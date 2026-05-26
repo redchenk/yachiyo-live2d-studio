@@ -5,6 +5,9 @@ import {
   DEFAULT_ROOM_LLM_SETTINGS,
   DEFAULT_ROOM_MODEL_SETTINGS,
   DEFAULT_ROOM_TTS_SETTINGS,
+  DEFAULT_MIMO_TTS_API_URL,
+  DEFAULT_MIMO_TTS_MODEL,
+  DEFAULT_MIMO_TTS_VOICE,
   normalizeRoomLLMSettings,
   normalizeRoomModelSettings,
   normalizeRoomTTSSettings,
@@ -26,9 +29,18 @@ const tabs = [
 
 const providerOptions = [
   { value: 'gpt-sovits', label: 'GPT-SoVITS' },
+  { value: 'mimo', label: 'Xiaomi MiMo' },
   { value: 'openai', label: 'OpenAI TTS' },
   { value: 'openai-compatible', label: 'OpenAI Compatible' },
   { value: 'custom', label: 'Custom Proxy' }
+];
+
+const renderDprOptions = [
+  { value: 1, label: '1x' },
+  { value: 1.5, label: '1.5x' },
+  { value: 2, label: '2x' },
+  { value: 2.5, label: '2.5x' },
+  { value: 3, label: '3x' }
 ];
 
 const languageOptions = [
@@ -51,6 +63,7 @@ let statusTimer = 0;
 const localTts = computed(() => tts.provider === 'gpt-sovits');
 const ttsApiPlaceholder = computed(() => {
   if (tts.provider === 'openai') return 'https://api.openai.com/v1/audio/speech';
+  if (tts.provider === 'mimo') return DEFAULT_MIMO_TTS_API_URL;
   if (tts.provider === 'gpt-sovits') return 'http://localhost:9880/tts';
   return 'https://api.example.com/v1/audio/speech';
 });
@@ -84,9 +97,10 @@ function resetCurrentTab() {
 function applyTtsProvider() {
   if (tts.provider === 'gpt-sovits') {
     Object.assign(tts, {
-      apiUrl: tts.apiUrl || DEFAULT_ROOM_TTS_SETTINGS.apiUrl,
+      apiUrl: DEFAULT_ROOM_TTS_SETTINGS.apiUrl,
       apiKey: '',
       model: 'auto',
+      voice: '',
       useProxy: false,
       textLang: tts.textLang || 'auto',
       promptLang: tts.promptLang || 'ja'
@@ -96,17 +110,28 @@ function applyTtsProvider() {
 
   if (tts.provider === 'openai') {
     Object.assign(tts, {
-      apiUrl: tts.apiUrl || 'https://api.openai.com/v1/audio/speech',
-      model: tts.model && tts.model !== 'auto' ? tts.model : 'tts-1',
-      voice: tts.voice || 'alloy',
+      apiUrl: 'https://api.openai.com/v1/audio/speech',
+      model: 'tts-1',
+      voice: 'alloy',
+      useProxy: true
+    });
+    return;
+  }
+
+  if (tts.provider === 'mimo') {
+    Object.assign(tts, {
+      apiUrl: DEFAULT_MIMO_TTS_API_URL,
+      model: DEFAULT_MIMO_TTS_MODEL,
+      voice: DEFAULT_MIMO_TTS_VOICE,
       useProxy: true
     });
     return;
   }
 
   Object.assign(tts, {
-    model: tts.model && tts.model !== 'auto' ? tts.model : 'tts-1',
-    voice: tts.voice || 'alloy',
+    apiUrl: 'https://api.example.com/v1/audio/speech',
+    model: 'tts-1',
+    voice: 'alloy',
     useProxy: true
   });
 }
@@ -242,6 +267,12 @@ onUnmounted(() => {
         <label class="studio-check-row">
           <input v-model="model.lowQualityModel" type="checkbox">
           <span>Low quality model</span>
+        </label>
+        <label>
+          <span>Render Scale</span>
+          <select v-model.number="model.renderDpr">
+            <option v-for="option in renderDprOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
+          </select>
         </label>
       </section>
 

@@ -59,11 +59,34 @@ function readRoomModelSettings() {
   }
 }
 
+function clampLive2DRenderDpr(value, fallback, max = 3) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return fallback;
+  return Math.min(Math.max(numeric, 1), max);
+}
+
 export function live2DPerformanceMode() {
   if (readRoomModelSettings().lowQualityModel) return 'lite';
   if (!isMobileLive2DDevice()) return 'standard';
   if (isConstrainedMobileLive2DDevice()) return 'lite';
   return 'low';
+}
+
+export function live2DRenderDpr(mode = live2DPerformanceMode()) {
+  const settings = readRoomModelSettings();
+  const maxDpr = mode === 'standard' && !isMobileLive2DDevice() ? 3 : 1.5;
+  if (settings.renderDpr !== undefined && settings.renderDpr !== null && settings.renderDpr !== '') {
+    return clampLive2DRenderDpr(settings.renderDpr, mode === 'standard' ? 2.5 : 1, maxDpr);
+  }
+  if (mode !== 'standard' || isMobileLive2DDevice()) return 1;
+  return 2.5;
+}
+
+function applyLive2DGlobalSettings() {
+  const mode = live2DPerformanceMode();
+  window.TSUKUYOMI_LIVE2D_PERFORMANCE = mode;
+  window.TSUKUYOMI_LIVE2D_DPR = live2DRenderDpr(mode);
+  return mode;
 }
 
 function live2DModelJson(mode = live2DPerformanceMode()) {
@@ -73,7 +96,7 @@ function live2DModelJson(mode = live2DPerformanceMode()) {
 }
 
 export function preloadLive2DResources() {
-  const mode = live2DPerformanceMode();
+  const mode = applyLive2DGlobalSettings();
   const modelJson = live2DModelJson(mode);
   if (mode !== 'standard') {
     [
@@ -119,9 +142,9 @@ export function preloadLive2DResources() {
 }
 
 export async function ensureLive2DScripts() {
+  applyLive2DGlobalSettings();
   if (!loadingPromise) {
     window.TSUKUYOMI_EXTERNAL_LIVE2D = true;
-    window.TSUKUYOMI_LIVE2D_PERFORMANCE = live2DPerformanceMode();
     loadingPromise = loadScript(assetUrl(CORE_SCRIPT)).then(() => loadScript(assetUrl(ROOM_SCRIPT)));
   }
   return loadingPromise;
@@ -150,6 +173,7 @@ export async function initLive2DRoom() {
 
   initPromise = (async () => {
     await ensureLive2DScripts();
+    applyLive2DGlobalSettings();
     window.TSUKUYOMI_LIVE2D_READY = false;
     if (initialized) window.destroyTsukuyomiLive2DRoom?.();
     if (typeof window.initTsukuyomiLive2DRoom !== 'function') {

@@ -720,10 +720,15 @@ internal static class DesktopApiProxy
             {
                 provider = "gpt-sovits";
             }
+            provider = provider.ToLowerInvariant();
 
             if (provider == "gpt-sovits")
             {
                 return GptSovitsTts(input);
+            }
+            if (provider == "mimo" || RegexContains(GetString(input, "apiUrl"), @"xiaomimimo|token-plan-cn"))
+            {
+                return MimoTts(input);
             }
 
             return OpenAiTts(input);
@@ -762,6 +767,12 @@ internal static class DesktopApiProxy
         return data != null && data.TryGetValue(key, out value) ? value as object[] : null;
     }
 
+    private static Dictionary<string, object> GetObject(Dictionary<string, object> data, string key)
+    {
+        object value;
+        return data != null && data.TryGetValue(key, out value) ? value as Dictionary<string, object> : null;
+    }
+
     private static string NormalizeChatUrl(string apiUrl, string model)
     {
         var url = (apiUrl ?? string.Empty).Trim();
@@ -775,6 +786,20 @@ internal static class DesktopApiProxy
         }
         if (RegexContains(url + " " + model, @"deepseek|dashscope|aliyuncs|openai|openrouter|moonshot|bigmodel|zhipu|siliconflow|volces|ark|groq|mistral|together|perplexity|x\.ai|generativelanguage|xiaomimimo|token-plan-cn") &&
             !RegexContains(url, @"/(chat/completions|responses)/?$"))
+        {
+            return url.TrimEnd('/') + "/chat/completions";
+        }
+        return url;
+    }
+
+    private static string NormalizeMimoTtsUrl(string apiUrl)
+    {
+        var url = (apiUrl ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(url))
+        {
+            return "https://api.xiaomimimo.com/v1/chat/completions";
+        }
+        if (RegexContains(url, @"(xiaomimimo\.com|token-plan-cn\.xiaomimimo\.com)/v1/?$"))
         {
             return url.TrimEnd('/') + "/chat/completions";
         }
@@ -832,6 +857,28 @@ internal static class DesktopApiProxy
             if (ch >= 0x4e00 && ch <= 0x9fff) return "zh";
         }
         return "en";
+    }
+
+    private static string TtsReadInstruction(string text, string textLang)
+    {
+        var lang = NormalizeGptSovitsLang(textLang, "auto");
+        if (lang == "auto")
+        {
+            lang = DetectTextLang(text);
+        }
+        if (lang == "ja")
+        {
+            return "Read only the following Japanese text in a soft, natural voice. Do not read explanations, translations, action cues, or stage directions.";
+        }
+        if (lang == "ko")
+        {
+            return "Read only the following Korean text in a soft, natural voice. Do not read explanations, translations, action cues, or stage directions.";
+        }
+        if (lang == "zh" || lang == "yue")
+        {
+            return "Read only the following Chinese text in a soft, natural voice. Do not read explanations, translations, action cues, or stage directions.";
+        }
+        return "Read only the following English text in a soft, natural voice. Do not read explanations, translations, action cues, or stage directions.";
     }
 
     private static Dictionary<string, string> ChatHeaders(string apiUrl, string apiKey)
@@ -954,6 +1001,70 @@ internal static class DesktopApiProxy
         };
     }
 
+    private static StudioApiResponse MimoTts(Dictionary<string, object> input)
+    {
+        var text = GetString(input, "text");
+        var apiKey = GetString(input, "apiKey");
+        var apiUrl = NormalizeMimoTtsUrl(GetString(input, "apiUrl"));
+        ValidateRemoteOrLoopbackUrl(apiUrl);
+        if (string.IsNullOrWhiteSpace(text) || string.IsNullOrWhiteSpace(apiKey))
+        {
+            return JsonError(400, "MiMo TTS text and API Key are required.");
+        }
+
+        var model = GetString(input, "model");
+        if (string.IsNullOrWhiteSpace(model))
+        {
+            model = "mimo-v2.5-tts";
+        }
+        var voice = GetString(input, "voice");
+        if (string.IsNullOrWhiteSpace(voice))
+        {
+            voice = "mimo_default";
+        }
+
+        var payload = new Dictionary<string, object>
+        {
+            { "model", model },
+            { "messages", new object[]
+                {
+                    new Dictionary<string, object> { { "role", "user" }, { "content", TtsReadInstruction(text, GetString(input, "textLang")) } },
+                    new Dictionary<string, object> { { "role", "assistant" }, { "content", text } }
+                }
+            },
+            { "modalities", new object[] { "audio" } },
+            { "audio", new Dictionary<string, object> { { "format", "wav" }, { "voice", voice } } }
+        };
+
+        var provider = PostBytes(apiUrl, Json.Serialize(payload), new Dictionary<string, string> { { "api-key", apiKey } });
+        if (!string.IsNullOrWhiteSpace(provider.ContentType) &&
+            provider.ContentType.StartsWith("audio/", StringComparison.OrdinalIgnoreCase))
+        {
+            return new StudioApiResponse
+            {
+                StatusCode = 200,
+                StatusText = "OK",
+                ContentType = provider.ContentType,
+                Body = provider.Body
+            };
+        }
+
+        var responseText = Encoding.UTF8.GetString(provider.Body);
+        var audioPayload = PickAudioBase64(DeserializeObject(responseText));
+        if (string.IsNullOrWhiteSpace(audioPayload))
+        {
+            throw new InvalidOperationException("Unable to parse MiMo TTS audio data.");
+        }
+
+        return new StudioApiResponse
+        {
+            StatusCode = 200,
+            StatusText = "OK",
+            ContentType = "audio/wav",
+            Body = DecodeAudioPayload(audioPayload)
+        };
+    }
+
     private static StudioApiResponse OpenAiTts(Dictionary<string, object> input)
     {
         var text = GetString(input, "text");
@@ -1017,6 +1128,54 @@ internal static class DesktopApiProxy
             parts.Add(Uri.EscapeDataString(pair.Key) + "=" + Uri.EscapeDataString(pair.Value));
         }
         return string.Join("&", parts);
+    }
+
+    private static string PickAudioBase64(Dictionary<string, object> data)
+    {
+        var choices = GetArray(data, "choices");
+        if (choices != null && choices.Length > 0)
+        {
+            var first = choices[0] as Dictionary<string, object>;
+            var message = GetObject(first, "message");
+            var audioObject = GetObject(message, "audio");
+            var nestedAudio = GetString(audioObject, "data");
+            if (!string.IsNullOrWhiteSpace(nestedAudio)) return nestedAudio;
+
+            var messageAudio = GetString(message, "audio");
+            if (!string.IsNullOrWhiteSpace(messageAudio)) return messageAudio;
+        }
+
+        var audio = GetObject(data, "audio");
+        var audioData = GetString(audio, "data");
+        if (!string.IsNullOrWhiteSpace(audioData)) return audioData;
+
+        var dataObject = GetObject(data, "data");
+        var dataAudio = GetString(dataObject, "audio");
+        if (!string.IsNullOrWhiteSpace(dataAudio)) return dataAudio;
+
+        return string.Empty;
+    }
+
+    private static byte[] DecodeAudioPayload(string encoded)
+    {
+        var text = (encoded ?? string.Empty).Trim();
+        text = System.Text.RegularExpressions.Regex.Replace(
+            text,
+            @"^data:audio\/\w+;base64,",
+            string.Empty,
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+
+        if (text.Length % 2 == 0 && System.Text.RegularExpressions.Regex.IsMatch(text, @"\A[0-9a-f]+\z", System.Text.RegularExpressions.RegexOptions.IgnoreCase))
+        {
+            var bytes = new byte[text.Length / 2];
+            for (var i = 0; i < bytes.Length; i++)
+            {
+                bytes[i] = Convert.ToByte(text.Substring(i * 2, 2), 16);
+            }
+            return bytes;
+        }
+
+        return Convert.FromBase64String(text);
     }
 
     private static string PickReply(Dictionary<string, object> data)

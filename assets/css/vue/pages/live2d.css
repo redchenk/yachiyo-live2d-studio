@@ -46,8 +46,6 @@ body.vue-live2d-route {
     height: min(90vh, 900px);
     transform: translateX(-50%);
     transform-origin: 50% 84%;
-    animation: live2dStageIdle 7.5s ease-in-out infinite;
-    will-change: transform;
 }
 
 .live2d-model canvas {
@@ -56,44 +54,7 @@ body.vue-live2d-route {
     display: block;
     background: transparent;
     filter: saturate(1) contrast(0.98) drop-shadow(0 18px 38px rgba(0, 0, 0, 0.46));
-    transform-origin: 50% 84%;
     touch-action: none;
-}
-
-.live2d-model[data-speaking="true"] canvas {
-    animation: live2dSpeakingPulse 0.62s ease-in-out infinite;
-}
-
-.live2d-model[data-pose="nod"] {
-    animation: live2dPoseNod 1.25s cubic-bezier(0.22, 1, 0.36, 1) 1;
-}
-
-.live2d-model[data-pose="shake_head"] {
-    animation: live2dPoseShakeHead 1.4s cubic-bezier(0.22, 1, 0.36, 1) 1;
-}
-
-.live2d-model[data-pose="lean_in"] {
-    animation: live2dPoseLeanIn 1.7s cubic-bezier(0.22, 1, 0.36, 1) 1;
-}
-
-.live2d-model[data-pose="lean_left"] {
-    animation: live2dPoseLeanLeft 1.8s cubic-bezier(0.22, 1, 0.36, 1) 1;
-}
-
-.live2d-model[data-pose="lean_right"] {
-    animation: live2dPoseLeanRight 1.8s cubic-bezier(0.22, 1, 0.36, 1) 1;
-}
-
-.live2d-model[data-pose="sway"] {
-    animation: live2dPoseSway 2.4s ease-in-out 1;
-}
-
-.live2d-model[data-pose="bounce"] {
-    animation: live2dPoseBounce 1.35s cubic-bezier(0.2, 1, 0.22, 1) 1;
-}
-
-.live2d-model[data-pose="emphasis"] {
-    animation: live2dPoseEmphasis 1.15s cubic-bezier(0.2, 1, 0.22, 1) 1;
 }
 
 .live2d-broadcast-hud {
@@ -477,132 +438,6 @@ body.vue-live2d-route {
 @keyframes live2dSpin {
     to {
         transform: rotate(360deg);
-    }
-}
-
-@keyframes live2dStageIdle {
-    0%,
-    100% {
-        transform: translateX(-50%) translateY(0) rotate(-0.35deg) scale(1);
-    }
-    50% {
-        transform: translateX(-50%) translateY(-0.9vh) rotate(0.45deg) scale(1.006);
-    }
-}
-
-@keyframes live2dSpeakingPulse {
-    0%,
-    100% {
-        transform: translateY(0) scale(1);
-        filter: saturate(1) contrast(0.98) drop-shadow(0 18px 38px rgba(0, 0, 0, 0.46));
-    }
-    50% {
-        transform: translateY(-0.28vh) scale(1.004);
-        filter: saturate(1.04) contrast(1) drop-shadow(0 20px 42px rgba(0, 0, 0, 0.5));
-    }
-}
-
-@keyframes live2dPoseNod {
-    0%,
-    100% {
-        transform: translateX(-50%) translateY(0) rotate(0deg) scale(1);
-    }
-    28% {
-        transform: translateX(-50%) translateY(2.2vh) rotate(0deg) scale(0.995);
-    }
-    58% {
-        transform: translateX(-50%) translateY(-1.2vh) rotate(0deg) scale(1.006);
-    }
-}
-
-@keyframes live2dPoseShakeHead {
-    0%,
-    100% {
-        transform: translateX(-50%) translateY(0) rotate(0deg) scale(1);
-    }
-    20% {
-        transform: translateX(calc(-50% - 1.9vw)) translateY(-0.2vh) rotate(-4.2deg) scale(1);
-    }
-    48% {
-        transform: translateX(calc(-50% + 1.8vw)) translateY(-0.4vh) rotate(4deg) scale(1);
-    }
-    72% {
-        transform: translateX(calc(-50% - 0.9vw)) translateY(0) rotate(-2deg) scale(1);
-    }
-}
-
-@keyframes live2dPoseLeanIn {
-    0%,
-    100% {
-        transform: translateX(-50%) translateY(0) rotate(0deg) scale(1);
-    }
-    45%,
-    78% {
-        transform: translateX(-50%) translateY(-2.4vh) rotate(0deg) scale(1.075);
-    }
-}
-
-@keyframes live2dPoseLeanLeft {
-    0%,
-    100% {
-        transform: translateX(-50%) translateY(0) rotate(0deg) scale(1);
-    }
-    46%,
-    78% {
-        transform: translateX(calc(-50% - 4.2vw)) translateY(-1vh) rotate(-7deg) scale(1.035);
-    }
-}
-
-@keyframes live2dPoseLeanRight {
-    0%,
-    100% {
-        transform: translateX(-50%) translateY(0) rotate(0deg) scale(1);
-    }
-    46%,
-    78% {
-        transform: translateX(calc(-50% + 4.2vw)) translateY(-1vh) rotate(7deg) scale(1.035);
-    }
-}
-
-@keyframes live2dPoseSway {
-    0%,
-    100% {
-        transform: translateX(-50%) translateY(0) rotate(0deg) scale(1);
-    }
-    25% {
-        transform: translateX(calc(-50% - 2.6vw)) translateY(-0.8vh) rotate(-3.6deg) scale(1.012);
-    }
-    58% {
-        transform: translateX(calc(-50% + 2.4vw)) translateY(-1.1vh) rotate(3.4deg) scale(1.018);
-    }
-}
-
-@keyframes live2dPoseBounce {
-    0%,
-    100% {
-        transform: translateX(-50%) translateY(0) rotate(0deg) scale(1);
-    }
-    18% {
-        transform: translateX(-50%) translateY(1.6vh) rotate(0deg) scale(0.985);
-    }
-    42% {
-        transform: translateX(-50%) translateY(-3.4vh) rotate(-1deg) scale(1.052);
-    }
-    70% {
-        transform: translateX(-50%) translateY(-1vh) rotate(1deg) scale(1.018);
-    }
-}
-
-@keyframes live2dPoseEmphasis {
-    0%,
-    100% {
-        transform: translateX(-50%) translateY(0) rotate(0deg) scale(1);
-    }
-    35% {
-        transform: translateX(-50%) translateY(-1.9vh) rotate(-3.2deg) scale(1.04);
-    }
-    62% {
-        transform: translateX(-50%) translateY(0.8vh) rotate(2.8deg) scale(1.005);
     }
 }
 

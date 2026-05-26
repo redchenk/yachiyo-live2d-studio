@@ -16,7 +16,6 @@ const liveTopic = ref('late-night AI VTuber test stream');
 const audienceInput = ref('');
 const audienceQueue = ref([]);
 const showLog = ref([]);
-const stagePose = ref('');
 const llmState = ref({
   loading: false,
   error: '',
@@ -36,7 +35,6 @@ const speechState = ref({
   error: ''
 });
 
-let stagePoseTimer = 0;
 let liveTimer = 0;
 let liveTurnInFlight = false;
 let speechPlayer = null;
@@ -127,28 +125,6 @@ function uid(prefix = 'line') {
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
 }
 
-function clampDuration(value, fallback = 2400) {
-  const numeric = Number(value);
-  if (!Number.isFinite(numeric)) return fallback;
-  return Math.min(Math.max(Math.round(numeric), 900), 12000);
-}
-
-function normalizeStagePose(value) {
-  const pose = String(value || '').trim().toLowerCase().replace(/\s+/g, '_');
-  if (!pose || pose === 'none' || pose === 'null') return '';
-  if (['tap_body', 'body_tap', 'tapbody'].includes(pose)) return 'emphasis';
-  return [
-    'nod',
-    'shake_head',
-    'lean_in',
-    'lean_left',
-    'lean_right',
-    'sway',
-    'bounce',
-    'emphasis'
-  ].includes(pose) ? pose : '';
-}
-
 function pushLog(role, text, meta = {}) {
   const value = String(text || '').trim();
   if (!value) return;
@@ -162,20 +138,6 @@ function pushLog(role, text, meta = {}) {
       createdAt: Date.now()
     }
   ].slice(-10);
-}
-
-function onRoomAct(event) {
-  const detail = event.detail || {};
-  const pose = normalizeStagePose(detail.bodyPose || detail.motion);
-  if (!pose) return;
-  window.clearTimeout(stagePoseTimer);
-  stagePose.value = '';
-  window.requestAnimationFrame(() => {
-    stagePose.value = pose;
-  });
-  stagePoseTimer = window.setTimeout(() => {
-    stagePose.value = '';
-  }, clampDuration(detail.durationMs));
 }
 
 async function init() {
@@ -385,14 +347,11 @@ function sendAudienceLine() {
 }
 
 onMounted(() => {
-  window.addEventListener('tsukuyomi:room-act', onRoomAct);
   init();
 });
 
 onUnmounted(() => {
   stopLiveDirector();
-  window.clearTimeout(stagePoseTimer);
-  window.removeEventListener('tsukuyomi:room-act', onRoomAct);
   speechPlayer?.destroy();
   speechPlayer = null;
   delete window.TSUKUYOMI_LIVE2D_DISABLE_POINTER;
@@ -406,7 +365,6 @@ onUnmounted(() => {
       <div
         id="live2d-container"
         class="live2d-model"
-        :data-pose="stagePose || undefined"
         :data-speaking="speechState.status === 'playing' ? 'true' : undefined"
       ></div>
       <div v-if="live2d.error.value" class="live2d-error" role="alert">{{ live2d.error.value }}</div>

@@ -1,4 +1,4 @@
-import { readJson } from './roomStorage';
+import { readRoomTTSSettings } from './roomSettings';
 
 const DEFAULT_GPT_SOVITS_GPT_WEIGHT = 'GPT_weights_v2ProPlus/yachiyo-v2pro-e15.ckpt';
 const DEFAULT_GPT_SOVITS_SOVITS_WEIGHT = 'SoVITS_weights_v2ProPlus/yachiyo-v2pro_e8_s456.pth';
@@ -228,7 +228,7 @@ export function createLive2DSpeechPlayer({ onState } = {}) {
   async function play(text) {
     const speechText = String(text || '').trim();
     if (!speechText) return;
-    const settings = readJson('roomTTSSettings', {});
+    const settings = readRoomTTSSettings();
     if (!settings.enabled) {
       setState({ status: 'disabled', error: '' });
       return;
