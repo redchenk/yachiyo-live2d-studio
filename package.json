@@ -1,0 +1,20 @@
+{
+  "name": "yachiyo-live2d-studio",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Standalone Live2D Studio for Yachiyo AI VTuber tests.",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --config live2d-studio/vite.config.js --host 127.0.0.1 --port 5174",
+    "build": "vite build --config live2d-studio/vite.config.js",
+    "build:live2d-studio": "vite build --config live2d-studio/vite.config.js"
+  },
+  "dependencies": {
+    "@vitejs/plugin-vue": "^6.0.6",
+    "vite": "^8.0.5",
+    "vue": "^3.5.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}
