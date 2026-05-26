@@ -149,7 +149,7 @@ export function clearLive2DLLMHistory() {
 export async function requestLive2DControl(message) {
   const settings = readJson('roomLLMSettings', {});
   if (!settings.apiKey || !settings.apiUrl) {
-    throw new Error('Missing Room LLM settings. Configure LLM in /room/settings first.');
+    throw new Error('Missing LLM settings. Configure LLM in Studio Settings first.');
   }
 
   const history = readLive2DLLMHistory();

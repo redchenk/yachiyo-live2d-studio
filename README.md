@@ -6,13 +6,19 @@
 
 在 Windows 上双击仓库根目录的 `Start-Live2D-Studio.exe`。
 
-它会启动本地静态服务并打开：
+它会打开一个独立桌面窗口，内部使用 WebView2 承载 Live2D Studio，不再拉起系统浏览器。
 
-```text
-http://127.0.0.1:3288/live2d-studio/
-```
+不要把 exe 单独挪走，它需要同目录下的 `dist/`、`lib/`、`models/`、`assets/` 以及 WebView2 相关 DLL。
 
-保持控制台窗口打开；按 `Ctrl+C` 停止服务。不要把 exe 单独挪走，它需要同目录下的 `dist/`、`lib/`、`models/` 和 `assets/`。
+## LLM / TTS 配置
+
+启动应用后点击右上角齿轮按钮，在 Settings 面板里配置：
+
+- `LLM`: API URL、API Key、模型名、额外系统提示词。
+- `TTS`: GPT-SoVITS 本机 API，或 OpenAI 兼容语音 API。
+- `Model`: 低质量模型开关。
+
+配置会保存在当前应用本地存储里，Live2D 的 `LLM Act`、`Start`、`Voice` 会直接读取这些设置。
 
 ## 开发模式
 
@@ -27,26 +33,10 @@ npm run dev
 npm run build
 ```
 
-## LLM / TTS 配置
+重新编译桌面启动器：
 
-当前页面读取浏览器 `localStorage` 中的 Room 设置。可以先在浏览器控制台写入示例配置：
-
-```js
-localStorage.setItem('roomLLMSettings', JSON.stringify({
-  apiKey: 'YOUR_API_KEY',
-  apiUrl: 'https://api.openai.com/v1/chat/completions',
-  model: 'gpt-4o-mini',
-  useProxy: false
-}));
-
-localStorage.setItem('roomTTSSettings', JSON.stringify({
-  enabled: true,
-  provider: 'gpt-sovits',
-  apiUrl: 'http://localhost:9880/tts',
-  useProxy: false,
-  textLang: 'auto',
-  promptLang: 'ja'
-}));
+```powershell
+powershell -ExecutionPolicy Bypass -File .\tools\live2d-launcher\build.ps1
 ```
 
-刷新页面后使用 `LLM Act` 或 `Start`。
+Windows 需要已安装 Microsoft Edge WebView2 Runtime。Windows 10/11 通常已经自带。

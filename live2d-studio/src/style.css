@@ -1,2 +1,281 @@
 @import url("../../assets/css/vue/foundation.css");
 @import url("../../assets/css/vue/pages/live2d.css");
+
+.studio-app-shell {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+}
+
+.studio-floating-toolbar {
+  position: fixed;
+  top: 1rem;
+  right: 1rem;
+  z-index: 52;
+  display: flex;
+  gap: 0.5rem;
+}
+
+.studio-icon-btn,
+.studio-primary-btn,
+.studio-secondary-btn,
+.studio-settings-tabs button {
+  border: 1px solid rgba(235, 242, 255, 0.18);
+  border-radius: 7px;
+  color: rgba(248, 251, 255, 0.94);
+  background: rgba(255, 255, 255, 0.08);
+  font: inherit;
+  font-weight: 800;
+  cursor: pointer;
+  transition: background 0.18s ease, border-color 0.18s ease, transform 0.18s ease;
+}
+
+.studio-icon-btn {
+  width: 2.45rem;
+  height: 2.45rem;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  background: rgba(10, 15, 29, 0.62);
+  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.25);
+  backdrop-filter: blur(18px) saturate(1.08);
+}
+
+.studio-icon-btn:hover,
+.studio-primary-btn:hover,
+.studio-secondary-btn:hover,
+.studio-settings-tabs button:hover {
+  border-color: rgba(158, 232, 255, 0.5);
+  background: rgba(158, 232, 255, 0.16);
+  transform: translateY(-1px);
+}
+
+.studio-settings-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 55;
+  border: 0;
+  padding: 0;
+  background: rgba(3, 6, 15, 0.34);
+  cursor: default;
+}
+
+.studio-settings-panel {
+  position: fixed;
+  top: 1rem;
+  right: 1rem;
+  bottom: 1rem;
+  z-index: 60;
+  width: min(28rem, calc(100vw - 2rem));
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid rgba(235, 242, 255, 0.2);
+  border-radius: 8px;
+  color: rgba(248, 251, 255, 0.94);
+  background: rgba(8, 12, 25, 0.88);
+  box-shadow: 0 24px 72px rgba(0, 0, 0, 0.36);
+  backdrop-filter: blur(22px) saturate(1.08);
+}
+
+.studio-settings-header {
+  min-height: 4.1rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.9rem 1rem;
+  border-bottom: 1px solid rgba(235, 242, 255, 0.12);
+}
+
+.studio-settings-header div {
+  display: grid;
+  gap: 0.16rem;
+}
+
+.studio-settings-header span {
+  color: rgba(235, 242, 255, 0.58);
+  font-size: 0.72rem;
+  font-weight: 850;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.studio-settings-header strong {
+  font-size: 1.05rem;
+}
+
+.studio-settings-tabs {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.45rem;
+  padding: 0.75rem 1rem 0.2rem;
+}
+
+.studio-settings-tabs button {
+  min-height: 2.25rem;
+  color: rgba(235, 242, 255, 0.68);
+  font-size: 0.78rem;
+}
+
+.studio-settings-tabs button.active {
+  border-color: rgba(158, 232, 255, 0.5);
+  color: rgba(248, 251, 255, 0.94);
+  background: rgba(158, 232, 255, 0.17);
+}
+
+.studio-settings-form {
+  min-height: 0;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+}
+
+.studio-settings-section {
+  min-height: 0;
+  flex: 1;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-content: start;
+  gap: 0.75rem;
+  padding: 0.85rem 1rem 1rem;
+  overflow: auto;
+}
+
+.studio-settings-section label {
+  min-width: 0;
+  display: grid;
+  gap: 0.36rem;
+  color: rgba(235, 242, 255, 0.7);
+  font-size: 0.76rem;
+  font-weight: 850;
+}
+
+.studio-wide-field,
+.studio-check-row {
+  grid-column: 1 / -1;
+}
+
+.studio-check-row {
+  min-height: 2.45rem;
+  display: flex !important;
+  align-items: center;
+  gap: 0.56rem !important;
+  padding: 0 0.72rem;
+  border: 1px solid rgba(235, 242, 255, 0.15);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.studio-check-row input {
+  width: 1rem;
+  height: 1rem;
+  accent-color: #9ee8ff;
+}
+
+.studio-settings-section input:not([type="checkbox"]),
+.studio-settings-section select,
+.studio-settings-section textarea {
+  width: 100%;
+  border: 1px solid rgba(235, 242, 255, 0.18);
+  border-radius: 7px;
+  padding: 0.66rem 0.72rem;
+  outline: none;
+  color: rgba(248, 251, 255, 0.94);
+  background: rgba(3, 7, 18, 0.42);
+  font: inherit;
+  font-size: 0.82rem;
+  line-height: 1.5;
+}
+
+.studio-settings-section textarea {
+  min-height: 8rem;
+  resize: vertical;
+}
+
+.studio-settings-section input:focus,
+.studio-settings-section select:focus,
+.studio-settings-section textarea:focus {
+  border-color: rgba(158, 232, 255, 0.54);
+  box-shadow: 0 0 0 3px rgba(158, 232, 255, 0.1);
+}
+
+.studio-settings-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto auto;
+  gap: 0.55rem;
+  align-items: center;
+  padding: 0.78rem 1rem;
+  border-top: 1px solid rgba(235, 242, 255, 0.12);
+  background: rgba(3, 7, 18, 0.22);
+}
+
+.studio-settings-status {
+  min-width: 0;
+  overflow: hidden;
+  color: rgba(158, 232, 255, 0.86);
+  font-size: 0.78rem;
+  font-weight: 850;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.studio-primary-btn,
+.studio-secondary-btn {
+  min-height: 2.35rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.42rem;
+  padding: 0 0.78rem;
+  font-size: 0.78rem;
+}
+
+.studio-primary-btn {
+  border-color: rgba(158, 232, 255, 0.42);
+  background: rgba(158, 232, 255, 0.18);
+}
+
+.studio-secondary-btn {
+  color: rgba(235, 242, 255, 0.72);
+}
+
+.studio-scrim-enter-active,
+.studio-scrim-leave-active,
+.studio-settings-drawer-enter-active,
+.studio-settings-drawer-leave-active {
+  transition: opacity 0.18s ease, transform 0.18s ease;
+}
+
+.studio-scrim-enter-from,
+.studio-scrim-leave-to {
+  opacity: 0;
+}
+
+.studio-settings-drawer-enter-from,
+.studio-settings-drawer-leave-to {
+  opacity: 0;
+  transform: translateX(1rem);
+}
+
+@media (max-width: 720px) {
+  .studio-settings-panel {
+    left: 0.75rem;
+    right: 0.75rem;
+    top: 0.75rem;
+    bottom: 0.75rem;
+    width: auto;
+  }
+
+  .studio-settings-section {
+    grid-template-columns: 1fr;
+  }
+
+  .studio-settings-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .studio-settings-actions button {
+    width: 100%;
+  }
+}
