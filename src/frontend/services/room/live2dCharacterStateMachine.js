@@ -108,6 +108,18 @@ function startSpeakingMotionSegment(state, at, target = null, durationMs = 0) {
     : actionMs(160 + Math.random() * 460);
 }
 
+function startIdleMotionSegment(state, at) {
+  const current = speakingMotionValue(state, at);
+  const targetValue = Math.abs(current) > 0.52 && Math.random() < 0.3
+    ? (Math.random() - 0.5) * 0.42
+    : (Math.random() - 0.5) * 1.5;
+  state.motionFrom = current;
+  state.motionTo = targetValue;
+  state.motionStartedAt = at;
+  state.motionDurationMs = actionMs(760 + Math.random() * 820);
+  state.motionHoldMs = actionMs(80 + Math.random() * 240);
+}
+
 function startSpeakingGesture(state, at) {
   const nod = Math.random() < 0.58;
   state.gestureType = nod ? 'nod' : 'tilt';
@@ -160,7 +172,7 @@ function startIdleGesture(state, at) {
     : 0.9 + Math.random() * 0.65;
   state.gestureSide = pickIdleGestureSide(state, type);
   rememberIdleGesture(state, type, state.gestureSide);
-  state.nextGestureAt = at + state.gestureDurationMs + actionMs(260 + Math.random() * 820);
+  state.nextGestureAt = at + state.gestureDurationMs + actionMs(80 + Math.random() * 260);
 }
 
 function speakingGestureValue(state, at) {
@@ -310,13 +322,17 @@ export function createLive2DCharacterStateMachine() {
       if (!state.nextGestureAt) state.nextGestureAt = at + 260 + Math.random() * 760;
       if (at >= state.nextGestureAt && !state.gestureStartedAt) startSpeakingGesture(state, at);
     } else {
-      if (Math.abs(state.motionTo) > 0.01 && at >= state.motionStartedAt + state.motionDurationMs) {
-        startSpeakingMotionSegment(state, at, 0, 1800);
-      }
-      if (['idle', 'listening'].includes(state.mode)) {
-        if (!state.nextGestureAt) state.nextGestureAt = at + 280 + Math.random() * 720;
+      const idleFlow = ['idle', 'listening'].includes(state.mode);
+      if (idleFlow) {
+        if (!state.motionStartedAt || at >= state.motionStartedAt + state.motionDurationMs + state.motionHoldMs) {
+          startIdleMotionSegment(state, at);
+        }
+        if (!state.nextGestureAt) state.nextGestureAt = at + actionMs(120 + Math.random() * 420);
         if (at >= state.nextGestureAt && !state.gestureStartedAt) startIdleGesture(state, at);
       } else {
+        if (Math.abs(state.motionTo) > 0.01 && at >= state.motionStartedAt + state.motionDurationMs) {
+          startSpeakingMotionSegment(state, at, 0, 1800);
+        }
         state.nextGestureAt = 0;
         state.gestureType = 'none';
         state.gestureStartedAt = 0;
@@ -337,6 +353,7 @@ export function createLive2DCharacterStateMachine() {
     const modeAge = Math.max(0, at - state.modeSince);
     const transition = clamp(modeAge / 520, 0, 1);
     const isSpeaking = state.mode === 'speaking';
+    const idleFlow = ['idle', 'listening'].includes(state.mode);
     const motionSeconds = seconds * ACTION_SPEED_SCALE;
     const breath = Math.sin(motionSeconds * (1.28 + state.arousal * 0.18));
     const slowFloat = Math.sin(motionSeconds * 1.35 + state.seed * 0.13);
@@ -349,9 +366,9 @@ export function createLive2DCharacterStateMachine() {
     const speechMotionEnergy = isSpeaking ? state.speechMotionEnergy : state.speechMotionEnergy * 0.35;
     const motionEnergy = isSpeaking
       ? clamp(0.78 + speechMotionEnergy * 0.7, 0, 1.34)
-      : clamp(speechMotionEnergy * 0.7, 0, 0.5);
+      : (idleFlow ? IDLE_ACTION_RATIO * 0.82 : clamp(speechMotionEnergy * 0.7, 0, 0.5));
     const forwardLean = isSpeaking ? 1 : 0;
-    const idleForwardLean = ['idle', 'listening'].includes(state.mode) ? IDLE_ACTION_RATIO : 0;
+    const idleForwardLean = idleFlow ? IDLE_ACTION_RATIO : 0;
     const headMotion = speakingMotionValue(state, at, 0);
     const bodyMotion = speakingMotionValue(state, at, actionMs(420));
     const gesture = speakingGestureValue(state, at);
