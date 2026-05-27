@@ -186,6 +186,49 @@ function runParameterTargets(parameters) {
   });
 }
 
+function behaviorActionEndMs(actions = []) {
+  return Math.max(
+    0,
+    ...actions.map((action) => (Number(action.delayMs) || 0) + (Number(action.durationMs) || 0))
+  );
+}
+
+function stretchBehaviorActions(actions = [], targetDurationMs = 0) {
+  const currentEndMs = behaviorActionEndMs(actions);
+  if (!Array.isArray(actions) || !actions.length || !currentEndMs || !targetDurationMs) return actions;
+  const scale = Math.min(Math.max(targetDurationMs / currentEndMs, 1), 3.2);
+  if (scale <= 1.08) return actions;
+  return actions.map((action) => ({
+    ...action,
+    delayMs: Math.round((Number(action.delayMs) || 0) * scale),
+    durationMs: Math.round(Math.min(Math.max((Number(action.durationMs) || 1000) * scale, 360), 6800))
+  }));
+}
+
+function alignLive2DToSpeech(intent, speechDurationMs = 0) {
+  if (!intent || typeof intent !== 'object') return intent;
+  const currentEndMs = Math.max(
+    Number(intent.durationMs) || 0,
+    behaviorActionEndMs(intent.behaviorActions)
+  );
+  const targetDurationMs = Math.min(Math.max(Number(speechDurationMs) || 0, currentEndMs, 1400), 14000);
+  const alignStep = (step) => {
+    if (!step || typeof step !== 'object') return step;
+    const behaviorActions = Array.isArray(step.behaviorActions)
+      ? stretchBehaviorActions(step.behaviorActions, targetDurationMs)
+      : step.behaviorActions;
+    return {
+      ...step,
+      durationMs: Math.max(Number(step.durationMs) || 0, targetDurationMs),
+      behaviorActions
+    };
+  };
+  return {
+    ...alignStep(intent),
+    sequence: Array.isArray(intent.sequence) ? intent.sequence.map(alignStep) : intent.sequence
+  };
+}
+
 function runGreeting() {
   dispatchRoomLive2D({
     sequence: [
@@ -221,7 +264,7 @@ function speak() {
   live2d.speak();
 }
 
-async function performLLMAct(message, source = 'manual') {
+async function performLLMAct(message, source = 'manual', options = {}) {
   const value = String(message || '').trim();
   if (!value || llmState.value.loading) return null;
   llmState.value = {
@@ -231,7 +274,7 @@ async function performLLMAct(message, source = 'manual') {
   };
   try {
     const result = await requestLive2DControl(value);
-    if (result.live2d) dispatchRoomLive2D(result.live2d);
+    if (result.live2d && options.dispatchLive2D !== false) dispatchRoomLive2D(result.live2d);
     const visibleReply = visibleYachiyoText(result.reply) || 'OK.';
     llmState.value = {
       loading: false,
@@ -308,11 +351,18 @@ async function runLiveTurn() {
   liveDirector.error = '';
   const audienceLines = audienceQueue.value.splice(0, 3);
   try {
-    const result = await performLLMAct(buildLiveDirectorPrompt(audienceLines), 'live');
+    const shouldSpeak = Boolean(liveDirector.autoVoice && speechPlayer);
+    const result = await performLLMAct(buildLiveDirectorPrompt(audienceLines), 'live', {
+      dispatchLive2D: !shouldSpeak
+    });
     liveDirector.turn += 1;
-    if (result?.reply && liveDirector.autoVoice && speechPlayer) {
+    if (result?.reply && shouldSpeak) {
       liveDirector.status = 'speaking';
-      await speechPlayer.play(result.reply).catch((error) => {
+      await speechPlayer.play(result.reply, {
+        onStart: ({ durationMs }) => {
+          if (result.live2d) dispatchRoomLive2D(alignLive2DToSpeech(result.live2d, durationMs));
+        }
+      }).catch((error) => {
         speechState.value = { status: 'error', error: error.message || 'TTS failed' };
       });
     }

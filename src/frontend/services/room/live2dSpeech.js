@@ -358,7 +358,7 @@ export function createLive2DSpeechPlayer({ onState } = {}) {
     return new Audio(objectUrl);
   }
 
-  async function play(text) {
+  async function play(text, options = {}) {
     const speechText = cleanTtsText(text);
     if (!speechText) return;
     const settings = readRoomTTSSettings();
@@ -378,6 +378,14 @@ export function createLive2DSpeechPlayer({ onState } = {}) {
         mouthStarted = true;
         setState({ status: 'playing', error: '' });
         const mouthText = audio.dataset.speechText || speechText;
+        const durationMs = Number.isFinite(audio.duration) && audio.duration > 0
+          ? Math.round(audio.duration * 1000)
+          : 0;
+        try {
+          options.onStart?.({ audio, speechText, mouthText, durationMs });
+        } catch (_) {
+          // Keep speech playback alive even if a caller-side animation hook fails.
+        }
         if (audio.dataset.mouthMode === 'synthetic') {
           startSyntheticMouth(mouthText, audio);
         } else {

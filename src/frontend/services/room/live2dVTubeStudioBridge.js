@@ -276,8 +276,8 @@ function actionSideSign(action, fallback = 1) {
 
 function actionEnvelope(progress) {
   const t = clamp(progress, 0, 1);
-  if (t < 0.14) return ease(t / 0.14);
-  if (t > 0.82) return ease((1 - t) / 0.18);
+  if (t < 0.28) return ease(t / 0.28);
+  if (t > 0.76) return ease((1 - t) / 0.24);
   return 1;
 }
 
@@ -391,26 +391,21 @@ function seedBehaviorTrackingFrame(values) {
   addBodyTracking(values, {}, 0.08);
 }
 
+function behaviorNeutralFrame() {
+  return finalizeDirectFrame(createDirectTrackingFrame());
+}
+
 function behaviorResetFrame() {
-  const values = new Map();
-  addWeighted(values, 'FaceAngleX', 0, 0.65);
-  addWeighted(values, 'FaceAngleY', 0, 0.65);
-  addWeighted(values, 'FaceAngleZ', 0, 0.65);
-  addWeighted(values, 'FacePositionX', 0, 0.65);
-  addWeighted(values, 'FacePositionY', 0, 0.65);
-  addWeighted(values, 'FacePositionZ', 0, 0.65);
-  addWeighted(values, 'MouthOpen', 0, 0.72);
-  addWeighted(values, 'VoiceVolumePlusMouthOpen', 0, 0.58);
-  addWeighted(values, 'VoiceVolume', 0, 0.38);
-  addWeighted(values, 'MouthSmile', 0.55, 0.46);
-  addWeighted(values, 'Brows', 0.52, 0.42);
-  addWeighted(values, 'BrowLeftY', 0.52, 0.42);
-  addWeighted(values, 'BrowRightY', 0.52, 0.42);
-  addWeighted(values, 'EyeOpenLeft', 0.92, 0.55);
-  addWeighted(values, 'EyeOpenRight', 0.92, 0.55);
-  addEyeTracking(values, 0, 0, 0.55);
-  addBodyTracking(values, { connected: 0 }, 0.85);
-  return finalizeWeighted(values);
+  const frame = createDirectTrackingFrame();
+  setFrameValue(frame, 'MouthOpen', 0, 0.72);
+  setFrameValue(frame, 'VoiceVolumePlusMouthOpen', 0, 0.58);
+  setFrameValue(frame, 'VoiceVolume', 0, 0.38);
+  setFrameValue(frame, 'MouthSmile', 0.55, 0.8);
+  setFrameValue(frame, 'Brows', 0.52, 0.55);
+  setFrameValue(frame, 'BrowLeftY', 0.52, 0.55);
+  setFrameValue(frame, 'BrowRightY', 0.52, 0.55);
+  setFrameBody(frame, { connected: 0 }, 0.85);
+  return finalizeDirectFrame(frame);
 }
 
 function addBehaviorActionSample(values, action, progress) {
@@ -988,7 +983,7 @@ export function mountVTubeStudioBridge() {
     const elapsedMs = now - behaviorPlan.startedAt;
     if (elapsedMs >= behaviorPlan.durationMs) {
       behaviorPlan = null;
-      queueInjection(behaviorResetFrame());
+      queueInjection(behaviorNeutralFrame());
       stopBehaviorFrame();
       return;
     }
