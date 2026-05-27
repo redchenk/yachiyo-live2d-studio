@@ -115,7 +115,7 @@ function clampFallback(value, min, max, fallback) {
 
 function injectionProfile(id) {
   if (MOUTH_INJECTION_IDS.has(id)) return { alpha: 0.66, step: 0.26 };
-  if (id === 'EyeOpenLeft' || id === 'EyeOpenRight') return { alpha: 0.48, step: 0.2 };
+  if (id === 'EyeOpenLeft' || id === 'EyeOpenRight') return { alpha: 0.88, step: 0.72 };
   if (id.startsWith('Eye')) return { alpha: 0.34, step: 0.11 };
   if (id.startsWith('FaceAngle')) return { alpha: 0.24, step: 1.55 };
   if (id.startsWith('FacePosition')) return { alpha: 0.22, step: 0.95 };
@@ -692,9 +692,9 @@ function autoBlinkOpen(nowMs, baseOpen = 0.92) {
   const cycle = 3.35 + 0.28 * Math.sin(seconds * 0.17);
   const phase = ((seconds + 0.41 * Math.sin(seconds * 0.31)) % cycle + cycle) % cycle;
   const open = clampFallback(baseOpen, 0.62, 1, 0.92);
-  if (phase < 0.055) return open * (1 - phase / 0.055);
-  if (phase < 0.095) return 0.04;
-  if (phase < 0.22) return open * ((phase - 0.095) / 0.125);
+  if (phase < 0.085) return open * (1 - phase / 0.085);
+  if (phase < 0.165) return 0.015;
+  if (phase < 0.35) return open * ((phase - 0.165) / 0.185);
   return open;
 }
 
