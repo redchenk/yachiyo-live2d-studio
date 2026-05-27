@@ -785,7 +785,7 @@ function applyCharacterStateFrame(frame, character, strength = 1) {
   if (!character) return;
   const amount = clampFallback(strength, 0, 1, 1);
   const isSpeaking = character.mode === 'speaking';
-  const facePositionWeight = isSpeaking ? 0.86 : 0.54;
+  const facePositionWeight = isSpeaking ? 0.72 : 0.54;
   const bodyWeight = isSpeaking ? 0.96 : 0.72;
   setFrameValue(frame, 'FaceAngleX', character.faceX * amount, 0.72);
   setFrameValue(frame, 'FaceAngleY', character.faceY * amount, 0.7);
