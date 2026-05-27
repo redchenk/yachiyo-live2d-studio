@@ -232,6 +232,7 @@ export function createLive2DCharacterStateMachine() {
     mode: 'idle',
     previousMode: 'idle',
     emotion: 'neutral',
+    emotionUntil: 0,
     modeSince: nowMs(),
     modeUntil: 0,
     lastActAt: 0,
@@ -270,7 +271,12 @@ export function createLive2DCharacterStateMachine() {
     }
     const holdMs = Number(options.holdMs);
     state.modeUntil = Number.isFinite(holdMs) && holdMs > 0 ? at + holdMs : 0;
-    if (options.emotion) state.emotion = normalizeEmotion(options.emotion);
+    if (options.emotion) {
+      state.emotion = normalizeEmotion(options.emotion);
+      const emotionHoldMs = Number(options.emotionHoldMs ?? options.holdMs);
+      const holdDuration = clamp(emotionHoldMs, 900, 12000, 2600);
+      state.emotionUntil = state.emotion === 'neutral' ? 0 : at + holdDuration;
+    }
     state.attention = Math.max(state.attention, clamp(options.attention, 0, 1, 0));
     state.arousal = Math.max(state.arousal, clamp(options.arousal, 0, 1, 0));
   }
@@ -282,6 +288,7 @@ export function createLive2DCharacterStateMachine() {
     setMode('acting', {
       now: at,
       holdMs: durationMs + 450,
+      emotionHoldMs: durationMs + 650,
       emotion: emotionFromDetail(detail),
       attention: 0.58 + intensity * 0.36,
       arousal: 0.48 + intensity * 0.34
@@ -308,6 +315,7 @@ export function createLive2DCharacterStateMachine() {
     setMode(detail.mode || detail.status || 'idle', {
       now: at,
       holdMs: detail.holdMs,
+      emotionHoldMs: detail.emotionHoldMs || detail.durationMs || detail.duration || detail.holdMs,
       emotion: detail.emotion,
       attention: detail.attention,
       arousal: detail.arousal
@@ -315,6 +323,10 @@ export function createLive2DCharacterStateMachine() {
   }
 
   function update(at) {
+    if (state.emotionUntil && at > state.emotionUntil) {
+      state.emotion = 'neutral';
+      state.emotionUntil = 0;
+    }
     if (state.modeUntil && at > state.modeUntil && state.mode !== 'idle') {
       if (state.mode !== 'speaking' || at - state.lastMouthAt > 720) {
         state.previousMode = state.mode;
