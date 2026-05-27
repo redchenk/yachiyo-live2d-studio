@@ -361,7 +361,7 @@ export function createLive2DCharacterStateMachine() {
       faceY: (
         isSpeaking
           ? -0.8 - forwardLean * 5.2 + breathMotion * 1.35 + slowFloat * 1.25 + livelyFloat * 0.82 - speechNod * 12 + thinkingNod + actingLift
-          : -0.8 - idleForwardLean * 5.2 + breathMotion * (1.35 * IDLE_ACTION_RATIO) + slowFloat * (1.25 * IDLE_ACTION_RATIO) + speechNod * (12 * IDLE_ACTION_RATIO) + thinkingNod + actingLift
+          : -0.8 - idleForwardLean * 5.2 + breathMotion * (1.35 * IDLE_ACTION_RATIO) + slowFloat * (1.25 * IDLE_ACTION_RATIO) - speechNod * (12 * IDLE_ACTION_RATIO) + thinkingNod + actingLift
       ) * headScale,
       faceZ: (
         smoothNoise(motionSeconds + 0.9, 0.36, 0.66, 1.05) * 1.1 * speakingDriftScale +
@@ -381,7 +381,7 @@ export function createLive2DCharacterStateMachine() {
       bodyY: (
         isSpeaking
           ? -forwardLean * 7.2 + breathMotion * 3.0 + bodyFloat * 3.2 + livelyFloat * 1.45 - speechNod * 7.4 + thinkingNod * 0.24
-          : -idleForwardLean * 7.2 + breathMotion * (3.0 * IDLE_ACTION_RATIO) + bodyFloat * (3.2 * IDLE_ACTION_RATIO) + speechNod * (7.4 * IDLE_ACTION_RATIO) + thinkingNod * 0.24
+          : -idleForwardLean * 7.2 + breathMotion * (3.0 * IDLE_ACTION_RATIO) + bodyFloat * (3.2 * IDLE_ACTION_RATIO) - speechNod * (7.4 * IDLE_ACTION_RATIO) + thinkingNod * 0.24
       ) * bodyScale,
       bodyZ: (
         smoothNoise(motionSeconds + 1.8, 0.28, 0.51, 0.88) * 0.95 * speakingDriftScale +
