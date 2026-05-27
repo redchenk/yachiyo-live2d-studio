@@ -351,6 +351,7 @@ function buildLiveDirectorPrompt(audienceLines) {
     'Act like an autonomous AI VTuber streamer. Reply with 1-2 short spoken sentences.',
     'Do not wait passively for instructions. React, tease gently, ask a tiny hook, or continue the topic.',
     'Choose 2-5 semantic actions every turn unless the moment is intentionally calm.',
+    'Match actions to the meaning of the line and vary the combo from the previous turn; avoid looping the same body action.',
     `Prefer action combos like ${behaviorActionComboPrompt()}.`,
     'Use emotion plus actions instead of raw Live2D parameters. Let the behavior controller map actions to VTube Studio tracking curves.',
     'Never show action cues in the spoken reply or caption: no parentheses, no asterisk actions, no Action/Pose labels, and no body descriptions in reply. Put movement only in the actions array.',

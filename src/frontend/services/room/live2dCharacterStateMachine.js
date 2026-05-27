@@ -126,10 +126,14 @@ function speakingGestureValue(state, at) {
 
 function pickNextGazeTarget(state, now) {
   const seconds = now / 1000 + state.seed;
-  const span = state.mode === 'thinking' ? 0.18 : 0.34;
-  state.gazeX = clamp(smoothNoise(seconds, 0.43, 0.91, 1.37) * span, -0.55, 0.55);
-  state.gazeY = clamp(-0.05 + smoothNoise(seconds, 0.32, 0.68, 1.11) * span * 0.58, -0.35, 0.28);
-  state.nextGazeAt = now + 1600 + Math.random() * 2600;
+  const active = state.mode === 'speaking' || state.mode === 'acting';
+  const sideGlance = active && Math.random() < 0.36;
+  const span = state.mode === 'thinking' ? 0.18 : (active ? 0.52 : 0.34);
+  state.gazeX = sideGlance
+    ? (Math.random() > 0.5 ? 1 : -1) * (0.34 + Math.random() * 0.2)
+    : clamp(smoothNoise(seconds, 0.43, 0.91, 1.37) * span, -0.62, 0.62);
+  state.gazeY = clamp(-0.04 + smoothNoise(seconds, 0.32, 0.68, 1.11) * span * 0.68, -0.38, 0.34);
+  state.nextGazeAt = now + (active ? 850 + Math.random() * 1700 : 1600 + Math.random() * 2600);
 }
 
 function emotionFromDetail(detail = {}) {

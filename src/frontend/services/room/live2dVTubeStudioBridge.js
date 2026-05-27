@@ -894,10 +894,10 @@ function sampleVTSBehaviorActions(actions, elapsedMs, nowMs = performance.now(),
 
   const frame = createDirectTrackingFrame();
   const speaking = character?.mode === 'speaking';
-  applyCharacterStateFrame(frame, character, speaking ? 1 : 0.68);
-  const dominant = speaking ? null : pickDominantMotion(samples);
-  if (!speaking) applyDirectMotion(frame, dominant);
-  samples.forEach((sample) => applyDirectOverlay(frame, sample, dominant, { faceOnly: speaking }));
+  const dominant = pickDominantMotion(samples);
+  applyCharacterStateFrame(frame, character, speaking && dominant ? 0.42 : (speaking ? 0.82 : 0.68));
+  applyDirectMotion(frame, dominant);
+  samples.forEach((sample) => applyDirectOverlay(frame, sample, dominant, { faceOnly: false }));
   applyAutoBlink(frame, samples, nowMs, character?.eyeOpen);
   return finalizeDirectFrame(frame);
 }
