@@ -194,12 +194,14 @@ export function createLive2DCharacterStateMachine() {
     const modeAge = Math.max(0, at - state.modeSince);
     const transition = clamp(modeAge / 520, 0, 1);
     const breath = Math.sin(seconds * (1.08 + state.arousal * 0.18));
-    const headDrift = smoothNoise(seconds, 0.42, 0.77, 1.26);
-    const bodyDrift = smoothNoise(seconds + 2.4, 0.31, 0.58, 0.96);
+    const speakingDriftScale = state.mode === 'speaking' ? 0.42 : 1;
+    const headDrift = smoothNoise(seconds, 0.42, 0.77, 1.26) * speakingDriftScale;
+    const bodyDrift = smoothNoise(seconds + 2.4, 0.31, 0.58, 0.96) * speakingDriftScale;
     const speechMotionEnergy = state.mode === 'speaking' ? state.speechMotionEnergy : state.speechMotionEnergy * 0.35;
-    const speechPulse = speechMotionEnergy * Math.sin(seconds * 1.75);
-    const speechSway = speechMotionEnergy * Math.sin(seconds * 1.18);
-    const speechCounterSway = speechMotionEnergy * Math.sin(seconds * 1.18 + 0.68);
+    const speechPulse = speechMotionEnergy * Math.sin(seconds * 1.05 + 0.28);
+    const speechSway = speechMotionEnergy * Math.sin(seconds * 0.82);
+    const speechCounterSway = speechMotionEnergy * Math.sin(seconds * 0.82 - 0.62);
+    const speechHeadRoll = speechMotionEnergy * Math.sin(seconds * 0.82 + 0.9);
     const thinkingNod = state.mode === 'thinking' ? Math.sin(seconds * 1.9) * 0.7 : 0;
     const actingLift = state.mode === 'acting' ? Math.sin(seconds * 2.4) * 0.7 : 0;
     const headScale = modeProfile.head * (0.78 + state.attention * 0.34 + state.arousal * 0.2);
@@ -224,20 +226,20 @@ export function createLive2DCharacterStateMachine() {
       eyeOpen: clamp(emotionProfile.eye - speechEyeSmile, 0.66, 1),
       eyeX: clamp(state.gazeX * gazeScale - headDrift * 0.07, -0.72, 0.72),
       eyeY: clamp(state.gazeY * gazeScale - 0.02 - thinkingNod * 0.04 - speechPulse * 0.035, -0.48, 0.42),
-      faceX: (headDrift * 4.2 + speechSway * 10.5) * headScale,
-      faceY: (-0.8 + breath * 1.2 + speechPulse * 3.6 + thinkingNod + actingLift) * headScale,
-      faceZ: (smoothNoise(seconds + 0.9, 0.36, 0.66, 1.05) * 3.6 + speechCounterSway * 8.8) * headScale,
-      facePosX: (bodyDrift * 1.1 + speechSway * 4.2) * bodyScale,
+      faceX: (headDrift * 3.0 + speechSway * 17.5) * headScale,
+      faceY: (-0.8 + breath * 0.9 + speechPulse * 5.8 + thinkingNod + actingLift) * headScale,
+      faceZ: (smoothNoise(seconds + 0.9, 0.36, 0.66, 1.05) * 1.7 * speakingDriftScale + speechHeadRoll * 14.5) * headScale,
+      facePosX: (bodyDrift * 0.7 + speechSway * 5.4) * bodyScale,
       facePosY: (-0.38 * breath - state.mouthEnergy * 0.42 - speechPulse * 0.38) * modeProfile.body,
       mouthSmile,
       brows: softBrow,
       browLeftY: clamp(softBrow + smoothNoise(seconds, 0.83, 1.41, 2.2) * 0.024, 0.18, 0.84),
       browRightY: clamp(softBrow + smoothNoise(seconds + 0.6, 0.79, 1.33, 2.08) * 0.024, 0.18, 0.84),
-      bodyX: (bodyDrift * 1.4 + speechSway * 8.2) * bodyScale,
-      bodyY: (breath * 0.96 + speechPulse * 3.4 + thinkingNod * 0.24) * bodyScale,
-      bodyZ: (smoothNoise(seconds + 1.8, 0.28, 0.51, 0.88) * 2.4 + speechCounterSway * 9.2) * bodyScale,
-      bodyPosX: (bodyDrift * 0.04 + speechSway * 0.08) * bodyScale,
-      bodyPosY: (breath * 0.026 + speechPulse * 0.055) * bodyScale,
+      bodyX: (bodyDrift * 0.8 + speechCounterSway * 12.8) * bodyScale,
+      bodyY: (breath * 0.72 + speechPulse * 5.2 + thinkingNod * 0.24) * bodyScale,
+      bodyZ: (smoothNoise(seconds + 1.8, 0.28, 0.51, 0.88) * 1.2 * speakingDriftScale + speechCounterSway * 13.2) * bodyScale,
+      bodyPosX: (bodyDrift * 0.025 + speechCounterSway * 0.075) * bodyScale,
+      bodyPosY: (breath * 0.02 + speechPulse * 0.075) * bodyScale,
       energy: clamp(state.arousal + state.mouthEnergy * 0.3, 0, 1)
     };
   }
