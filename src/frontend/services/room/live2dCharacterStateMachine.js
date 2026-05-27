@@ -123,8 +123,8 @@ function startIdleGesture(state, at) {
     ? 1500 + Math.random() * 900
     : 1900 + Math.random() * 1100;
   state.gestureAmount = nod
-    ? 0.55 + Math.random() * 0.45
-    : 0.48 + Math.random() * 0.42;
+    ? 1.0 + Math.random() * 0.7
+    : 0.9 + Math.random() * 0.65;
   state.gestureSide = Math.random() > 0.5 ? 1 : -1;
   state.nextGestureAt = at + state.gestureDurationMs + 3600 + Math.random() * 6200;
 }
@@ -316,7 +316,7 @@ export function createLive2DCharacterStateMachine() {
     const headMotion = speakingMotionValue(state, at, 0);
     const bodyMotion = speakingMotionValue(state, at, 420);
     const gesture = speakingGestureValue(state, at);
-    const gestureStrength = isSpeaking ? motionEnergy : (state.gestureStartedAt ? 0.72 : 0);
+    const gestureStrength = isSpeaking ? motionEnergy : (state.gestureStartedAt ? 0.9 : 0);
     const speechNod = gesture.nod * gestureStrength;
     const speechTilt = gesture.tilt * gestureStrength;
     const speechSway = motionEnergy * headMotion;
@@ -352,7 +352,7 @@ export function createLive2DCharacterStateMachine() {
       faceY: (
         isSpeaking
           ? -0.8 - forwardLean * 5.2 + breathMotion * 1.35 + slowFloat * 1.25 + livelyFloat * 0.82 - speechNod * 12 + thinkingNod + actingLift
-          : -0.8 + breathMotion * 0.64 + slowFloat * 0.42 + speechNod * 3.4 + thinkingNod + actingLift
+          : -0.8 + breathMotion * 0.86 + slowFloat * 0.62 + speechNod * 4.8 + thinkingNod + actingLift
       ) * headScale,
       faceZ: (
         smoothNoise(seconds + 0.9, 0.36, 0.66, 1.05) * 1.1 * speakingDriftScale +
@@ -372,7 +372,7 @@ export function createLive2DCharacterStateMachine() {
       bodyY: (
         isSpeaking
           ? -forwardLean * 7.2 + breathMotion * 3.0 + bodyFloat * 3.2 + livelyFloat * 1.45 - speechNod * 7.4 + thinkingNod * 0.24
-          : breathMotion * 1.05 + bodyFloat * 0.86 + speechNod * 2.5 + thinkingNod * 0.24
+          : breathMotion * 1.45 + bodyFloat * 1.15 + speechNod * 3.8 + thinkingNod * 0.24
       ) * bodyScale,
       bodyZ: (
         smoothNoise(seconds + 1.8, 0.28, 0.51, 0.88) * 0.95 * speakingDriftScale +
