@@ -784,11 +784,14 @@ function applyDirectOverlay(frame, sample, dominant) {
 function applyCharacterStateFrame(frame, character, strength = 1) {
   if (!character) return;
   const amount = clampFallback(strength, 0, 1, 1);
+  const isSpeaking = character.mode === 'speaking';
+  const facePositionWeight = isSpeaking ? 0.86 : 0.54;
+  const bodyWeight = isSpeaking ? 0.96 : 0.72;
   setFrameValue(frame, 'FaceAngleX', character.faceX * amount, 0.72);
   setFrameValue(frame, 'FaceAngleY', character.faceY * amount, 0.7);
   setFrameValue(frame, 'FaceAngleZ', character.faceZ * amount, 0.68);
-  setFrameValue(frame, 'FacePositionX', character.facePosX * amount, 0.54);
-  setFrameValue(frame, 'FacePositionY', character.facePosY * amount, 0.52);
+  setFrameValue(frame, 'FacePositionX', character.facePosX * amount, facePositionWeight);
+  setFrameValue(frame, 'FacePositionY', character.facePosY * amount, facePositionWeight);
   setFrameValue(frame, 'MouthSmile', character.mouthSmile, 0.72);
   setFrameValue(frame, 'Brows', character.brows, 0.56);
   setFrameValue(frame, 'BrowLeftY', character.browLeftY, 0.54);
@@ -800,7 +803,7 @@ function applyCharacterStateFrame(frame, character, strength = 1) {
     z: character.bodyZ * amount,
     posX: character.bodyPosX * amount,
     posY: character.bodyPosY * amount
-  }, 0.72);
+  }, bodyWeight);
 }
 
 function applyAutoBlink(frame, samples, nowMs, baseOpen = 0.92) {
