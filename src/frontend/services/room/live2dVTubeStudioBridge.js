@@ -281,6 +281,71 @@ function actionEnvelope(progress) {
   return 1;
 }
 
+function setFrameValue(frame, id, value, weight = 1) {
+  const range = VTS_RANGES[id] || [-30, 30];
+  frame.set(id, {
+    id,
+    value: clamp(value, range[0], range[1]),
+    weight: clamp(weight, 0.01, 1)
+  });
+}
+
+function addFrameValue(frame, id, value, weight = 1) {
+  const current = frame.get(id);
+  setFrameValue(frame, id, (current?.value || 0) + value, Math.max(current?.weight || 0, weight));
+}
+
+function setFrameEyes(frame, x = 0, y = 0, weight = 0.8) {
+  setFrameValue(frame, 'EyeLeftX', x, weight);
+  setFrameValue(frame, 'EyeRightX', x, weight);
+  setFrameValue(frame, 'EyeLeftY', y, weight);
+  setFrameValue(frame, 'EyeRightY', y, weight);
+}
+
+function setFrameBody(frame, pose = {}, weight = 1) {
+  const bodyX = Number(pose.x) || 0;
+  const bodyY = Number(pose.y) || 0;
+  const bodyZ = Number(pose.z) || 0;
+  const posX = Number(pose.posX) || 0;
+  const posY = Number(pose.posY) || 0;
+  const posZ = Number(pose.posZ) || 0;
+  const connected = pose.connected === 0 ? 0 : 1;
+
+  setFrameValue(frame, 'MocopiConnected', connected, connected ? 1 : 1);
+  setFrameValue(frame, 'MocopiAngleX', bodyX * 2.8, weight * 0.75);
+  setFrameValue(frame, 'MocopiAngleY', bodyY * 2.8, weight * 0.75);
+  setFrameValue(frame, 'MocopiAngleZ', bodyZ * 2.8, weight * 0.75);
+  setFrameValue(frame, 'MocopiBodyAngleX', bodyX, weight);
+  setFrameValue(frame, 'MocopiBodyAngleY', bodyY, weight);
+  setFrameValue(frame, 'MocopiBodyAngleZ', bodyZ, weight);
+  setFrameValue(frame, 'MocopiBodyPositionX', posX, weight * 0.75);
+  setFrameValue(frame, 'MocopiBodyPositionY', posY, weight * 0.75);
+  setFrameValue(frame, 'MocopiBodyPositionZ', posZ, weight * 0.75);
+}
+
+function createDirectTrackingFrame() {
+  const frame = new Map();
+  setFrameValue(frame, 'FaceAngleX', 0, 1);
+  setFrameValue(frame, 'FaceAngleY', 0, 1);
+  setFrameValue(frame, 'FaceAngleZ', 0, 1);
+  setFrameValue(frame, 'FacePositionX', 0, 0.9);
+  setFrameValue(frame, 'FacePositionY', 0, 0.9);
+  setFrameValue(frame, 'FacePositionZ', 0, 0.9);
+  setFrameValue(frame, 'MouthSmile', 0.58, 0.8);
+  setFrameValue(frame, 'Brows', 0.55, 0.55);
+  setFrameValue(frame, 'BrowLeftY', 0.55, 0.55);
+  setFrameValue(frame, 'BrowRightY', 0.55, 0.55);
+  setFrameValue(frame, 'EyeOpenLeft', 0.92, 0.85);
+  setFrameValue(frame, 'EyeOpenRight', 0.92, 0.85);
+  setFrameEyes(frame, 0, 0, 0.8);
+  setFrameBody(frame, {}, 1);
+  return frame;
+}
+
+function finalizeDirectFrame(frame) {
+  return [...frame.values()];
+}
+
 function addEyeTracking(values, x = 0, y = 0, weight = 0.8) {
   addWeighted(values, 'EyeLeftX', x, weight);
   addWeighted(values, 'EyeRightX', x, weight);
@@ -505,17 +570,208 @@ function addBehaviorActionSample(values, action, progress) {
   }
 }
 
-function sampleVTSBehaviorActions(actions, elapsedMs) {
-  const values = new Map();
-  seedBehaviorTrackingFrame(values);
-  for (const action of Array.isArray(actions) ? actions : []) {
+const DIRECT_MOTION_PRIORITY = {
+  emphasis: 9,
+  bounce: 8.4,
+  lean_in: 8,
+  lean_left: 7.8,
+  lean_right: 7.8,
+  head_tilt: 7.6,
+  nod: 7,
+  shake_head: 7,
+  shiver: 5.8,
+  sway: 5.4,
+  look_at_chat: 4,
+  breathe: 1
+};
+
+function activeBehaviorSamples(actions, elapsedMs) {
+  return (Array.isArray(actions) ? actions : []).map((action) => {
     const started = Number(action.delayMs) || 0;
     const duration = Math.max(Number(action.durationMs) || 1000, 1);
     const progress = (elapsedMs - started) / duration;
-    if (progress < 0 || progress > 1) continue;
-    addBehaviorActionSample(values, action, progress);
+    if (progress < 0 || progress > 1) return null;
+    const envelopeValue = actionEnvelope(progress);
+    const intensity = clamp(Number(action.intensity) || 0.72, 0.05, 1);
+    return {
+      action,
+      progress,
+      phase: progress * Math.PI * 2,
+      envelope: envelopeValue,
+      intensity,
+      energy: envelopeValue * intensity,
+      sign: actionSideSign(action, Math.sin((action.delayMs || 0) * 0.017) >= 0 ? 1 : -1)
+    };
+  }).filter(Boolean);
+}
+
+function pickDominantMotion(samples) {
+  return samples
+    .filter((sample) => DIRECT_MOTION_PRIORITY[sample.action.type])
+    .sort((left, right) => (
+      (DIRECT_MOTION_PRIORITY[right.action.type] * right.energy) -
+      (DIRECT_MOTION_PRIORITY[left.action.type] * left.energy)
+    ))[0] || null;
+}
+
+function applyDirectMotion(frame, sample) {
+  if (!sample) return;
+  const { action, progress: t, phase, energy: e, sign } = sample;
+  const fast = Math.sin(phase * 2);
+  const slow = Math.sin(phase);
+  const beat = Math.abs(Math.sin(phase * 2));
+
+  switch (action.type) {
+    case 'look_at_chat': {
+      const x = 14 * slow * e;
+      const z = 8 * Math.sin(phase * 0.5) * e;
+      setFrameValue(frame, 'FaceAngleX', x, 1);
+      setFrameValue(frame, 'FaceAngleY', 3 * Math.sin(phase * 0.7) * e, 1);
+      setFrameValue(frame, 'FaceAngleZ', z, 1);
+      setFrameEyes(frame, -x / 30, -0.12 * e, 0.8);
+      setFrameBody(frame, { x: x / 8, z: z / 5 }, 1);
+      break;
+    }
+    case 'nod':
+      setFrameValue(frame, 'FaceAngleY', (13 * beat - 4) * e, 1);
+      setFrameValue(frame, 'FacePositionY', -2.5 * beat * e, 0.9);
+      setFrameBody(frame, { y: 5.5 * beat * e, posY: 0.22 * beat * e }, 1);
+      break;
+    case 'shake_head':
+      setFrameValue(frame, 'FaceAngleX', 15 * fast * e, 1);
+      setFrameValue(frame, 'FaceAngleZ', 6 * fast * e, 0.74);
+      setFrameEyes(frame, -0.28 * fast * e, 0, 0.72);
+      setFrameBody(frame, { x: 4.8 * fast * e, z: 1.8 * fast * e }, 1);
+      break;
+    case 'head_tilt':
+      setFrameValue(frame, 'FaceAngleX', 5 * sign * e, 0.72);
+      setFrameValue(frame, 'FaceAngleZ', 16 * sign * e, 1);
+      setFrameValue(frame, 'FacePositionX', 4.2 * sign * e, 0.86);
+      setFrameEyes(frame, -0.18 * sign * e, 0, 0.7);
+      setFrameBody(frame, { z: 8 * sign * e, posX: 0.32 * sign * e }, 1);
+      break;
+    case 'lean_in':
+      setFrameValue(frame, 'FaceAngleY', -5.2 * e, 0.78);
+      setFrameValue(frame, 'FacePositionY', -2.8 * e, 0.72);
+      setFrameValue(frame, 'FacePositionZ', 5.4 * e, 0.9);
+      setFrameEyes(frame, 0, -0.16 * e, 0.72);
+      setFrameBody(frame, { y: -6.2 * e, posZ: 0.42 * e }, 1);
+      break;
+    case 'lean_left':
+    case 'lean_right': {
+      const leanSign = action.type === 'lean_left' ? -1 : 1;
+      setFrameValue(frame, 'FaceAngleX', 5 * leanSign * e, 0.72);
+      setFrameValue(frame, 'FaceAngleZ', 16 * leanSign * e, 1);
+      setFrameValue(frame, 'FacePositionX', 5.5 * leanSign * e, 0.9);
+      setFrameEyes(frame, -0.35 * leanSign * e, 0, 0.8);
+      setFrameBody(frame, { z: 8 * leanSign * e, posX: 0.38 * leanSign * e }, 1);
+      break;
+    }
+    case 'sway': {
+      const side = slow * e;
+      setFrameValue(frame, 'FaceAngleX', 5.5 * side, 0.82);
+      setFrameValue(frame, 'FaceAngleZ', 9 * side, 0.9);
+      setFrameValue(frame, 'FacePositionX', 3.2 * side, 0.82);
+      setFrameEyes(frame, -0.18 * side, 0, 0.76);
+      setFrameBody(frame, { x: 3.2 * side, z: 6.8 * side, posX: 0.25 * side }, 1);
+      break;
+    }
+    case 'bounce':
+      setFrameValue(frame, 'FaceAngleY', 4 * beat * e, 0.72);
+      setFrameValue(frame, 'FacePositionY', -6.5 * beat * e, 0.95);
+      setFrameValue(frame, 'FacePositionZ', 3.2 * beat * e, 0.88);
+      setFrameValue(frame, 'MouthSmile', 0.78, 0.8);
+      setFrameValue(frame, 'Brows', 0.62, 0.55);
+      setFrameValue(frame, 'BrowLeftY', 0.62, 0.55);
+      setFrameValue(frame, 'BrowRightY', 0.62, 0.55);
+      setFrameBody(frame, { y: 8.2 * beat * e, posY: 0.36 * beat * e, posZ: 0.26 * beat * e }, 1);
+      break;
+    case 'shiver': {
+      const jitter = Math.sin(phase * 6) * e;
+      setFrameValue(frame, 'FaceAngleX', 4.2 * jitter, 0.86);
+      setFrameValue(frame, 'FaceAngleZ', 3.2 * Math.sin(phase * 7) * e, 0.78);
+      setFrameValue(frame, 'FacePositionX', 1.6 * Math.sin(phase * 8.2) * e, 0.58);
+      setFrameBody(frame, { x: 1.8 * jitter, z: 3.5 * Math.sin(phase * 6.6) * e }, 0.82);
+      break;
+    }
+    case 'emphasis': {
+      const hit = Math.abs(Math.sin(Math.PI * t)) * e;
+      setFrameValue(frame, 'FaceAngleY', -3.2 * hit, 0.72);
+      setFrameValue(frame, 'FaceAngleZ', -10.5 * fast * e, 0.92);
+      setFrameValue(frame, 'FacePositionY', -4.8 * hit, 0.86);
+      setFrameBody(frame, { y: -4.6 * hit, z: -8.2 * fast * e }, 1);
+      break;
+    }
+    case 'breathe':
+      setFrameBody(frame, { y: 1.8 * Math.sin(phase) * e, posY: 0.07 * Math.sin(phase) * e }, 0.45);
+      break;
+    default:
+      break;
   }
-  return finalizeWeighted(values);
+}
+
+function applyDirectOverlay(frame, sample, dominant) {
+  const { action, progress: t, phase, energy: e, sign } = sample;
+  const isDominant = dominant?.action === action;
+
+  switch (action.type) {
+    case 'look_at_chat':
+      if (!isDominant) {
+        const glance = Math.sin(phase) * e;
+        addFrameValue(frame, 'FaceAngleX', 2.4 * glance, 0.72);
+        setFrameEyes(frame, -0.22 * glance, -0.1 * e, 0.82);
+      }
+      break;
+    case 'smile':
+      setFrameValue(frame, 'MouthSmile', 0.74 + 0.16 * e, 0.84);
+      setFrameValue(frame, 'Brows', 0.56 + 0.08 * e, 0.58);
+      setFrameValue(frame, 'BrowLeftY', 0.56 + 0.08 * e, 0.58);
+      setFrameValue(frame, 'BrowRightY', 0.56 + 0.08 * e, 0.58);
+      break;
+    case 'smirk':
+      setFrameValue(frame, 'MouthSmile', 0.8 + 0.12 * e, 0.9);
+      addFrameValue(frame, 'FaceAngleZ', 3.8 * sign * e, 0.78);
+      setFrameValue(frame, 'Brows', 0.6 + 0.08 * e, 0.66);
+      setFrameValue(frame, 'BrowLeftY', sign < 0 ? 0.72 : 0.54, 0.66);
+      setFrameValue(frame, 'BrowRightY', sign > 0 ? 0.72 : 0.54, 0.66);
+      break;
+    case 'blink': {
+      const close = Math.sin(Math.PI * t) * e;
+      const open = clamp(0.92 - close, 0.04, 1);
+      setFrameValue(frame, 'EyeOpenLeft', open, 0.96);
+      setFrameValue(frame, 'EyeOpenRight', open, 0.96);
+      break;
+    }
+    case 'wink': {
+      const close = Math.sin(Math.PI * t) * e;
+      const open = clamp(0.92 - close, 0.04, 1);
+      setFrameValue(frame, action.side === 'left' ? 'EyeOpenLeft' : 'EyeOpenRight', open, 0.98);
+      setFrameValue(frame, 'MouthSmile', 0.76, 0.62);
+      break;
+    }
+    case 'surprised':
+      setFrameValue(frame, 'EyeOpenLeft', 1, 0.98);
+      setFrameValue(frame, 'EyeOpenRight', 1, 0.98);
+      setFrameValue(frame, 'MouthSmile', 0.48, 0.54);
+      setFrameValue(frame, 'Brows', 0.78, 0.78);
+      setFrameValue(frame, 'BrowLeftY', 0.78, 0.78);
+      setFrameValue(frame, 'BrowRightY', 0.78, 0.78);
+      addFrameValue(frame, 'FacePositionZ', -1.4 * e, 0.48);
+      break;
+    default:
+      break;
+  }
+}
+
+function sampleVTSBehaviorActions(actions, elapsedMs) {
+  const samples = activeBehaviorSamples(actions, elapsedMs);
+  if (samples.some((sample) => sample.action.type === 'reset' && sample.energy > 0.5)) return behaviorResetFrame();
+
+  const frame = createDirectTrackingFrame();
+  const dominant = pickDominantMotion(samples);
+  applyDirectMotion(frame, dominant);
+  samples.forEach((sample) => applyDirectOverlay(frame, sample, dominant));
+  return finalizeDirectFrame(frame);
 }
 
 export function mountVTubeStudioBridge() {
@@ -742,6 +998,8 @@ export function mountVTubeStudioBridge() {
 
   function startBehaviorPlan(actions, durationMs) {
     if (!Array.isArray(actions) || !actions.length) return;
+    bodyMotion = null;
+    stopBodyFrame();
     behaviorPlan = {
       actions,
       durationMs: Math.max(
@@ -791,6 +1049,7 @@ export function mountVTubeStudioBridge() {
 
   function onFaceCapture(event) {
     if (!settings.injectFace && !settings.injectBody) return;
+    if (behaviorPlan) return;
     queueInjection(mapLive2DParametersToVTS(event.detail?.parameters, {
       face: settings.injectFace,
       body: settings.injectBody
