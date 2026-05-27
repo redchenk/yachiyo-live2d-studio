@@ -14,7 +14,7 @@ const MODE_PROFILES = {
   idle: { head: 1, body: 1, gaze: 1, smile: 0, brow: 0, arousal: 0 },
   listening: { head: 1.08, body: 1.04, gaze: 1.25, smile: 0.02, brow: 0.03, arousal: 0.08 },
   thinking: { head: 0.9, body: 0.86, gaze: 0.72, smile: -0.04, brow: 0.08, arousal: 0.12 },
-  speaking: { head: 1.18, body: 1.12, gaze: 1.08, smile: 0.04, brow: 0.05, arousal: 0.18 },
+  speaking: { head: 1.18, body: 1.12, gaze: 1.08, smile: 0.025, brow: 0.02, arousal: 0.12 },
   acting: { head: 1.28, body: 1.24, gaze: 1.16, smile: 0.02, brow: 0.04, arousal: 0.22 }
 };
 
@@ -53,6 +53,10 @@ function normalizeMode(value) {
   if (key === 'speak') return 'speaking';
   if (MODE_PROFILES[key]) return key;
   return 'idle';
+}
+
+function isTearfulEmotion(emotion) {
+  return ['sad', 'namida', 'tears', 'crying'].includes(normalizeEmotion(emotion));
 }
 
 function lerp(left, right, t) {
@@ -195,23 +199,34 @@ export function createLive2DCharacterStateMachine() {
     const headScale = modeProfile.head * (0.78 + state.attention * 0.34 + state.arousal * 0.2);
     const bodyScale = modeProfile.body * (0.82 + state.arousal * 0.28);
     const gazeScale = modeProfile.gaze * (0.7 + state.attention * 0.44);
+    const speechEnergy = state.mode === 'speaking' ? state.mouthEnergy : state.mouthEnergy * 0.45;
+    const speechEyeSmile = speechEnergy * 0.085 + Math.max(speechPulse, 0) * 0.025;
+    const mouthBase = emotionProfile.smile + modeProfile.smile;
+    const mouthTarget = isTearfulEmotion(state.emotion) ? 0.42 : 0.64;
+    const mouthSmile = clamp(
+      lerp(mouthBase, Math.max(mouthBase, mouthTarget), speechEnergy * 0.38) + Math.max(speechPulse, 0) * 0.025,
+      0.18,
+      0.84
+    );
+    const browBase = emotionProfile.brow + modeProfile.brow;
+    const softBrow = clamp(lerp(browBase, 0.55, speechEnergy * 0.34), 0.18, 0.82);
 
     return {
       mode: state.mode,
       emotion: state.emotion,
       transition,
-      eyeOpen: clamp(emotionProfile.eye - state.mouthEnergy * 0.03, 0.68, 1),
+      eyeOpen: clamp(emotionProfile.eye - speechEyeSmile, 0.66, 1),
       eyeX: clamp(state.gazeX * gazeScale - headDrift * 0.07, -0.72, 0.72),
-      eyeY: clamp(state.gazeY * gazeScale - 0.02 - thinkingNod * 0.04, -0.48, 0.42),
+      eyeY: clamp(state.gazeY * gazeScale - 0.02 - thinkingNod * 0.04 - speechPulse * 0.035, -0.48, 0.42),
       faceX: headDrift * 4.2 * headScale,
       faceY: (-0.8 + breath * 1.2 + speechPulse * 2.4 + thinkingNod + actingLift) * headScale,
       faceZ: smoothNoise(seconds + 0.9, 0.36, 0.66, 1.05) * 3.6 * headScale,
       facePosX: bodyDrift * 1.1 * bodyScale,
       facePosY: (-0.38 * breath - state.mouthEnergy * 0.42 - speechPulse * 0.24) * modeProfile.body,
-      mouthSmile: clamp(emotionProfile.smile + modeProfile.smile + state.mouthEnergy * 0.08, 0.18, 0.9),
-      brows: clamp(emotionProfile.brow + modeProfile.brow + state.mouthEnergy * 0.05, 0.18, 0.86),
-      browLeftY: clamp(emotionProfile.brow + modeProfile.brow + smoothNoise(seconds, 0.83, 1.41, 2.2) * 0.035, 0.18, 0.86),
-      browRightY: clamp(emotionProfile.brow + modeProfile.brow + smoothNoise(seconds + 0.6, 0.79, 1.33, 2.08) * 0.035, 0.18, 0.86),
+      mouthSmile,
+      brows: softBrow,
+      browLeftY: clamp(softBrow + smoothNoise(seconds, 0.83, 1.41, 2.2) * 0.024, 0.18, 0.84),
+      browRightY: clamp(softBrow + smoothNoise(seconds + 0.6, 0.79, 1.33, 2.08) * 0.024, 0.18, 0.84),
       bodyX: bodyDrift * 1.4 * bodyScale,
       bodyY: (breath * 0.96 + speechPulse * 1.35 + thinkingNod * 0.24) * bodyScale,
       bodyZ: smoothNoise(seconds + 1.8, 0.28, 0.51, 0.88) * 2.4 * bodyScale,
