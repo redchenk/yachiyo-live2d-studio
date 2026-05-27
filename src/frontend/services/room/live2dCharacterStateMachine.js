@@ -71,6 +71,40 @@ function smoothNoise(seconds, a, b, c) {
   );
 }
 
+function smoothStep(value) {
+  const t = clamp(value, 0, 1);
+  return t * t * (3 - 2 * t);
+}
+
+function springStep(value) {
+  const t = clamp(value, 0, 1);
+  return clamp(smoothStep(t) + Math.sin(Math.PI * t) * 0.08, 0, 1);
+}
+
+function speakingMotionValue(state, at, lagMs = 0) {
+  const duration = Math.max(Number(state.motionDurationMs) || 4200, 1);
+  const progress = clamp(((Number(at) || 0) - lagMs - state.motionStartedAt) / duration, 0, 1);
+  return lerp(state.motionFrom, state.motionTo, springStep(progress));
+}
+
+function speakingMotionProgress(state, at) {
+  const duration = Math.max(Number(state.motionDurationMs) || 4200, 1);
+  return clamp(((Number(at) || 0) - state.motionStartedAt) / duration, 0, 1);
+}
+
+function startSpeakingMotionSegment(state, at, target = null, durationMs = 0) {
+  const current = speakingMotionValue(state, at);
+  const direction = target === null
+    ? (current >= 0 ? -1 : 1)
+    : Math.sign(target || 1);
+  state.motionFrom = current;
+  state.motionTo = target === null
+    ? direction * (0.78 + Math.random() * 0.22)
+    : target;
+  state.motionStartedAt = at;
+  state.motionDurationMs = durationMs || (4200 + Math.random() * 1800);
+}
+
 function pickNextGazeTarget(state, now) {
   const seconds = now / 1000 + state.seed;
   const span = state.mode === 'thinking' ? 0.18 : 0.34;
@@ -108,6 +142,10 @@ export function createLive2DCharacterStateMachine() {
     gazeX: 0,
     gazeY: 0,
     nextGazeAt: 0,
+    motionStartedAt: 0,
+    motionDurationMs: 4200,
+    motionFrom: 0,
+    motionTo: 0,
     seed: Math.random() * 1000
   };
 
@@ -179,6 +217,13 @@ export function createLive2DCharacterStateMachine() {
       state.modeSince = at;
     }
     if (at >= state.nextGazeAt) pickNextGazeTarget(state, at);
+    if (state.mode === 'speaking') {
+      if (!state.motionStartedAt || at >= state.motionStartedAt + state.motionDurationMs) {
+        startSpeakingMotionSegment(state, at);
+      }
+    } else if (Math.abs(state.motionTo) > 0.01 && at >= state.motionStartedAt + state.motionDurationMs) {
+      startSpeakingMotionSegment(state, at, 0, 1800);
+    }
 
     state.mouthEnergy *= 0.86;
     state.speechMotionEnergy *= state.mode === 'speaking' ? 0.985 : 0.9;
@@ -199,10 +244,14 @@ export function createLive2DCharacterStateMachine() {
     const headDrift = smoothNoise(seconds, 0.42, 0.77, 1.26) * speakingDriftScale;
     const bodyDrift = smoothNoise(seconds + 2.4, 0.31, 0.58, 0.96) * speakingDriftScale;
     const speechMotionEnergy = state.mode === 'speaking' ? state.speechMotionEnergy : state.speechMotionEnergy * 0.35;
-    const speechPulse = speechMotionEnergy * Math.sin(seconds * 0.56 + 0.28);
-    const speechSway = speechMotionEnergy * Math.sin(seconds * 0.42);
-    const speechCounterSway = speechMotionEnergy * Math.sin(seconds * 0.42 - 0.62);
-    const speechHeadRoll = speechMotionEnergy * Math.sin(seconds * 0.42 + 0.9);
+    const motionEnergy = clamp(speechMotionEnergy * 2.15, 0, 1.18);
+    const motionProgress = speakingMotionProgress(state, at);
+    const headMotion = speakingMotionValue(state, at, 0);
+    const bodyMotion = speakingMotionValue(state, at, 420);
+    const speechPulse = motionEnergy * Math.sin(Math.PI * motionProgress) * 0.78;
+    const speechSway = motionEnergy * headMotion;
+    const speechCounterSway = motionEnergy * bodyMotion;
+    const speechHeadRoll = motionEnergy * (headMotion * 0.72 + bodyMotion * 0.28);
     const thinkingNod = state.mode === 'thinking' ? Math.sin(seconds * 1.9) * 0.7 : 0;
     const actingLift = state.mode === 'acting' ? Math.sin(seconds * 2.4) * 0.7 : 0;
     const headScale = modeProfile.head * (0.78 + state.attention * 0.34 + state.arousal * 0.2);
