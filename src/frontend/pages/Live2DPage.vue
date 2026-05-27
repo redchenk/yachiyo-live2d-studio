@@ -43,6 +43,7 @@ const speechState = ref({
 let liveTimer = 0;
 let liveTurnInFlight = false;
 let speechPlayer = null;
+const CHARACTER_STATE_EVENT = 'tsukuyomi:live2d-character-state';
 
 const statusLabel = computed(() => {
   if (live2d.error.value) return 'ERROR';
@@ -142,6 +143,12 @@ function pushLog(role, text, meta = {}) {
   ].slice(-10);
 }
 
+function dispatchCharacterState(mode, detail = {}) {
+  window.dispatchEvent(new CustomEvent(CHARACTER_STATE_EVENT, {
+    detail: { mode, ...detail }
+  }));
+}
+
 async function init() {
   if (booted.value) return;
   booted.value = true;
@@ -149,6 +156,15 @@ async function init() {
   speechPlayer = createLive2DSpeechPlayer({
     onState: (patch) => {
       speechState.value = { ...speechState.value, ...patch };
+      if (patch.status === 'loading') {
+        dispatchCharacterState('thinking', { holdMs: 1800, attention: 0.78, arousal: 0.46 });
+      } else if (patch.status === 'playing') {
+        dispatchCharacterState('speaking', { holdMs: 1200, attention: 0.86, arousal: 0.68 });
+      } else if (patch.status === 'idle' || patch.status === 'disabled') {
+        dispatchCharacterState(liveDirector.running ? 'listening' : 'idle', { holdMs: 1200, attention: liveDirector.running ? 0.58 : 0.36 });
+      } else if (patch.status === 'error') {
+        dispatchCharacterState('idle', { holdMs: 1000, arousal: 0.28 });
+      }
     }
   });
   await live2d.init();
@@ -262,6 +278,7 @@ function speak() {
 async function performLLMAct(message, source = 'manual', options = {}) {
   const value = String(message || '').trim();
   if (!value || llmState.value.loading) return null;
+  dispatchCharacterState('thinking', { holdMs: 2400, attention: 0.82, arousal: 0.5 });
   llmState.value = {
     ...llmState.value,
     loading: true,
@@ -280,6 +297,16 @@ async function performLLMAct(message, source = 'manual', options = {}) {
     };
     if (source === 'live') {
       pushLog('yachiyo', visibleReply, { live2d: result.live2d });
+    }
+    if (options.dispatchLive2D === false) {
+      dispatchCharacterState('listening', { holdMs: 900, attention: 0.62 });
+    } else {
+      dispatchCharacterState('acting', {
+        holdMs: Math.max(Number(result.live2d?.durationMs) || 0, 1400),
+        emotion: result.live2d?.emotion || result.live2d?.expression,
+        attention: 0.82,
+        arousal: 0.62
+      });
     }
     return { ...result, reply: visibleReply };
   } catch (error) {
@@ -378,6 +405,7 @@ function startLiveDirector() {
   liveDirector.running = true;
   liveDirector.status = 'starting';
   liveDirector.error = '';
+  dispatchCharacterState('listening', { holdMs: 2200, attention: 0.68, arousal: 0.42 });
   pushLog('system', 'Live director started.');
   runLiveTurn();
 }
@@ -388,6 +416,7 @@ function stopLiveDirector() {
   window.clearTimeout(liveTimer);
   liveTimer = 0;
   speechPlayer?.stop();
+  dispatchCharacterState('idle', { holdMs: 1200, attention: 0.32, arousal: 0.28 });
   pushLog('system', 'Live director stopped.');
 }
 
@@ -397,6 +426,7 @@ function sendAudienceLine() {
   audienceInput.value = '';
   audienceQueue.value.push(value);
   pushLog('audience', value);
+  dispatchCharacterState('listening', { holdMs: 1800, attention: 0.88, arousal: 0.48 });
   if (liveDirector.running && !liveTurnInFlight) scheduleLiveTurn(450);
 }
 

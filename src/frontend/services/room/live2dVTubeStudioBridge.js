@@ -4,10 +4,12 @@ import {
   behaviorActionPriority,
   normalizeBehaviorBodyPose
 } from '../../constants/room/behaviorActionRegistry';
+import { createLive2DCharacterStateMachine } from './live2dCharacterStateMachine';
 
 const ROOM_ACT_EVENT = 'tsukuyomi:room-act';
 const FACE_CAPTURE_EVENT = 'tsukuyomi:live2d-face';
 const MOUTH_EVENT = 'tsukuyomi:live2d-mouth';
+const CHARACTER_STATE_EVENT = 'tsukuyomi:live2d-character-state';
 const SETTINGS_EVENT = 'tsukuyomi:studio-settings-saved';
 const STATUS_EVENT = 'tsukuyomi:vts-status';
 const TOKEN_KEY = 'roomVTubeStudioAuthToken';
@@ -66,6 +68,12 @@ function clamp(value, min, max) {
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) return min;
   return Math.min(Math.max(numeric, min), max);
+}
+
+function clampFallback(value, min, max, fallback) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return fallback;
+  return clamp(numeric, min, max);
 }
 
 function normalizeUrl(rawUrl) {
@@ -591,27 +599,31 @@ function activeBehaviorSamples(actions, elapsedMs) {
     const progress = (elapsedMs - started) / duration;
     if (progress < 0 || progress > 1) return null;
     const envelopeValue = actionEnvelope(progress);
-    const intensity = clamp((Number(action.intensity) || 0.92) * 1.7, 0.3, 1.85);
+    const amplitude = clampFallback(action.amplitude, 0.72, 1.36, 1);
+    const tempo = clampFallback(action.tempo, 0.82, 1.22, 1);
+    const phaseOffset = Number(action.phaseOffset) || 0;
+    const intensity = clamp((Number(action.intensity) || 0.92) * 1.7 * amplitude, 0.3, 1.9);
     return {
       action,
       progress,
-      phase: progress * Math.PI * 2,
+      phase: progress * Math.PI * 2 * tempo + phaseOffset,
       envelope: envelopeValue,
       intensity,
       energy: envelopeValue * intensity,
-      sign: actionSideSign(action, Math.sin((action.delayMs || 0) * 0.017) >= 0 ? 1 : -1)
+      sign: actionSideSign(action, Number(action.sideSign) || (Math.sin((action.delayMs || 0) * 0.017) >= 0 ? 1 : -1))
     };
   }).filter(Boolean);
 }
 
-function autoBlinkOpen(nowMs) {
+function autoBlinkOpen(nowMs, baseOpen = 0.92) {
   const seconds = Number(nowMs || 0) / 1000;
   const cycle = 3.35 + 0.28 * Math.sin(seconds * 0.17);
   const phase = ((seconds + 0.41 * Math.sin(seconds * 0.31)) % cycle + cycle) % cycle;
-  if (phase < 0.055) return 0.92 * (1 - phase / 0.055);
+  const open = clampFallback(baseOpen, 0.62, 1, 0.92);
+  if (phase < 0.055) return open * (1 - phase / 0.055);
   if (phase < 0.095) return 0.04;
-  if (phase < 0.22) return 0.92 * ((phase - 0.095) / 0.125);
-  return 0.92;
+  if (phase < 0.22) return open * ((phase - 0.095) / 0.125);
+  return open;
 }
 
 function pickDominantMotion(samples) {
@@ -769,30 +781,77 @@ function applyDirectOverlay(frame, sample, dominant) {
   }
 }
 
-function applyAutoBlink(frame, samples, nowMs) {
+function applyCharacterStateFrame(frame, character, strength = 1) {
+  if (!character) return;
+  const amount = clampFallback(strength, 0, 1, 1);
+  setFrameValue(frame, 'FaceAngleX', character.faceX * amount, 0.72);
+  setFrameValue(frame, 'FaceAngleY', character.faceY * amount, 0.7);
+  setFrameValue(frame, 'FaceAngleZ', character.faceZ * amount, 0.68);
+  setFrameValue(frame, 'FacePositionX', character.facePosX * amount, 0.54);
+  setFrameValue(frame, 'FacePositionY', character.facePosY * amount, 0.52);
+  setFrameValue(frame, 'MouthSmile', character.mouthSmile, 0.72);
+  setFrameValue(frame, 'Brows', character.brows, 0.56);
+  setFrameValue(frame, 'BrowLeftY', character.browLeftY, 0.54);
+  setFrameValue(frame, 'BrowRightY', character.browRightY, 0.54);
+  setFrameEyes(frame, character.eyeX * amount, character.eyeY * amount, 0.78);
+  setFrameBody(frame, {
+    x: character.bodyX * amount,
+    y: character.bodyY * amount,
+    z: character.bodyZ * amount,
+    posX: character.bodyPosX * amount,
+    posY: character.bodyPosY * amount
+  }, 0.72);
+}
+
+function applyAutoBlink(frame, samples, nowMs, baseOpen = 0.92) {
   const hasManualEye = samples.some((sample) => behaviorActionBlocksAutoBlink(sample.action.type));
   if (hasManualEye) return;
-  const open = autoBlinkOpen(nowMs);
+  const open = autoBlinkOpen(nowMs, baseOpen);
   setFrameValue(frame, 'EyeOpenLeft', open, 0.92);
   setFrameValue(frame, 'EyeOpenRight', open, 0.92);
 }
 
-function sampleVTSBehaviorActions(actions, elapsedMs, nowMs = performance.now()) {
+function sampleVTSBehaviorActions(actions, elapsedMs, nowMs = performance.now(), character = null) {
   const samples = activeBehaviorSamples(actions, elapsedMs);
   if (samples.some((sample) => sample.action.type === 'reset' && sample.energy > 0.5)) return behaviorResetFrame();
 
   const frame = createDirectTrackingFrame();
+  applyCharacterStateFrame(frame, character, 0.68);
   const dominant = pickDominantMotion(samples);
   applyDirectMotion(frame, dominant);
   samples.forEach((sample) => applyDirectOverlay(frame, sample, dominant));
-  applyAutoBlink(frame, samples, nowMs);
+  applyAutoBlink(frame, samples, nowMs, character?.eyeOpen);
   return finalizeDirectFrame(frame);
 }
 
-function sampleVTSIdleFrame(nowMs = performance.now()) {
+function sampleVTSIdleFrame(nowMs = performance.now(), character = null) {
   const frame = createDirectTrackingFrame();
-  applyAutoBlink(frame, [], nowMs);
+  applyCharacterStateFrame(frame, character, 1);
+  applyAutoBlink(frame, [], nowMs, character?.eyeOpen);
   return finalizeDirectFrame(frame);
+}
+
+function enrichBehaviorActions(actions = []) {
+  return actions.map((action, index) => {
+    const sideSign = action.side === 'left'
+      ? -1
+      : action.side === 'right'
+        ? 1
+        : (Math.random() > 0.5 ? 1 : -1);
+    const tempo = 0.9 + Math.random() * 0.22;
+    const amplitude = 0.92 + Math.random() * 0.26;
+    const durationJitter = 0.94 + Math.random() * 0.16;
+    const delayJitter = index > 0 ? Math.round((Math.random() - 0.5) * 90) : 0;
+    return {
+      ...action,
+      sideSign,
+      tempo,
+      amplitude,
+      phaseOffset: Math.random() * Math.PI * 2,
+      durationMs: Math.round(Math.max(Number(action.durationMs) || 1000, 260) * durationJitter),
+      delayMs: Math.max(0, Math.round((Number(action.delayMs) || 0) + delayJitter))
+    };
+  });
 }
 
 export function mountVTubeStudioBridge() {
@@ -810,6 +869,7 @@ export function mountVTubeStudioBridge() {
   let behaviorPlan = null;
   let expressionFiles = [];
   let expressionsLoadedAt = 0;
+  const characterState = createLive2DCharacterStateMachine();
   const pendingRequests = new Map();
   const pendingInjection = new Map();
   const expressionTimers = new Map();
@@ -1106,11 +1166,12 @@ export function mountVTubeStudioBridge() {
     const elapsedMs = now - behaviorPlan.startedAt;
     if (elapsedMs >= behaviorPlan.durationMs) {
       behaviorPlan = null;
-      queueInjection(behaviorNeutralFrame());
+      characterState.setMode('listening', { now, holdMs: 1400, attention: 0.52 });
+      queueInjection(sampleVTSIdleFrame(now, characterState.sample(now)));
       stopBehaviorFrame();
       return;
     }
-    queueInjection(sampleVTSBehaviorActions(behaviorPlan.actions, elapsedMs, now));
+    queueInjection(sampleVTSBehaviorActions(behaviorPlan.actions, elapsedMs, now, characterState.sample(now)));
     behaviorFrameId = window.requestAnimationFrame(tickBehavior);
   }
 
@@ -1119,7 +1180,7 @@ export function mountVTubeStudioBridge() {
       stopIdleFrame();
       return;
     }
-    if (!behaviorPlan) queueInjection(sampleVTSIdleFrame(now));
+    if (!behaviorPlan) queueInjection(sampleVTSIdleFrame(now, characterState.sample(now)));
     idleFrameId = window.requestAnimationFrame(tickIdle);
   }
 
@@ -1130,23 +1191,31 @@ export function mountVTubeStudioBridge() {
 
   function startBehaviorPlan(actions, durationMs) {
     if (!Array.isArray(actions) || !actions.length) return;
+    const enrichedActions = enrichBehaviorActions(actions);
+    const planDurationMs = Math.max(
+      Number(durationMs) || 0,
+      ...enrichedActions.map((action) => (Number(action.delayMs) || 0) + (Number(action.durationMs) || 0)),
+      800
+    );
     bodyMotion = null;
     stopBodyFrame();
     behaviorPlan = {
-      actions,
-      durationMs: Math.max(
-        Number(durationMs) || 0,
-        ...actions.map((action) => (Number(action.delayMs) || 0) + (Number(action.durationMs) || 0)),
-        800
-      ),
+      actions: enrichedActions,
+      durationMs: planDurationMs,
       startedAt: performance.now()
     };
+    characterState.setMode('acting', {
+      holdMs: planDurationMs + 420,
+      attention: 0.86,
+      arousal: 0.72
+    });
     stopBehaviorFrame();
     behaviorFrameId = window.requestAnimationFrame(tickBehavior);
   }
 
   function onRoomAct(event) {
     const detail = event.detail || {};
+    characterState.onRoomAct(detail);
     const behaviorActions = Array.isArray(detail.behaviorActions) ? detail.behaviorActions : [];
     if (behaviorActions.length) {
       startBehaviorPlan(behaviorActions, detail.durationMs || detail.duration);
@@ -1188,11 +1257,16 @@ export function mountVTubeStudioBridge() {
   function onMouth(event) {
     if (!settings.injectMouth) return;
     const value = clamp(Number(event.detail?.value), 0, 1);
+    characterState.onMouth(value);
     queueInjection([
       { id: 'MouthOpen', value, weight: 0.92 },
       { id: 'VoiceVolumePlusMouthOpen', value, weight: 0.72 },
       { id: 'VoiceVolume', value, weight: 0.38 }
     ]);
+  }
+
+  function onCharacterState(event) {
+    characterState.onExternalState(event.detail || {});
   }
 
   function reloadSettings() {
@@ -1212,6 +1286,7 @@ export function mountVTubeStudioBridge() {
   window.addEventListener(ROOM_ACT_EVENT, onRoomAct);
   window.addEventListener(FACE_CAPTURE_EVENT, onFaceCapture);
   window.addEventListener(MOUTH_EVENT, onMouth);
+  window.addEventListener(CHARACTER_STATE_EVENT, onCharacterState);
   window.addEventListener(SETTINGS_EVENT, reloadSettings);
 
   if (settings.enabled) connect().catch((error) => setStatus('error', error.message || 'VTube Studio connection failed.'));
@@ -1221,6 +1296,7 @@ export function mountVTubeStudioBridge() {
     window.removeEventListener(ROOM_ACT_EVENT, onRoomAct);
     window.removeEventListener(FACE_CAPTURE_EVENT, onFaceCapture);
     window.removeEventListener(MOUTH_EVENT, onMouth);
+    window.removeEventListener(CHARACTER_STATE_EVENT, onCharacterState);
     window.removeEventListener(SETTINGS_EVENT, reloadSettings);
     window.clearTimeout(flushTimer);
     expressionTimers.forEach((timer) => window.clearTimeout(timer));
