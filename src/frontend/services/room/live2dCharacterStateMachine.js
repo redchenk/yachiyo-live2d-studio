@@ -14,7 +14,7 @@ const MODE_PROFILES = {
   idle: { head: 1, body: 1, gaze: 1, smile: 0, brow: 0, arousal: 0 },
   listening: { head: 1.08, body: 1.04, gaze: 1.25, smile: 0.02, brow: 0.03, arousal: 0.08 },
   thinking: { head: 0.9, body: 0.86, gaze: 0.72, smile: -0.04, brow: 0.08, arousal: 0.12 },
-  speaking: { head: 1.48, body: 1.42, gaze: 1.18, smile: 0.025, brow: 0.02, arousal: 0.2 },
+  speaking: { head: 1.4, body: 1.36, gaze: 1.16, smile: 0.025, brow: 0.02, arousal: 0.19 },
   acting: { head: 1.28, body: 1.24, gaze: 1.16, smile: 0.02, brow: 0.04, arousal: 0.22 }
 };
 
@@ -90,7 +90,7 @@ function speakingMotionValue(state, at, lagMs = 0) {
 function startSpeakingMotionSegment(state, at, target = null, durationMs = 0) {
   const current = speakingMotionValue(state, at);
   const targetValue = target === null
-    ? (Math.abs(current) > 0.18 && Math.random() < 0.32 ? 0 : (Math.random() - 0.5) * 3.2)
+    ? (Math.abs(current) > 0.18 && Math.random() < 0.32 ? 0 : (Math.random() - 0.5) * 2.8)
     : target;
   state.motionFrom = current;
   state.motionTo = targetValue;
@@ -109,8 +109,8 @@ function startSpeakingGesture(state, at) {
     ? 620 + Math.random() * 520
     : 780 + Math.random() * 620;
   state.gestureAmount = nod
-    ? 1.8 + Math.random() * 1.1
-    : 1.55 + Math.random() * 1.0;
+    ? 1.4 + Math.random() * 1.0
+    : 1.15 + Math.random() * 0.92;
   state.gestureSide = Math.random() > 0.5 ? 1 : -1;
   state.nextGestureAt = at + state.gestureDurationMs + 420 + Math.random() * 980;
 }
@@ -284,7 +284,7 @@ export function createLive2DCharacterStateMachine() {
     const bodyDrift = smoothNoise(seconds + 2.4, 0.31, 0.58, 0.96) * speakingDriftScale;
     const speechMotionEnergy = state.mode === 'speaking' ? state.speechMotionEnergy : state.speechMotionEnergy * 0.35;
     const motionEnergy = state.mode === 'speaking'
-      ? clamp(0.9 + speechMotionEnergy * 0.8, 0, 1.55)
+      ? clamp(0.82 + speechMotionEnergy * 0.74, 0, 1.42)
       : clamp(speechMotionEnergy * 0.7, 0, 0.5);
     const headMotion = speakingMotionValue(state, at, 0);
     const bodyMotion = speakingMotionValue(state, at, 420);
