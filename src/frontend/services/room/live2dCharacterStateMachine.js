@@ -14,7 +14,7 @@ const MODE_PROFILES = {
   idle: { head: 1, body: 1, gaze: 1, smile: 0, brow: 0, arousal: 0 },
   listening: { head: 1.08, body: 1.04, gaze: 1.25, smile: 0.02, brow: 0.03, arousal: 0.08 },
   thinking: { head: 0.9, body: 0.86, gaze: 0.72, smile: -0.04, brow: 0.08, arousal: 0.12 },
-  speaking: { head: 1.18, body: 1.12, gaze: 1.08, smile: 0.025, brow: 0.02, arousal: 0.12 },
+  speaking: { head: 1.32, body: 1.36, gaze: 1.08, smile: 0.025, brow: 0.02, arousal: 0.12 },
   acting: { head: 1.28, body: 1.24, gaze: 1.16, smile: 0.02, brow: 0.04, arousal: 0.22 }
 };
 
@@ -142,7 +142,7 @@ export function createLive2DCharacterStateMachine() {
   function onMouth(value, at = nowMs()) {
     const mouth = clamp(value, 0, 1, 0);
     state.mouthEnergy = Math.max(state.mouthEnergy, mouth);
-    state.speechMotionEnergy = Math.max(state.speechMotionEnergy * 0.9 + mouth * 0.1, mouth * 0.72);
+    state.speechMotionEnergy = Math.max(state.speechMotionEnergy * 0.9 + mouth * 0.1, mouth * 0.95);
     if (mouth > 0.025) {
       state.lastMouthAt = at;
       setMode('speaking', {
@@ -223,19 +223,19 @@ export function createLive2DCharacterStateMachine() {
       eyeX: clamp(state.gazeX * gazeScale - headDrift * 0.07, -0.72, 0.72),
       eyeY: clamp(state.gazeY * gazeScale - 0.02 - thinkingNod * 0.04 - speechPulse * 0.035, -0.48, 0.42),
       faceX: headDrift * 4.2 * headScale,
-      faceY: (-0.8 + breath * 1.2 + speechPulse * 3.8 + thinkingNod + actingLift) * headScale,
+      faceY: (-0.8 + breath * 1.2 + speechPulse * 7.2 + thinkingNod + actingLift) * headScale,
       faceZ: smoothNoise(seconds + 0.9, 0.36, 0.66, 1.05) * 3.6 * headScale,
       facePosX: bodyDrift * 1.1 * bodyScale,
-      facePosY: (-0.38 * breath - state.mouthEnergy * 0.42 - speechPulse * 0.42) * modeProfile.body,
+      facePosY: (-0.38 * breath - state.mouthEnergy * 0.42 - speechPulse * 0.82) * modeProfile.body,
       mouthSmile,
       brows: softBrow,
       browLeftY: clamp(softBrow + smoothNoise(seconds, 0.83, 1.41, 2.2) * 0.024, 0.18, 0.84),
       browRightY: clamp(softBrow + smoothNoise(seconds + 0.6, 0.79, 1.33, 2.08) * 0.024, 0.18, 0.84),
       bodyX: bodyDrift * 1.4 * bodyScale,
-      bodyY: (breath * 0.96 + speechPulse * 2.15 + thinkingNod * 0.24) * bodyScale,
+      bodyY: (breath * 0.96 + speechPulse * 4.8 + thinkingNod * 0.24) * bodyScale,
       bodyZ: smoothNoise(seconds + 1.8, 0.28, 0.51, 0.88) * 2.4 * bodyScale,
       bodyPosX: bodyDrift * 0.06 * bodyScale,
-      bodyPosY: (breath * 0.035 + speechPulse * 0.11) * bodyScale,
+      bodyPosY: (breath * 0.035 + speechPulse * 0.24) * bodyScale,
       energy: clamp(state.arousal + state.mouthEnergy * 0.3, 0, 1)
     };
   }
