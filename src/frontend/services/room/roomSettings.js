@@ -3,6 +3,7 @@ import { readJson, writeJson } from './roomStorage';
 export const ROOM_LLM_SETTINGS_KEY = 'roomLLMSettings';
 export const ROOM_TTS_SETTINGS_KEY = 'roomTTSSettings';
 export const ROOM_MODEL_SETTINGS_KEY = 'roomModelSettings';
+export const ROOM_VTS_SETTINGS_KEY = 'roomVTubeStudioSettings';
 
 export const DEFAULT_GPT_SOVITS_GPT_WEIGHT = 'GPT_weights_v2ProPlus/yachiyo-v2pro-e15.ckpt';
 export const DEFAULT_GPT_SOVITS_SOVITS_WEIGHT = 'SoVITS_weights_v2ProPlus/yachiyo-v2pro_e8_s456.pth';
@@ -37,6 +38,16 @@ export const DEFAULT_ROOM_TTS_SETTINGS = {
 export const DEFAULT_ROOM_MODEL_SETTINGS = {
   lowQualityModel: false,
   renderDpr: 2.5
+};
+
+export const DEFAULT_ROOM_VTS_SETTINGS = {
+  enabled: false,
+  apiUrl: 'ws://127.0.0.1:8001',
+  pluginName: 'Yachiyo Live2D Studio',
+  pluginDeveloper: 'redchenk',
+  injectFace: true,
+  injectBody: true,
+  injectMouth: true
 };
 
 function clone(value) {
@@ -118,6 +129,19 @@ export function normalizeRoomModelSettings(settings = {}) {
   };
 }
 
+export function normalizeRoomVTubeStudioSettings(settings = {}) {
+  const merged = { ...DEFAULT_ROOM_VTS_SETTINGS, ...(settings || {}) };
+  return {
+    enabled: asBoolean(merged.enabled),
+    apiUrl: asText(merged.apiUrl) || DEFAULT_ROOM_VTS_SETTINGS.apiUrl,
+    pluginName: asText(merged.pluginName) || DEFAULT_ROOM_VTS_SETTINGS.pluginName,
+    pluginDeveloper: asText(merged.pluginDeveloper) || DEFAULT_ROOM_VTS_SETTINGS.pluginDeveloper,
+    injectFace: asBoolean(merged.injectFace),
+    injectBody: asBoolean(merged.injectBody),
+    injectMouth: asBoolean(merged.injectMouth)
+  };
+}
+
 export function readRoomLLMSettings() {
   return normalizeRoomLLMSettings(readJson(ROOM_LLM_SETTINGS_KEY, clone(DEFAULT_ROOM_LLM_SETTINGS)));
 }
@@ -128,6 +152,10 @@ export function readRoomTTSSettings() {
 
 export function readRoomModelSettings() {
   return normalizeRoomModelSettings(readJson(ROOM_MODEL_SETTINGS_KEY, clone(DEFAULT_ROOM_MODEL_SETTINGS)));
+}
+
+export function readRoomVTubeStudioSettings() {
+  return normalizeRoomVTubeStudioSettings(readJson(ROOM_VTS_SETTINGS_KEY, clone(DEFAULT_ROOM_VTS_SETTINGS)));
 }
 
 export function writeRoomLLMSettings(settings) {
@@ -148,10 +176,17 @@ export function writeRoomModelSettings(settings) {
   return normalized;
 }
 
+export function writeRoomVTubeStudioSettings(settings) {
+  const normalized = normalizeRoomVTubeStudioSettings(settings);
+  writeJson(ROOM_VTS_SETTINGS_KEY, normalized);
+  return normalized;
+}
+
 export function readRoomStudioSettings() {
   return {
     llm: readRoomLLMSettings(),
     tts: readRoomTTSSettings(),
-    model: readRoomModelSettings()
+    model: readRoomModelSettings(),
+    vts: readRoomVTubeStudioSettings()
   };
 }

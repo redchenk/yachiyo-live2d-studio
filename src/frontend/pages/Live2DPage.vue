@@ -287,8 +287,8 @@ function buildLiveDirectorPrompt(audienceLines) {
     'Do not wait passively for instructions. React, tease gently, ask a tiny hook, or continue the topic.',
     'Choose a visible bodyPose or precise parameter set every turn unless the moment is intentionally calm. Use intensity 0.95-1.0 for visible body acting.',
     'Prefer nod, lean_in, sway, bounce, shake_head, or emphasis. Use expression and expressionMix too.',
-    'For visible body acting, include Yachiyo body-chain parameters such as ParamOutput_BodyX, ParamOutput_BodyY, ParamOutput_BodyZ, ParamAngle_BodyX, ParamAngle_BodyY, ParamAngle_BodyZ, ParamAngle_ChestZ, ParamAngle_HipZ, PositionZ, or ParamPosition_Z.',
-    'Use parameters for gaze, head tilt, torso, chest/hip split, shoulder accents, hair follow-through, brow shape, mouth form, cheek, and breathing nuance.',
+    'For visible body acting, enable ParamSwitchCtrl_BodyX/Y/Z/ChestZ/HipZ at value 1 and include Yachiyo body-chain parameters such as ParamOutput_BodyX, ParamOutput_BodyY, ParamOutput_BodyZ, ParamAngle_BodyX, ParamAngle_BodyY, ParamAngle_BodyZ, ParamAngle_ChestZ, ParamAngle_HipZ, PositionZ, or ParamPosition_Z.',
+    'Use parameters for VTube Studio-style head targets ParamAngle_HeadX/Y/Z, gaze, head tilt, torso, chest/hip split, shoulder accents, hair follow-through, brow shape, mouth form, cheek, and breathing nuance.',
     'Never show action cues in the spoken reply or caption: no parentheses, no asterisk actions, no Action/Pose labels, and no body descriptions in reply. Put movement only in live2d JSON.',
     'Return the required JSON object only.'
   ].join('\n');

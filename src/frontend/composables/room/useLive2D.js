@@ -5,6 +5,7 @@ import {
 } from '../../services/room/live2dControl';
 import { mountLive2DStageBodyActuator } from '../../services/room/live2dBodyActuator';
 import { mountLive2DFaceCaptureSimulator } from '../../services/room/live2dFaceCaptureSimulator';
+import { mountVTubeStudioBridge } from '../../services/room/live2dVTubeStudioBridge';
 import { destroyLive2DRoom, initLive2DRoom, preloadLive2DResources, speakLive2D } from '../../services/room/live2dBridge';
 
 export function useLive2D() {
@@ -13,6 +14,7 @@ export function useLive2D() {
   const error = ref('');
   let destroyBodyActuator = null;
   let destroyFaceCapture = null;
+  let destroyVTubeStudio = null;
 
   function consumePendingSoon() {
     window.setTimeout(() => consumePendingRoomLive2DIntent(), 250);
@@ -34,8 +36,10 @@ export function useLive2D() {
       await initLive2DRoom();
       destroyBodyActuator?.();
       destroyFaceCapture?.();
+      destroyVTubeStudio?.();
       destroyBodyActuator = mountLive2DStageBodyActuator();
       destroyFaceCapture = mountLive2DFaceCaptureSimulator();
+      destroyVTubeStudio = mountVTubeStudioBridge();
       ready.value = true;
       loading.value = false;
       consumePendingSoon();
@@ -57,8 +61,10 @@ export function useLive2D() {
     loading.value = false;
     destroyBodyActuator?.();
     destroyFaceCapture?.();
+    destroyVTubeStudio?.();
     destroyBodyActuator = null;
     destroyFaceCapture = null;
+    destroyVTubeStudio = null;
     destroyLive2DRoom();
   }
 

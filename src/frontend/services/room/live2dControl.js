@@ -405,6 +405,14 @@ function poseParameter(id, value, weight, durationMs, delayMs = 0) {
   };
 }
 
+const BODY_SWITCH_PARAMETER_IDS = [
+  'ParamSwitchCtrl_BodyX',
+  'ParamSwitchCtrl_BodyY',
+  'ParamSwitchCtrl_BodyZ',
+  'ParamSwitchCtrl_ChestZ',
+  'ParamSwitchCtrl_HipZ'
+];
+
 function bodyPoseParameterTargets(bodyPose, intensity, durationMs, manifest) {
   const scale = bodyPoseScale(intensity);
   const baseDuration = Math.min(Math.max(Math.round(durationMs * 0.78), 750), 3200);
@@ -559,7 +567,8 @@ function bodyPoseParameterTargets(bodyPose, intensity, durationMs, manifest) {
     ]
   }[bodyPose] || [];
 
-  return normalizeLive2DParameterTargets(rawTargets, manifest);
+  const switchTargets = BODY_SWITCH_PARAMETER_IDS.map((id) => poseParameter(id, 1, 1, longDuration));
+  return normalizeLive2DParameterTargets([...switchTargets, ...rawTargets], manifest);
 }
 
 const bodyPoseWindupFactors = {
@@ -585,6 +594,7 @@ const bodyPosePeakFactors = {
 };
 
 function neutralParameterValue(id) {
+  if (String(id || '').startsWith('ParamSwitchCtrl_')) return 0;
   if (id === 'ParamBreath' || id === 'ParamBreath2' || id === 'ParamBreath3') return 0.38;
   if (id === 'ParamEyeLOpen' || id === 'ParamEyeROpen') return 1;
   return 0;
@@ -594,6 +604,7 @@ function transformPoseValue(target, factor) {
   const id = String(target?.id || '');
   const value = Number(target?.value);
   if (!Number.isFinite(value)) return neutralParameterValue(id);
+  if (id.startsWith('ParamSwitchCtrl_')) return factor === 0 ? 0 : 1;
   if (id === 'ParamBreath' || id === 'ParamBreath2' || id === 'ParamBreath3') {
     if (factor <= 0) return 0.34;
     return Math.min(1, Math.max(0.42, value * Math.min(factor, 1.15)));

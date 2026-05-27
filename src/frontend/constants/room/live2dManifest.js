@@ -99,6 +99,48 @@ export const roomLive2DManifest = {
       max: 30
     },
     {
+      id: 'ParamAngle_HeadX',
+      label: 'Yachiyo head X',
+      prompt: 'model-specific head yaw used by the VTube Studio mapping',
+      min: -30,
+      max: 30
+    },
+    {
+      id: 'ParamAngle_HeadY',
+      label: 'Yachiyo head Y',
+      prompt: 'model-specific head pitch used by the VTube Studio mapping',
+      min: -30,
+      max: 30
+    },
+    {
+      id: 'ParamAngle_HeadZ',
+      label: 'Yachiyo head Z',
+      prompt: 'model-specific head roll used by the VTube Studio mapping',
+      min: -30,
+      max: 30
+    },
+    {
+      id: 'ParamAngle_HeadZ2',
+      label: 'Yachiyo head Z secondary',
+      prompt: 'secondary head roll for smoother VTube Studio-style head movement',
+      min: -30,
+      max: 30
+    },
+    {
+      id: 'ParamAngleModify_HeadX',
+      label: 'Head X modifier',
+      prompt: 'model-specific head yaw modifier for tracking-like nuance',
+      min: -30,
+      max: 30
+    },
+    {
+      id: 'ParamAngleModify_HeadY',
+      label: 'Head Y modifier',
+      prompt: 'model-specific head pitch modifier for tracking-like nuance',
+      min: -30,
+      max: 30
+    },
+    {
       id: 'ParamBodyAngleX',
       label: 'Body lean',
       prompt: 'torso lean left-right',
@@ -132,6 +174,41 @@ export const roomLive2DManifest = {
       prompt: 'visible model depth response from forward-back movement',
       min: -30,
       max: 30
+    },
+    {
+      id: 'ParamSwitchCtrl_BodyX',
+      label: 'Body X switch',
+      prompt: 'enable model-specific body X control before driving body X inputs and outputs',
+      min: 0,
+      max: 1
+    },
+    {
+      id: 'ParamSwitchCtrl_BodyY',
+      label: 'Body Y switch',
+      prompt: 'enable model-specific body Y control before driving body Y inputs and outputs',
+      min: 0,
+      max: 1
+    },
+    {
+      id: 'ParamSwitchCtrl_BodyZ',
+      label: 'Body Z switch',
+      prompt: 'enable model-specific body Z control before driving torso roll inputs and outputs',
+      min: 0,
+      max: 1
+    },
+    {
+      id: 'ParamSwitchCtrl_ChestZ',
+      label: 'Chest Z switch',
+      prompt: 'enable model-specific chest counter-motion control',
+      min: 0,
+      max: 1
+    },
+    {
+      id: 'ParamSwitchCtrl_HipZ',
+      label: 'Hip Z switch',
+      prompt: 'enable model-specific hip counter-motion control',
+      min: 0,
+      max: 1
     },
     {
       id: 'ParamBodyInput_BodyX',
@@ -451,6 +528,6 @@ export function live2DPromptCatalog(manifest = roomLive2DManifest) {
     motions,
     'Available fine parameter ids:',
     parameters,
-    'Control rules: only use listed ids. Use bodyPose for posture/body movement. Pair visible bodyPose choices with precise head, torso, chest, hip, shoulder, body-physics, inertia, hair-follow, and breath targets. For visible Yachiyo body movement, prefer the model-specific chain ParamBodyInput_BodyX, ParamBodyInput_BodyY, ParamBodyInput_BodyZ, ParamOutput_BodyX, ParamOutput_BodyY, ParamOutput_BodyZ, ParamPhysicsRAM_BodyX, ParamPhysicsRAM_BodyY, ParamPhysicsRAM_BodyZ, ParamAngle_BodyX, ParamAngle_BodyY, ParamAngle_BodyZ, ParamAngle_ChestZ, ParamAngle_HipZ, PositionZ, and ParamPosition_Z instead of relying only on generic ParamBodyAngleX/Y/Z. Use ParamHairFront, ParamHairSide, ParamHairBack, ParamBreath2, and ParamBreath3 as follow-through accents. Use parameters for gaze, head, torso, brow, mouth-shape, cheek, and breathing changes. Use bodyPose none when no body movement is needed.'
+    'Control rules: only use listed ids. Use bodyPose for posture/body movement. Pair visible bodyPose choices with precise head, torso, chest, hip, shoulder, body-physics, inertia, hair-follow, and breath targets. For VTube Studio-style head tracking, prefer ParamAngle_HeadX, ParamAngle_HeadY, ParamAngle_HeadZ, and ParamAngle_HeadZ2 together with ParamAngleX/Y/Z. For visible Yachiyo body movement, enable ParamSwitchCtrl_BodyX, ParamSwitchCtrl_BodyY, ParamSwitchCtrl_BodyZ, ParamSwitchCtrl_ChestZ, and ParamSwitchCtrl_HipZ at value 1, then drive the model-specific chain ParamBodyInput_BodyX, ParamBodyInput_BodyY, ParamBodyInput_BodyZ, ParamOutput_BodyX, ParamOutput_BodyY, ParamOutput_BodyZ, ParamPhysicsRAM_BodyX, ParamPhysicsRAM_BodyY, ParamPhysicsRAM_BodyZ, ParamAngle_BodyX, ParamAngle_BodyY, ParamAngle_BodyZ, ParamAngle_ChestZ, ParamAngle_HipZ, PositionZ, and ParamPosition_Z instead of relying only on generic ParamBodyAngleX/Y/Z. Use ParamHairFront, ParamHairSide, ParamHairBack, ParamBreath2, and ParamBreath3 as follow-through accents. Use parameters for gaze, head, torso, brow, mouth-shape, cheek, and breathing changes. Use bodyPose none when no body movement is needed.'
   ].join('\n');
 }
