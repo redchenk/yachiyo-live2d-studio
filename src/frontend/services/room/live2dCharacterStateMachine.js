@@ -19,7 +19,12 @@ const MODE_PROFILES = {
 };
 
 const IDLE_ACTION_RATIO = 0.9;
-const ACTION_SPEED_SCALE = 1.1;
+const ACTION_SPEED_SCALE = 0.9;
+const IDLE_GESTURE_WEIGHTS = [
+  { type: 'bob', weight: 0.46 },
+  { type: 'nod', weight: 0.36 },
+  { type: 'tilt', weight: 0.18 }
+];
 
 function clamp(value, min, max, fallback = min) {
   const numeric = Number(value);
@@ -134,11 +139,22 @@ function startSpeakingGesture(state, at) {
   state.nextGestureAt = at + state.gestureDurationMs + actionMs(420 + Math.random() * 980);
 }
 
+function weightedIdleGestureType(excludeType = '') {
+  const options = IDLE_GESTURE_WEIGHTS.filter((item) => item.type !== excludeType);
+  const total = options.reduce((sum, item) => sum + item.weight, 0);
+  let roll = Math.random() * total;
+  for (const item of options) {
+    roll -= item.weight;
+    if (roll <= 0) return item.type;
+  }
+  return options[options.length - 1]?.type || 'bob';
+}
+
 function pickIdleGestureType(state) {
-  let type = Math.random() < 0.44 ? 'nod' : 'tilt';
+  let type = weightedIdleGestureType();
   if (type === state.lastIdleGestureType) {
-    const shouldSwitch = state.idleGestureRepeatCount >= 2 || Math.random() < 0.72;
-    if (shouldSwitch) type = type === 'nod' ? 'tilt' : 'nod';
+    const shouldSwitch = state.idleGestureRepeatCount >= 2 || Math.random() < 0.78;
+    if (shouldSwitch) type = weightedIdleGestureType(type);
   }
   return type;
 }
@@ -162,26 +178,28 @@ function rememberIdleGesture(state, type, side) {
 function startIdleGesture(state, at) {
   const type = pickIdleGestureType(state);
   const nod = type === 'nod';
+  const bob = type === 'bob';
   state.gestureType = type;
   state.gestureStartedAt = at;
-  state.gestureDurationMs = nod
-    ? actionMs(620 + Math.random() * 520)
-    : actionMs(780 + Math.random() * 620);
-  state.gestureAmount = nod
-    ? 1.0 + Math.random() * 0.7
-    : 0.9 + Math.random() * 0.65;
+  state.gestureDurationMs = bob
+    ? actionMs(700 + Math.random() * 680)
+    : (nod ? actionMs(620 + Math.random() * 520) : actionMs(780 + Math.random() * 620));
+  state.gestureAmount = bob
+    ? 1.1 + Math.random() * 0.85
+    : (nod ? 1.0 + Math.random() * 0.7 : 0.78 + Math.random() * 0.48);
   state.gestureSide = pickIdleGestureSide(state, type);
   rememberIdleGesture(state, type, state.gestureSide);
   state.nextGestureAt = at + state.gestureDurationMs + actionMs(80 + Math.random() * 260);
 }
 
 function speakingGestureValue(state, at) {
-  if (!state.gestureStartedAt || state.gestureType === 'none') return { nod: 0, tilt: 0 };
+  if (!state.gestureStartedAt || state.gestureType === 'none') return { nod: 0, tilt: 0, lift: 0 };
   const progress = clamp((at - state.gestureStartedAt) / Math.max(state.gestureDurationMs, 1), 0, 1);
   const envelope = Math.sin(Math.PI * progress);
-  if (progress >= 1) return { nod: 0, tilt: 0 };
-  if (state.gestureType === 'nod') return { nod: state.gestureAmount * envelope, tilt: 0 };
-  return { nod: 0, tilt: state.gestureSide * state.gestureAmount * envelope };
+  if (progress >= 1) return { nod: 0, tilt: 0, lift: 0 };
+  if (state.gestureType === 'nod') return { nod: state.gestureAmount * envelope, tilt: 0, lift: 0 };
+  if (state.gestureType === 'bob') return { nod: 0, tilt: 0, lift: state.gestureAmount * envelope };
+  return { nod: 0, tilt: state.gestureSide * state.gestureAmount * envelope, lift: 0 };
 }
 
 function pickNextGazeTarget(state, now) {
@@ -375,6 +393,7 @@ export function createLive2DCharacterStateMachine() {
     const gestureStrength = isSpeaking ? motionEnergy : (state.gestureStartedAt ? 1 : 0);
     const speechNod = gesture.nod * gestureStrength;
     const speechTilt = gesture.tilt * gestureStrength;
+    const speechLift = (gesture.lift || 0) * gestureStrength;
     const speechSway = motionEnergy * headMotion;
     const speechCounterSway = motionEnergy * bodyMotion;
     const speechHeadRoll = motionEnergy * (headMotion * 0.24 + bodyMotion * 0.12) + speechTilt;
@@ -403,7 +422,7 @@ export function createLive2DCharacterStateMachine() {
       transition,
       eyeOpen: clamp(emotionProfile.eye - speechEyeSmile, 0.66, 1),
       eyeX: clamp(state.gazeX * gazeScale - headDrift * 0.07, -0.72, 0.72),
-      eyeY: clamp(state.gazeY * gazeScale - 0.02 - thinkingNod * 0.04 - speechNod * 0.018, -0.48, 0.42),
+      eyeY: clamp(state.gazeY * gazeScale - 0.02 - thinkingNod * 0.04 - speechNod * 0.018 - speechLift * 0.014, -0.48, 0.42),
       faceX: (headDrift * 2.8 + speechSway * 13.2) * headScale,
       faceY: (
         isSpeaking
@@ -418,7 +437,7 @@ export function createLive2DCharacterStateMachine() {
       facePosY: (
         isSpeaking
           ? -0.3 * breathMotion + slowFloat * 0.42 + livelyFloat * 0.24 - speechNod * 0.86
-          : -0.3 * IDLE_ACTION_RATIO * breathMotion + slowFloat * (0.42 * IDLE_ACTION_RATIO) - speechNod * (0.86 * IDLE_ACTION_RATIO)
+          : -0.3 * IDLE_ACTION_RATIO * breathMotion + slowFloat * (0.42 * IDLE_ACTION_RATIO) - speechNod * (0.86 * IDLE_ACTION_RATIO) - speechLift * (0.58 * IDLE_ACTION_RATIO)
       ) * modeProfile.body,
       mouthSmile: clamp(mouthSmile + Math.max(speechNod, 0) * 0.018, 0.18, 0.84),
       brows: softBrow,
@@ -439,7 +458,7 @@ export function createLive2DCharacterStateMachine() {
       bodyPosY: (
         isSpeaking
           ? breathMotion * 0.025 + bodyFloat * 0.045 + livelyFloat * 0.025 + speechNod * 0.07
-          : breathMotion * (0.025 * IDLE_ACTION_RATIO) + bodyFloat * (0.045 * IDLE_ACTION_RATIO) + speechNod * (0.07 * IDLE_ACTION_RATIO)
+          : breathMotion * (0.025 * IDLE_ACTION_RATIO) + bodyFloat * (0.045 * IDLE_ACTION_RATIO) + speechNod * (0.07 * IDLE_ACTION_RATIO) + speechLift * (0.095 * IDLE_ACTION_RATIO)
       ) * bodyScale,
       energy: clamp(state.arousal + state.mouthEnergy * 0.3, 0, 1)
     };
