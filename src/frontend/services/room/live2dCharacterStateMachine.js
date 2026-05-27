@@ -316,7 +316,7 @@ export function createLive2DCharacterStateMachine() {
     const headMotion = speakingMotionValue(state, at, 0);
     const bodyMotion = speakingMotionValue(state, at, 420);
     const gesture = speakingGestureValue(state, at);
-    const gestureStrength = isSpeaking ? motionEnergy : (state.gestureStartedAt ? 0.9 : 0);
+    const gestureStrength = isSpeaking ? motionEnergy : (state.gestureStartedAt ? 1 : 0);
     const speechNod = gesture.nod * gestureStrength;
     const speechTilt = gesture.tilt * gestureStrength;
     const speechSway = motionEnergy * headMotion;
@@ -352,7 +352,7 @@ export function createLive2DCharacterStateMachine() {
       faceY: (
         isSpeaking
           ? -0.8 - forwardLean * 5.2 + breathMotion * 1.35 + slowFloat * 1.25 + livelyFloat * 0.82 - speechNod * 12 + thinkingNod + actingLift
-          : -0.8 + breathMotion * 0.86 + slowFloat * 0.62 + speechNod * 4.8 + thinkingNod + actingLift
+          : -0.8 + breathMotion * 0.68 + slowFloat * 0.62 + speechNod * 6 + thinkingNod + actingLift
       ) * headScale,
       faceZ: (
         smoothNoise(seconds + 0.9, 0.36, 0.66, 1.05) * 1.1 * speakingDriftScale +
@@ -362,7 +362,7 @@ export function createLive2DCharacterStateMachine() {
       facePosY: (
         isSpeaking
           ? -0.3 * breathMotion + slowFloat * 0.42 + livelyFloat * 0.24 - speechNod * 0.86
-          : -0.05 * breathMotion + slowFloat * 0.025 - speechNod * 0.12
+          : -0.15 * breathMotion + slowFloat * 0.2 - speechNod * 0.43
       ) * modeProfile.body,
       mouthSmile: clamp(mouthSmile + Math.max(speechNod, 0) * 0.018, 0.18, 0.84),
       brows: softBrow,
@@ -372,7 +372,7 @@ export function createLive2DCharacterStateMachine() {
       bodyY: (
         isSpeaking
           ? -forwardLean * 7.2 + breathMotion * 3.0 + bodyFloat * 3.2 + livelyFloat * 1.45 - speechNod * 7.4 + thinkingNod * 0.24
-          : breathMotion * 1.45 + bodyFloat * 1.15 + speechNod * 3.8 + thinkingNod * 0.24
+          : breathMotion * 1.5 + bodyFloat * 1.6 + speechNod * 4.2 + thinkingNod * 0.24
       ) * bodyScale,
       bodyZ: (
         smoothNoise(seconds + 1.8, 0.28, 0.51, 0.88) * 0.95 * speakingDriftScale +
@@ -383,7 +383,7 @@ export function createLive2DCharacterStateMachine() {
       bodyPosY: (
         isSpeaking
           ? breathMotion * 0.025 + bodyFloat * 0.045 + livelyFloat * 0.025 + speechNod * 0.07
-          : breathMotion * 0.004 + bodyFloat * 0.006 + speechNod * 0.01
+          : breathMotion * 0.012 + bodyFloat * 0.022 + speechNod * 0.035
       ) * bodyScale,
       energy: clamp(state.arousal + state.mouthEnergy * 0.3, 0, 1)
     };
