@@ -1,5 +1,5 @@
 const ROOM_ACT_EVENT = 'tsukuyomi:room-act';
-const DEFAULT_STAGE_MOTION_SCALE = 0.22;
+const DEFAULT_STAGE_MOTION_SCALE = 0;
 const BODY_PARAMETER_HINTS = [
   'ParamBodyInput_BodyX',
   'ParamBodyInput_BodyY',
@@ -104,10 +104,10 @@ function normalizeDuration(value) {
 function readStageMotionScale() {
   if (typeof window === 'undefined') return DEFAULT_STAGE_MOTION_SCALE;
   const globalValue = Number(window.TSUKUYOMI_LIVE2D_STAGE_MOTION_SCALE);
-  if (Number.isFinite(globalValue)) return clamp(globalValue, 0.2, 2.4);
+  if (Number.isFinite(globalValue)) return clamp(globalValue, 0, 2.4);
   try {
     const stored = Number(window.localStorage?.getItem('roomLive2DStageMotionScale'));
-    if (Number.isFinite(stored)) return clamp(stored, 0.2, 2.4);
+    if (Number.isFinite(stored)) return clamp(stored, 0, 2.4);
   } catch (_) {
     // ignore storage failures in WebView privacy modes
   }
@@ -200,7 +200,7 @@ export function resolveLive2DStageMotion(detail = {}) {
 export function sampleLive2DStagePose(motion, progress, scale = DEFAULT_STAGE_MOTION_SCALE) {
   if (!motion) return { x: 0, y: 0, rotate: 0, scale: 1 };
   const t = clamp(progress, 0, 1);
-  const e = envelope(t) * clamp(motion.intensity, 0.5, 1) * clamp(scale, 0.2, 2.4);
+  const e = envelope(t) * clamp(motion.intensity, 0.5, 1) * clamp(scale, 0, 2.4);
   const fast = Math.sin(t * Math.PI * 4);
   const slow = Math.sin(t * Math.PI * 2);
   const beat = absPulse(t, 2);

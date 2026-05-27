@@ -41,7 +41,7 @@ export const DEFAULT_ROOM_MODEL_SETTINGS = {
 };
 
 export const DEFAULT_ROOM_VTS_SETTINGS = {
-  enabled: false,
+  enabled: true,
   apiUrl: 'ws://127.0.0.1:8001',
   pluginName: 'Yachiyo Live2D Studio',
   pluginDeveloper: 'redchenk',

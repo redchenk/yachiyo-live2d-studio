@@ -17,8 +17,11 @@
 - `LLM`: API URL、API Key、模型名、额外系统提示词。
 - `TTS`: GPT-SoVITS 本机 API，或 OpenAI 兼容语音 API。
 - `Model`: 低质量模型开关。
+- `VTS`: VTube Studio WebSocket 输出。默认使用 `ws://127.0.0.1:8001`，首次连接时在 VTube Studio 里允许插件授权。
 
 配置会保存在当前应用本地存储里，Live2D 的 `LLM Act`、`Start`、`Voice` 会直接读取这些设置。
+
+当前推荐工作流是 VTube Studio 作为最终直播画面，Yachiyo Live2D Studio 负责 LLM、TTS、直播编导和参数注入；内置 Live2D 画面只作为本地预览和兜底。
 
 ## 开发模式
 

@@ -290,7 +290,7 @@ onUnmounted(() => {
       <section v-else class="studio-settings-section">
         <label class="studio-check-row">
           <input v-model="vts.enabled" type="checkbox">
-          <span>Enable VTube Studio output</span>
+          <span>Use VTube Studio as output</span>
         </label>
         <label>
           <span>WebSocket URL</span>
