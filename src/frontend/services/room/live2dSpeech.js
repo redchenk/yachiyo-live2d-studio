@@ -287,7 +287,7 @@ export function createLive2DSpeechPlayer({ onState } = {}) {
       const t = audio.currentTime || 0;
       const pulse = Math.max(0, Math.sin(t * 18 + seed * 0.07));
       const accent = Math.max(0, Math.sin(t * 7.3 + seed * 0.13));
-      dispatchMouth(Math.min(0.95, 0.08 + pulse * 0.58 + accent * 0.22));
+      dispatchMouth(Math.min(0.44, 0.02 + pulse * 0.3 + accent * 0.1));
       frameId = window.requestAnimationFrame(tick);
     };
     tick();
@@ -308,6 +308,7 @@ export function createLive2DSpeechPlayer({ onState } = {}) {
       sourceNode.connect(analyser);
       analyser.connect(audioContext.destination);
       const data = new Uint8Array(analyser.frequencyBinCount);
+      let smoothedMouth = 0;
       const tick = () => {
         if (!currentAudio || currentAudio !== audio || audio.paused || audio.ended || !analyser) {
           stopMouth();
@@ -320,12 +321,31 @@ export function createLive2DSpeechPlayer({ onState } = {}) {
           sum += centered * centered;
         }
         const rms = Math.sqrt(sum / data.length) / 128;
-        dispatchMouth(Math.min(1, rms * 3.2));
+        const gated = Math.max(0, rms - 0.018);
+        const target = Math.min(0.48, Math.pow(Math.min(gated / 0.18, 1), 0.72) * 0.48);
+        smoothedMouth = smoothedMouth * 0.72 + target * 0.28;
+        dispatchMouth(smoothedMouth < 0.025 ? 0 : smoothedMouth);
         frameId = window.requestAnimationFrame(tick);
       };
       tick();
     } catch (_) {
       startSyntheticMouth(text, audio);
+    }
+  }
+
+  async function createAnalysableAudioFromUrl(url) {
+    try {
+      const response = await fetch(url);
+      if (!response.ok) throw new Error(`TTS ${response.status}`);
+      objectUrl = URL.createObjectURL(await response.blob());
+      const audio = new Audio(objectUrl);
+      audio.dataset.mouthMode = 'analysed';
+      return audio;
+    } catch (_) {
+      const audio = new Audio(url);
+      audio.crossOrigin = 'anonymous';
+      audio.dataset.mouthMode = 'analysed';
+      return audio;
     }
   }
 
@@ -335,12 +355,11 @@ export function createLive2DSpeechPlayer({ onState } = {}) {
       const ttsText = await translateForJapaneseTts(text);
       if (!ttsText) throw new Error('日文翻译结果为空，已取消语音播放。');
       await ensureGptSovitsWeights(settings);
-      const audio = new Audio(buildGptSovitsAudioUrl(ttsText, {
+      const audio = await createAnalysableAudioFromUrl(buildGptSovitsAudioUrl(ttsText, {
         ...settings,
         textLang: 'ja',
         promptLang: settings.promptLang || 'ja'
       }));
-      audio.dataset.mouthMode = 'synthetic';
       audio.dataset.speechText = ttsText;
       return audio;
     }

@@ -9,6 +9,22 @@ const TOKEN_KEY = 'roomVTubeStudioAuthToken';
 const API_NAME = 'VTubeStudioPublicAPI';
 const API_VERSION = '1.0';
 
+const VTS_EXPRESSION_ALIASES = {
+  happy: ['happy', 'smile', '微笑', '笑'],
+  joy: ['happy', 'smile', '微笑', '笑'],
+  smile: ['smile', 'happy', '微笑', '笑'],
+  bsmile: ['bsmile', 'blush', 'shy', 'smug', '照れ', '脸红', '臉紅'],
+  blush: ['bsmile', 'blush', 'shy', '照れ', '脸红', '臉紅'],
+  shy: ['bsmile', 'blush', 'shy', '照れ', '脸红', '臉紅'],
+  smug: ['bsmile', 'smug', 'bsmile', '得意'],
+  playful: ['bsmile', 'smug', 'playful', '調皮', '调皮'],
+  namida: ['namida', 'sad', 'tear', '涙', '眼泪', '眼淚'],
+  sad: ['namida', 'sad', 'tear', '涙', '眼泪', '眼淚'],
+  tears: ['tears', 'cry', 'crying', '涙', '哭'],
+  crying: ['tears', 'cry', 'crying', '涙', '哭'],
+  neutral: ['neutral', 'normal', 'default']
+};
+
 const VTS_RANGES = {
   FacePositionX: [-15, 15],
   FacePositionY: [-15, 15],
@@ -63,6 +79,22 @@ function tokenStorageKey(settings) {
 
 function toUnit(value) {
   return clamp(0.5 + Number(value || 0) * 0.5, 0, 1);
+}
+
+function normalizeExpressionToken(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/\.exp3\.json$/i, '')
+    .replace(/[\s-]+/g, '_');
+}
+
+function expressionCandidates(value) {
+  const raw = String(value || '').trim();
+  const key = normalizeExpressionToken(raw);
+  if (!key) return [];
+  const aliases = VTS_EXPRESSION_ALIASES[key] || [key];
+  return [...new Set([raw, key, ...aliases].map(normalizeExpressionToken).filter(Boolean))];
 }
 
 function addWeighted(target, id, value, weight = 1) {
@@ -587,7 +619,7 @@ function activeBehaviorSamples(actions, elapsedMs) {
     const progress = (elapsedMs - started) / duration;
     if (progress < 0 || progress > 1) return null;
     const envelopeValue = actionEnvelope(progress);
-    const intensity = clamp(Number(action.intensity) || 0.72, 0.05, 1);
+    const intensity = clamp((Number(action.intensity) || 0.86) * 1.35, 0.2, 1.45);
     return {
       action,
       progress,
@@ -648,7 +680,7 @@ function applyDirectMotion(frame, sample) {
     case 'lean_in':
       setFrameValue(frame, 'FaceAngleY', -5.2 * e, 0.78);
       setFrameValue(frame, 'FacePositionY', -2.8 * e, 0.72);
-      setFrameValue(frame, 'FacePositionZ', 5.4 * e, 0.9);
+      setFrameValue(frame, 'FacePositionZ', 1.8 * e, 0.72);
       setFrameEyes(frame, 0, -0.16 * e, 0.72);
       setFrameBody(frame, { y: -6.2 * e, posZ: 0.42 * e }, 1);
       break;
@@ -674,7 +706,7 @@ function applyDirectMotion(frame, sample) {
     case 'bounce':
       setFrameValue(frame, 'FaceAngleY', 4 * beat * e, 0.72);
       setFrameValue(frame, 'FacePositionY', -6.5 * beat * e, 0.95);
-      setFrameValue(frame, 'FacePositionZ', 3.2 * beat * e, 0.88);
+      setFrameValue(frame, 'FacePositionZ', 1.2 * beat * e, 0.7);
       setFrameValue(frame, 'MouthSmile', 0.78, 0.8);
       setFrameValue(frame, 'Brows', 0.62, 0.55);
       setFrameValue(frame, 'BrowLeftY', 0.62, 0.55);
@@ -781,8 +813,12 @@ export function mountVTubeStudioBridge() {
   let bodyMotion = null;
   let behaviorFrameId = 0;
   let behaviorPlan = null;
+  let expressionFiles = [];
+  let expressionsLoadedAt = 0;
   const pendingRequests = new Map();
   const pendingInjection = new Map();
+  const expressionTimers = new Map();
+  const activeExpressionFiles = new Set();
   let flushTimer = 0;
 
   function setStatus(status, error = '') {
@@ -926,6 +962,87 @@ export function mountVTubeStudioBridge() {
     return connectPromise;
   }
 
+  async function loadExpressionFiles(force = false) {
+    const fresh = Date.now() - expressionsLoadedAt < 30000;
+    if (!force && fresh && expressionFiles.length) return expressionFiles;
+    await connect();
+    const response = await request('ExpressionStateRequest', { details: false }).catch(() => null);
+    expressionFiles = (response?.data?.expressions || [])
+      .map((item) => String(item?.file || item?.expressionFile || item?.name || '').trim())
+      .filter(Boolean);
+    expressionsLoadedAt = Date.now();
+    return expressionFiles;
+  }
+
+  async function resolveExpressionFile(expression) {
+    const candidates = expressionCandidates(expression);
+    if (!candidates.length || candidates.includes('neutral')) return '';
+    const files = await loadExpressionFiles();
+    const normalizedFiles = files.map((file) => ({
+      file,
+      key: normalizeExpressionToken(file),
+      lower: file.toLowerCase()
+    }));
+    for (const candidate of candidates) {
+      const direct = normalizedFiles.find((item) => item.key === candidate);
+      if (direct) return direct.file;
+    }
+    for (const candidate of candidates) {
+      const partial = normalizedFiles.find((item) => item.key.includes(candidate) || candidate.includes(item.key));
+      if (partial) return partial.file;
+    }
+    return '';
+  }
+
+  function clearExpressionTimer(file) {
+    const timer = expressionTimers.get(file);
+    if (timer) window.clearTimeout(timer);
+    expressionTimers.delete(file);
+  }
+
+  function setVTSExpression(file, active, fadeTime = 0.35) {
+    if (!file) return;
+    connect()
+      .then(() => sendPayload('ExpressionActivationRequest', {
+        expressionFile: file,
+        active,
+        fadeTime
+      }, true))
+      .catch(() => {});
+  }
+
+  function deactivateActiveExpressions() {
+    activeExpressionFiles.forEach((file) => {
+      clearExpressionTimer(file);
+      setVTSExpression(file, false, 0.35);
+    });
+    activeExpressionFiles.clear();
+  }
+
+  function activateVTSExpression(expression, durationMs = 2600) {
+    const candidates = expressionCandidates(expression);
+    if (!candidates.length) return;
+    if (candidates.includes('neutral')) {
+      deactivateActiveExpressions();
+      return;
+    }
+    resolveExpressionFile(expression)
+      .then((file) => {
+        if (!file) return;
+        clearExpressionTimer(file);
+        setVTSExpression(file, true, 0.35);
+        activeExpressionFiles.add(file);
+        const holdMs = clamp(Math.round(Number(durationMs) || 2600), 900, 9000);
+        const timer = window.setTimeout(() => {
+          setVTSExpression(file, false, 0.45);
+          activeExpressionFiles.delete(file);
+          expressionTimers.delete(file);
+        }, holdMs);
+        expressionTimers.set(file, timer);
+      })
+      .catch(() => {});
+  }
+
   function queueInjection(values) {
     if (!settings.enabled || !Array.isArray(values) || !values.length) return;
     values.forEach((item) => {
@@ -1015,7 +1132,8 @@ export function mountVTubeStudioBridge() {
       startBehaviorPlan(behaviorActions, detail.durationMs || detail.duration);
     }
     if (settings.injectFace) {
-      const expression = String(detail.expression || detail.emotion || '').toLowerCase();
+      const expression = String(detail.expression || detail.expressionMix?.[0]?.expression || detail.emotion || '').toLowerCase();
+      if (expression) activateVTSExpression(expression, detail.durationMs || detail.duration);
       if (expression.includes('smile') || expression.includes('happy')) {
         queueInjection([{ id: 'MouthSmile', value: 0.74, weight: 0.35 }, { id: 'Brows', value: 0.58, weight: 0.2 }]);
       } else if (expression.includes('sad') || expression.includes('tears') || expression.includes('cry')) {
@@ -1089,6 +1207,9 @@ export function mountVTubeStudioBridge() {
     window.removeEventListener(MOUTH_EVENT, onMouth);
     window.removeEventListener(SETTINGS_EVENT, reloadSettings);
     window.clearTimeout(flushTimer);
+    expressionTimers.forEach((timer) => window.clearTimeout(timer));
+    expressionTimers.clear();
+    activeExpressionFiles.clear();
     stopBodyFrame();
     stopBehaviorFrame();
     closeSocket();
