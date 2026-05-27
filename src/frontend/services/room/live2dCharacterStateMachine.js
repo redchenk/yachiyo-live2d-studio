@@ -127,8 +127,8 @@ function startIdleGesture(state, at) {
   state.gestureType = nod ? 'nod' : 'tilt';
   state.gestureStartedAt = at;
   state.gestureDurationMs = nod
-    ? actionMs(1500 + Math.random() * 900)
-    : actionMs(1900 + Math.random() * 1100);
+    ? actionMs(620 + Math.random() * 520)
+    : actionMs(780 + Math.random() * 620);
   state.gestureAmount = nod
     ? 1.0 + Math.random() * 0.7
     : 0.9 + Math.random() * 0.65;
@@ -308,9 +308,9 @@ export function createLive2DCharacterStateMachine() {
     const transition = clamp(modeAge / 520, 0, 1);
     const isSpeaking = state.mode === 'speaking';
     const motionSeconds = seconds * ACTION_SPEED_SCALE;
-    const breath = Math.sin(motionSeconds * (isSpeaking ? 1.28 + state.arousal * 0.18 : 0.68 + state.arousal * 0.08));
-    const slowFloat = Math.sin(motionSeconds * (isSpeaking ? 1.35 : 0.34) + state.seed * 0.13);
-    const bodyFloat = Math.sin(motionSeconds * (isSpeaking ? 1.08 : 0.28) + 1.4 + state.seed * 0.09);
+    const breath = Math.sin(motionSeconds * (1.28 + state.arousal * 0.18));
+    const slowFloat = Math.sin(motionSeconds * 1.35 + state.seed * 0.13);
+    const bodyFloat = Math.sin(motionSeconds * 1.08 + 1.4 + state.seed * 0.09);
     const livelyFloat = isSpeaking ? Math.sin(motionSeconds * 1.9 + 0.7 + state.seed * 0.07) : 0;
     const breathMotion = isSpeaking ? breath * 1.05 : breath;
     const speakingDriftScale = isSpeaking ? 0.08 : 1;
@@ -321,6 +321,7 @@ export function createLive2DCharacterStateMachine() {
       ? clamp(0.78 + speechMotionEnergy * 0.7, 0, 1.34)
       : clamp(speechMotionEnergy * 0.7, 0, 0.5);
     const forwardLean = isSpeaking ? 1 : 0;
+    const idleForwardLean = ['idle', 'listening'].includes(state.mode) ? IDLE_ACTION_RATIO : 0;
     const headMotion = speakingMotionValue(state, at, 0);
     const bodyMotion = speakingMotionValue(state, at, actionMs(420));
     const gesture = speakingGestureValue(state, at);
@@ -360,7 +361,7 @@ export function createLive2DCharacterStateMachine() {
       faceY: (
         isSpeaking
           ? -0.8 - forwardLean * 5.2 + breathMotion * 1.35 + slowFloat * 1.25 + livelyFloat * 0.82 - speechNod * 12 + thinkingNod + actingLift
-          : -0.8 + breathMotion * (1.35 * IDLE_ACTION_RATIO) + slowFloat * (1.25 * IDLE_ACTION_RATIO) + speechNod * (12 * IDLE_ACTION_RATIO) + thinkingNod + actingLift
+          : -0.8 - idleForwardLean * 5.2 + breathMotion * (1.35 * IDLE_ACTION_RATIO) + slowFloat * (1.25 * IDLE_ACTION_RATIO) + speechNod * (12 * IDLE_ACTION_RATIO) + thinkingNod + actingLift
       ) * headScale,
       faceZ: (
         smoothNoise(motionSeconds + 0.9, 0.36, 0.66, 1.05) * 1.1 * speakingDriftScale +
@@ -380,7 +381,7 @@ export function createLive2DCharacterStateMachine() {
       bodyY: (
         isSpeaking
           ? -forwardLean * 7.2 + breathMotion * 3.0 + bodyFloat * 3.2 + livelyFloat * 1.45 - speechNod * 7.4 + thinkingNod * 0.24
-          : breathMotion * (3.0 * IDLE_ACTION_RATIO) + bodyFloat * (3.2 * IDLE_ACTION_RATIO) + speechNod * (7.4 * IDLE_ACTION_RATIO) + thinkingNod * 0.24
+          : -idleForwardLean * 7.2 + breathMotion * (3.0 * IDLE_ACTION_RATIO) + bodyFloat * (3.2 * IDLE_ACTION_RATIO) + speechNod * (7.4 * IDLE_ACTION_RATIO) + thinkingNod * 0.24
       ) * bodyScale,
       bodyZ: (
         smoothNoise(motionSeconds + 1.8, 0.28, 0.51, 0.88) * 0.95 * speakingDriftScale +
