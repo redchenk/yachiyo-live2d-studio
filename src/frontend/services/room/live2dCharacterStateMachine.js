@@ -179,7 +179,8 @@ export function createLive2DCharacterStateMachine() {
 
   function onMouth(value, at = nowMs()) {
     const mouth = clamp(value, 0, 1, 0);
-    state.mouthEnergy = Math.max(state.mouthEnergy, mouth);
+    const mouthBlend = mouth > state.mouthEnergy ? 0.34 : 0.12;
+    state.mouthEnergy = clamp(lerp(state.mouthEnergy, mouth, mouthBlend), 0, 1);
     state.speechMotionEnergy = clamp(lerp(state.speechMotionEnergy, mouth, 0.12), 0, 1);
     if (mouth > 0.025) {
       state.lastMouthAt = at;
@@ -225,7 +226,7 @@ export function createLive2DCharacterStateMachine() {
       startSpeakingMotionSegment(state, at, 0, 1800);
     }
 
-    state.mouthEnergy *= 0.86;
+    state.mouthEnergy *= 0.9;
     state.speechMotionEnergy *= state.mode === 'speaking' ? 0.985 : 0.9;
     state.attention = lerp(state.attention, state.mode === 'idle' ? 0.34 : 0.56, 0.018);
     state.arousal = lerp(state.arousal, EMOTION_PROFILES[state.emotion]?.arousal ?? 0.34, 0.014);
@@ -257,7 +258,9 @@ export function createLive2DCharacterStateMachine() {
     const headScale = modeProfile.head * (0.78 + state.attention * 0.34 + state.arousal * 0.2);
     const bodyScale = modeProfile.body * (0.82 + state.arousal * 0.28);
     const gazeScale = modeProfile.gaze * (0.7 + state.attention * 0.44);
-    const speechEnergy = state.mode === 'speaking' ? state.mouthEnergy : state.mouthEnergy * 0.45;
+    const speechEnergy = state.mode === 'speaking'
+      ? clamp(state.speechMotionEnergy * 0.72 + state.mouthEnergy * 0.28, 0, 1)
+      : state.mouthEnergy * 0.45;
     const speechEyeSmile = speechEnergy * 0.085 + Math.max(speechPulse, 0) * 0.025;
     const mouthBase = emotionProfile.smile + modeProfile.smile;
     const mouthTarget = isTearfulEmotion(state.emotion) ? 0.42 : 0.64;
@@ -280,7 +283,7 @@ export function createLive2DCharacterStateMachine() {
       faceY: (-0.8 + breathMotion * 0.9 + speechPulse * 8.4 + thinkingNod + actingLift) * headScale,
       faceZ: (smoothNoise(seconds + 0.9, 0.36, 0.66, 1.05) * 1.7 * speakingDriftScale + speechHeadRoll * 20) * headScale,
       facePosX: (bodyDrift * 0.7 + speechSway * 7.2) * bodyScale,
-      facePosY: (-0.38 * breathMotion - state.mouthEnergy * 0.42 - speechPulse * 0.52) * modeProfile.body,
+      facePosY: (-0.38 * breathMotion - speechMotionEnergy * 0.14 - speechPulse * 0.52) * modeProfile.body,
       mouthSmile,
       brows: softBrow,
       browLeftY: clamp(softBrow + smoothNoise(seconds, 0.83, 1.41, 2.2) * 0.024, 0.18, 0.84),

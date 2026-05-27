@@ -64,16 +64,90 @@ const VTS_RANGES = {
   MocopiBodyPositionZ: [-1, 1]
 };
 
+const MOTION_INJECTION_IDS = new Set([
+  'FaceAngleX',
+  'FaceAngleY',
+  'FaceAngleZ',
+  'FacePositionX',
+  'FacePositionY',
+  'MocopiConnected',
+  'MocopiAngleX',
+  'MocopiAngleY',
+  'MocopiAngleZ',
+  'MocopiBodyAngleX',
+  'MocopiBodyAngleY',
+  'MocopiBodyAngleZ',
+  'MocopiBodyPositionX',
+  'MocopiBodyPositionY',
+  'MocopiBodyPositionZ'
+]);
+
+const EYE_INJECTION_IDS = new Set([
+  'EyeOpenLeft',
+  'EyeOpenRight',
+  'EyeLeftX',
+  'EyeLeftY',
+  'EyeRightX',
+  'EyeRightY'
+]);
+
+const MOUTH_INJECTION_IDS = new Set([
+  'MouthOpen',
+  'VoiceVolumePlusMouthOpen',
+  'VoiceVolume'
+]);
+
 function clamp(value, min, max) {
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) return min;
   return Math.min(Math.max(numeric, min), max);
 }
 
+function lerp(left, right, amount) {
+  return left + (right - left) * amount;
+}
+
 function clampFallback(value, min, max, fallback) {
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) return fallback;
   return clamp(numeric, min, max);
+}
+
+function injectionProfile(id) {
+  if (MOUTH_INJECTION_IDS.has(id)) return { alpha: 0.66, step: 0.26 };
+  if (id === 'EyeOpenLeft' || id === 'EyeOpenRight') return { alpha: 0.48, step: 0.2 };
+  if (id.startsWith('Eye')) return { alpha: 0.34, step: 0.11 };
+  if (id.startsWith('FaceAngle')) return { alpha: 0.24, step: 1.55 };
+  if (id.startsWith('FacePosition')) return { alpha: 0.22, step: 0.95 };
+  if (id.startsWith('MocopiBodyAngle') || id.startsWith('MocopiAngle')) return { alpha: 0.2, step: 0.72 };
+  if (id.startsWith('MocopiBodyPosition')) return { alpha: 0.2, step: 0.05 };
+  if (id === 'MocopiConnected') return { alpha: 1, step: 1 };
+  return { alpha: 0.34, step: 0.12 };
+}
+
+function lockInjectionWeight(id, weight) {
+  if (MOTION_INJECTION_IDS.has(id) || EYE_INJECTION_IDS.has(id)) return 1;
+  return clamp(weight, 0.01, 1);
+}
+
+function smoothInjectionValues(values, previous, deltaMs) {
+  const frameScale = clamp((Number(deltaMs) || 32) / 32, 0.5, 3);
+  return values.map((item) => {
+    const range = VTS_RANGES[item.id] || [-30, 30];
+    const target = clamp(item.value, range[0], range[1]);
+    const last = previous.get(item.id);
+    const profile = injectionProfile(item.id);
+    const maxStep = profile.step * frameScale;
+    const value = Number.isFinite(last)
+      ? clamp(lerp(last, target, profile.alpha), last - maxStep, last + maxStep)
+      : target;
+    previous.set(item.id, value);
+    return {
+      ...item,
+      value: clamp(value, range[0], range[1]),
+      weight: lockInjectionWeight(item.id, item.weight)
+    };
+  });
 }
 
 function normalizeUrl(rawUrl) {
@@ -363,7 +437,6 @@ function createDirectTrackingFrame() {
   setFrameValue(frame, 'FaceAngleZ', 0, 1);
   setFrameValue(frame, 'FacePositionX', 0, 0.9);
   setFrameValue(frame, 'FacePositionY', 0, 0.9);
-  setFrameValue(frame, 'FacePositionZ', 0, 0.9);
   setFrameValue(frame, 'MouthSmile', 0.58, 0.8);
   setFrameValue(frame, 'Brows', 0.55, 0.55);
   setFrameValue(frame, 'BrowLeftY', 0.55, 0.55);
@@ -413,7 +486,6 @@ function seedBehaviorTrackingFrame(values) {
   addWeighted(values, 'FaceAngleZ', 0, 0.08);
   addWeighted(values, 'FacePositionX', 0, 0.08);
   addWeighted(values, 'FacePositionY', 0, 0.08);
-  addWeighted(values, 'FacePositionZ', 0, 0.08);
   addWeighted(values, 'MouthSmile', 0.58, 0.26);
   addWeighted(values, 'Brows', 0.55, 0.2);
   addWeighted(values, 'BrowLeftY', 0.55, 0.2);
@@ -729,12 +801,14 @@ function applyDirectMotion(frame, sample) {
   }
 }
 
-function applyDirectOverlay(frame, sample, dominant) {
+function applyDirectOverlay(frame, sample, dominant, options = {}) {
   const { action, progress: t, phase, energy: e, sign } = sample;
   const isDominant = dominant?.action === action;
+  const faceOnly = Boolean(options.faceOnly);
 
   switch (action.type) {
     case 'look_at_chat':
+      if (faceOnly) break;
       if (!isDominant) {
         const glance = Math.sin(phase) * e;
         addFrameValue(frame, 'FaceAngleX', 2.4 * glance, 0.72);
@@ -820,9 +894,10 @@ function sampleVTSBehaviorActions(actions, elapsedMs, nowMs = performance.now(),
 
   const frame = createDirectTrackingFrame();
   applyCharacterStateFrame(frame, character, 0.68);
-  const dominant = pickDominantMotion(samples);
-  applyDirectMotion(frame, dominant);
-  samples.forEach((sample) => applyDirectOverlay(frame, sample, dominant));
+  const speaking = character?.mode === 'speaking';
+  const dominant = speaking ? null : pickDominantMotion(samples);
+  if (!speaking) applyDirectMotion(frame, dominant);
+  samples.forEach((sample) => applyDirectOverlay(frame, sample, dominant, { faceOnly: speaking }));
   applyAutoBlink(frame, samples, nowMs, character?.eyeOpen);
   return finalizeDirectFrame(frame);
 }
@@ -875,9 +950,11 @@ export function mountVTubeStudioBridge() {
   const characterState = createLive2DCharacterStateMachine();
   const pendingRequests = new Map();
   const pendingInjection = new Map();
+  const smoothedInjection = new Map();
   const expressionTimers = new Map();
   const activeExpressionFiles = new Set();
   let flushTimer = 0;
+  let lastInjectionAt = 0;
 
   function setStatus(status, error = '') {
     window.dispatchEvent(new CustomEvent(STATUS_EVENT, {
@@ -962,6 +1039,8 @@ export function mountVTubeStudioBridge() {
     stopIdleFrame();
     authenticated = false;
     connectPromise = null;
+    smoothedInjection.clear();
+    lastInjectionAt = 0;
     pendingRequests.forEach((item) => item.reject(new Error('VTube Studio connection closed.')));
     pendingRequests.clear();
     if (socket) {
@@ -1122,11 +1201,14 @@ export function mountVTubeStudioBridge() {
     const values = finalizeWeighted(pendingInjection);
     pendingInjection.clear();
     if (!values.length) return;
+    const now = performance.now();
+    const smoothedValues = smoothInjectionValues(values, smoothedInjection, lastInjectionAt ? now - lastInjectionAt : 32);
+    lastInjectionAt = now;
     connect()
       .then(() => sendPayload('InjectParameterDataRequest', {
         mode: 'set',
         faceFound: true,
-        parameterValues: values
+        parameterValues: smoothedValues
       }))
       .catch((error) => setStatus('error', error.message || 'VTube Studio injection failed.'));
   }
@@ -1251,6 +1333,7 @@ export function mountVTubeStudioBridge() {
   function onFaceCapture(event) {
     if (!settings.injectFace && !settings.injectBody) return;
     if (behaviorPlan) return;
+    if (characterState.getState().mode === 'speaking') return;
     queueInjection(mapLive2DParametersToVTS(event.detail?.parameters, {
       face: settings.injectFace,
       body: settings.injectBody
