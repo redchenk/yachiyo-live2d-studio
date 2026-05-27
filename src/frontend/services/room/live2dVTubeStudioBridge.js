@@ -117,10 +117,10 @@ function injectionProfile(id) {
   if (MOUTH_INJECTION_IDS.has(id)) return { alpha: 0.66, step: 0.26 };
   if (id === 'EyeOpenLeft' || id === 'EyeOpenRight') return { alpha: 0.88, step: 0.72 };
   if (id.startsWith('Eye')) return { alpha: 0.34, step: 0.11 };
-  if (id.startsWith('FaceAngle')) return { alpha: 0.24, step: 1.55 };
-  if (id.startsWith('FacePosition')) return { alpha: 0.22, step: 0.95 };
-  if (id.startsWith('MocopiBodyAngle') || id.startsWith('MocopiAngle')) return { alpha: 0.2, step: 0.72 };
-  if (id.startsWith('MocopiBodyPosition')) return { alpha: 0.2, step: 0.05 };
+  if (id.startsWith('FaceAngle')) return { alpha: 0.46, step: 4.2 };
+  if (id.startsWith('FacePosition')) return { alpha: 0.42, step: 2.6 };
+  if (id.startsWith('MocopiBodyAngle') || id.startsWith('MocopiAngle')) return { alpha: 0.4, step: 2.2 };
+  if (id.startsWith('MocopiBodyPosition')) return { alpha: 0.38, step: 0.16 };
   if (id === 'MocopiConnected') return { alpha: 1, step: 1 };
   return { alpha: 0.34, step: 0.12 };
 }

@@ -14,7 +14,7 @@ const MODE_PROFILES = {
   idle: { head: 1, body: 1, gaze: 1, smile: 0, brow: 0, arousal: 0 },
   listening: { head: 1.08, body: 1.04, gaze: 1.25, smile: 0.02, brow: 0.03, arousal: 0.08 },
   thinking: { head: 0.9, body: 0.86, gaze: 0.72, smile: -0.04, brow: 0.08, arousal: 0.12 },
-  speaking: { head: 1.28, body: 1.24, gaze: 1.12, smile: 0.025, brow: 0.02, arousal: 0.16 },
+  speaking: { head: 1.48, body: 1.42, gaze: 1.18, smile: 0.025, brow: 0.02, arousal: 0.2 },
   acting: { head: 1.28, body: 1.24, gaze: 1.16, smile: 0.02, brow: 0.04, arousal: 0.22 }
 };
 
@@ -90,15 +90,15 @@ function speakingMotionValue(state, at, lagMs = 0) {
 function startSpeakingMotionSegment(state, at, target = null, durationMs = 0) {
   const current = speakingMotionValue(state, at);
   const targetValue = target === null
-    ? (Math.abs(current) > 0.12 && Math.random() < 0.45 ? 0 : (Math.random() - 0.5) * 1.9)
+    ? (Math.abs(current) > 0.18 && Math.random() < 0.32 ? 0 : (Math.random() - 0.5) * 3.2)
     : target;
   state.motionFrom = current;
   state.motionTo = targetValue;
   state.motionStartedAt = at;
-  state.motionDurationMs = durationMs || (1400 + Math.random() * 1200);
+  state.motionDurationMs = durationMs || (720 + Math.random() * 760);
   state.motionHoldMs = Math.abs(targetValue) < 0.04
-    ? 700 + Math.random() * 1300
-    : 450 + Math.random() * 1100;
+    ? 240 + Math.random() * 520
+    : 160 + Math.random() * 460;
 }
 
 function startSpeakingGesture(state, at) {
@@ -106,13 +106,13 @@ function startSpeakingGesture(state, at) {
   state.gestureType = nod ? 'nod' : 'tilt';
   state.gestureStartedAt = at;
   state.gestureDurationMs = nod
-    ? 1150 + Math.random() * 750
-    : 1500 + Math.random() * 900;
+    ? 620 + Math.random() * 520
+    : 780 + Math.random() * 620;
   state.gestureAmount = nod
-    ? 1.05 + Math.random() * 0.58
-    : 0.92 + Math.random() * 0.58;
+    ? 1.8 + Math.random() * 1.1
+    : 1.55 + Math.random() * 1.0;
   state.gestureSide = Math.random() > 0.5 ? 1 : -1;
-  state.nextGestureAt = at + state.gestureDurationMs + 1200 + Math.random() * 2600;
+  state.nextGestureAt = at + state.gestureDurationMs + 420 + Math.random() * 980;
 }
 
 function speakingGestureValue(state, at) {
@@ -248,7 +248,7 @@ export function createLive2DCharacterStateMachine() {
       if (!state.motionStartedAt || at >= state.motionStartedAt + state.motionDurationMs + state.motionHoldMs) {
         startSpeakingMotionSegment(state, at);
       }
-      if (!state.nextGestureAt) state.nextGestureAt = at + 900 + Math.random() * 1800;
+      if (!state.nextGestureAt) state.nextGestureAt = at + 260 + Math.random() * 760;
       if (state.gestureStartedAt && at >= state.gestureStartedAt + state.gestureDurationMs) {
         state.gestureType = 'none';
         state.gestureStartedAt = 0;
@@ -274,17 +274,17 @@ export function createLive2DCharacterStateMachine() {
     const emotionProfile = EMOTION_PROFILES[state.emotion] || EMOTION_PROFILES.neutral;
     const modeAge = Math.max(0, at - state.modeSince);
     const transition = clamp(modeAge / 520, 0, 1);
-    const breath = Math.sin(seconds * (0.92 + state.arousal * 0.12));
-    const slowFloat = Math.sin(seconds * 0.78 + state.seed * 0.13);
-    const bodyFloat = Math.sin(seconds * 0.58 + 1.4 + state.seed * 0.09);
-    const livelyFloat = Math.sin(seconds * 1.08 + 0.7 + state.seed * 0.07);
-    const breathMotion = state.mode === 'speaking' ? breath * 0.78 : breath;
+    const breath = Math.sin(seconds * (1.28 + state.arousal * 0.18));
+    const slowFloat = Math.sin(seconds * 1.35 + state.seed * 0.13);
+    const bodyFloat = Math.sin(seconds * 1.08 + 1.4 + state.seed * 0.09);
+    const livelyFloat = Math.sin(seconds * 1.9 + 0.7 + state.seed * 0.07);
+    const breathMotion = state.mode === 'speaking' ? breath * 1.05 : breath;
     const speakingDriftScale = state.mode === 'speaking' ? 0.08 : 1;
     const headDrift = smoothNoise(seconds, 0.42, 0.77, 1.26) * speakingDriftScale;
     const bodyDrift = smoothNoise(seconds + 2.4, 0.31, 0.58, 0.96) * speakingDriftScale;
     const speechMotionEnergy = state.mode === 'speaking' ? state.speechMotionEnergy : state.speechMotionEnergy * 0.35;
     const motionEnergy = state.mode === 'speaking'
-      ? clamp(0.58 + speechMotionEnergy * 0.72, 0, 1.22)
+      ? clamp(0.9 + speechMotionEnergy * 0.8, 0, 1.55)
       : clamp(speechMotionEnergy * 0.7, 0, 0.5);
     const headMotion = speakingMotionValue(state, at, 0);
     const bodyMotion = speakingMotionValue(state, at, 420);
@@ -320,27 +320,27 @@ export function createLive2DCharacterStateMachine() {
       eyeOpen: clamp(emotionProfile.eye - speechEyeSmile, 0.66, 1),
       eyeX: clamp(state.gazeX * gazeScale - headDrift * 0.07, -0.72, 0.72),
       eyeY: clamp(state.gazeY * gazeScale - 0.02 - thinkingNod * 0.04 - speechNod * 0.018, -0.48, 0.42),
-      faceX: (headDrift * 2.2 + speechSway * 8.2) * headScale,
-      faceY: (-0.8 + breathMotion * 0.82 + slowFloat * 0.72 + livelyFloat * 0.34 + speechNod * 8.4 + thinkingNod + actingLift) * headScale,
+      faceX: (headDrift * 2.8 + speechSway * 13.2) * headScale,
+      faceY: (-0.8 + breathMotion * 1.35 + slowFloat * 1.25 + livelyFloat * 0.82 + speechNod * 14 + thinkingNod + actingLift) * headScale,
       faceZ: (
-        smoothNoise(seconds + 0.9, 0.36, 0.66, 1.05) * 0.82 * speakingDriftScale +
-        speechHeadRoll * 8.4
+        smoothNoise(seconds + 0.9, 0.36, 0.66, 1.05) * 1.1 * speakingDriftScale +
+        speechHeadRoll * 14.2
       ) * headScale,
-      facePosX: (bodyDrift * 0.38 + speechSway * 2.05) * bodyScale,
-      facePosY: (-0.38 * breathMotion + slowFloat * 0.72 + livelyFloat * 0.34 - speechNod * 1.7) * modeProfile.body,
+      facePosX: (bodyDrift * 0.52 + speechSway * 4.4) * bodyScale,
+      facePosY: (-0.62 * breathMotion + slowFloat * 1.35 + livelyFloat * 0.75 - speechNod * 3.2) * modeProfile.body,
       mouthSmile: clamp(mouthSmile + Math.max(speechNod, 0) * 0.018, 0.18, 0.84),
       brows: softBrow,
       browLeftY: clamp(softBrow + smoothNoise(seconds, 0.83, 1.41, 2.2) * 0.024, 0.18, 0.84),
       browRightY: clamp(softBrow + smoothNoise(seconds + 0.6, 0.79, 1.33, 2.08) * 0.024, 0.18, 0.84),
-      bodyX: (bodyDrift * 0.5 + speechCounterSway * 3.8) * bodyScale,
-      bodyY: (breathMotion * 1.65 + bodyFloat * 1.8 + livelyFloat * 0.68 + speechNod * 5.2 + thinkingNod * 0.24) * bodyScale,
+      bodyX: (bodyDrift * 0.72 + speechCounterSway * 7.2) * bodyScale,
+      bodyY: (breathMotion * 3.0 + bodyFloat * 3.2 + livelyFloat * 1.45 + speechNod * 8.6 + thinkingNod * 0.24) * bodyScale,
       bodyZ: (
-        smoothNoise(seconds + 1.8, 0.28, 0.51, 0.88) * 0.72 * speakingDriftScale +
-        speechCounterSway * 4.6 +
-        speechTilt * 5.8
+        smoothNoise(seconds + 1.8, 0.28, 0.51, 0.88) * 0.95 * speakingDriftScale +
+        speechCounterSway * 8.2 +
+        speechTilt * 9.4
       ) * bodyScale,
-      bodyPosX: (bodyDrift * 0.016 + speechCounterSway * 0.028) * bodyScale,
-      bodyPosY: (breathMotion * 0.04 + bodyFloat * 0.09 + livelyFloat * 0.035 + speechNod * 0.082) * bodyScale,
+      bodyPosX: (bodyDrift * 0.022 + speechCounterSway * 0.06) * bodyScale,
+      bodyPosY: (breathMotion * 0.075 + bodyFloat * 0.16 + livelyFloat * 0.07 + speechNod * 0.16) * bodyScale,
       energy: clamp(state.arousal + state.mouthEnergy * 0.3, 0, 1)
     };
   }
