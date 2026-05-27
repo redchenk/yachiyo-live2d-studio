@@ -245,8 +245,7 @@ export function createLive2DSpeechPlayer({ onState } = {}) {
   let objectUrl = '';
   let frameId = 0;
   let audioContext = null;
-  let sourceNode = null;
-  let analyser = null;
+  const audioEnvelopes = new WeakMap();
 
   function setState(patch) {
     onState?.(patch);
@@ -270,8 +269,6 @@ export function createLive2DSpeechPlayer({ onState } = {}) {
       currentAudio.onerror = null;
       currentAudio = null;
     }
-    sourceNode = null;
-    analyser = null;
     if (objectUrl) URL.revokeObjectURL(objectUrl);
     objectUrl = '';
     setState({ status: 'idle', error: '' });
@@ -293,58 +290,88 @@ export function createLive2DSpeechPlayer({ onState } = {}) {
     tick();
   }
 
-  function startAnalysedMouth(text, audio) {
-    try {
-      const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-      if (!AudioContextClass) {
-        startSyntheticMouth(text, audio);
+  function startEnvelopeMouth(text, audio) {
+    const envelope = audioEnvelopes.get(audio);
+    if (!envelope?.values?.length) {
+      startSyntheticMouth(text, audio);
+      return;
+    }
+    let smoothedMouth = 0;
+    const tick = () => {
+      if (!currentAudio || currentAudio !== audio || audio.paused || audio.ended) {
+        stopMouth();
         return;
       }
+      const index = Math.min(
+        envelope.values.length - 1,
+        Math.max(0, Math.floor((audio.currentTime || 0) * envelope.fps))
+      );
+      const target = envelope.values[index] || 0;
+      smoothedMouth = smoothedMouth * 0.58 + target * 0.42;
+      dispatchMouth(smoothedMouth < 0.025 ? 0 : smoothedMouth);
+      frameId = window.requestAnimationFrame(tick);
+    };
+    tick();
+  }
+
+  async function buildMouthEnvelope(blob) {
+    try {
+      const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+      if (!AudioContextClass) return null;
       audioContext ||= new AudioContextClass();
-      if (audioContext.state === 'suspended') audioContext.resume().catch(() => {});
-      analyser = audioContext.createAnalyser();
-      analyser.fftSize = 1024;
-      sourceNode = audioContext.createMediaElementSource(audio);
-      sourceNode.connect(analyser);
-      analyser.connect(audioContext.destination);
-      const data = new Uint8Array(analyser.frequencyBinCount);
-      let smoothedMouth = 0;
-      const tick = () => {
-        if (!currentAudio || currentAudio !== audio || audio.paused || audio.ended || !analyser) {
-          stopMouth();
-          return;
-        }
-        analyser.getByteTimeDomainData(data);
+      const decoded = await audioContext.decodeAudioData(await blob.arrayBuffer());
+      const fps = 60;
+      const channel = decoded.getChannelData(0);
+      const sampleRate = decoded.sampleRate || 44100;
+      const hopSize = Math.max(1, Math.floor(sampleRate / fps));
+      const windowSize = Math.max(hopSize, Math.floor(sampleRate * 0.032));
+      const raw = [];
+      for (let start = 0; start < channel.length; start += hopSize) {
         let sum = 0;
-        for (const sample of data) {
-          const centered = sample - 128;
-          sum += centered * centered;
+        let count = 0;
+        const end = Math.min(channel.length, start + windowSize);
+        for (let index = start; index < end; index += 1) {
+          const sample = channel[index] || 0;
+          sum += sample * sample;
+          count += 1;
         }
-        const rms = Math.sqrt(sum / data.length) / 128;
-        const gated = Math.max(0, rms - 0.018);
-        const target = Math.min(0.48, Math.pow(Math.min(gated / 0.18, 1), 0.72) * 0.48);
-        smoothedMouth = smoothedMouth * 0.72 + target * 0.28;
-        dispatchMouth(smoothedMouth < 0.025 ? 0 : smoothedMouth);
-        frameId = window.requestAnimationFrame(tick);
+        raw.push(Math.sqrt(sum / Math.max(count, 1)));
+      }
+      const sorted = [...raw].sort((left, right) => left - right);
+      const reference = Math.max(sorted[Math.floor(sorted.length * 0.92)] || 0, 0.035);
+      return {
+        fps,
+        values: raw.map((value) => {
+          const gated = Math.max(0, value - 0.01);
+          return Math.min(0.48, Math.pow(Math.min(gated / reference, 1), 0.74) * 0.48);
+        })
       };
-      tick();
     } catch (_) {
-      startSyntheticMouth(text, audio);
+      return null;
     }
+  }
+
+  async function createAudioFromBlob(blob) {
+    objectUrl = URL.createObjectURL(blob);
+    const audio = new Audio(objectUrl);
+    const envelope = await buildMouthEnvelope(blob);
+    if (envelope?.values?.length) {
+      audioEnvelopes.set(audio, envelope);
+      audio.dataset.mouthMode = 'envelope';
+    } else {
+      audio.dataset.mouthMode = 'synthetic';
+    }
+    return audio;
   }
 
   async function createAnalysableAudioFromUrl(url) {
     try {
       const response = await fetch(url);
       if (!response.ok) throw new Error(`TTS ${response.status}`);
-      objectUrl = URL.createObjectURL(await response.blob());
-      const audio = new Audio(objectUrl);
-      audio.dataset.mouthMode = 'analysed';
-      return audio;
+      return createAudioFromBlob(await response.blob());
     } catch (_) {
       const audio = new Audio(url);
-      audio.crossOrigin = 'anonymous';
-      audio.dataset.mouthMode = 'analysed';
+      audio.dataset.mouthMode = 'synthetic';
       return audio;
     }
   }
@@ -373,8 +400,7 @@ export function createLive2DSpeechPlayer({ onState } = {}) {
       const payload = await response.json().catch(() => null);
       throw new Error(payload?.message || `TTS ${response.status}`);
     }
-    objectUrl = URL.createObjectURL(await response.blob());
-    return new Audio(objectUrl);
+    return createAudioFromBlob(await response.blob());
   }
 
   async function play(text, options = {}) {
@@ -405,11 +431,8 @@ export function createLive2DSpeechPlayer({ onState } = {}) {
         } catch (_) {
           // Keep speech playback alive even if a caller-side animation hook fails.
         }
-        if (audio.dataset.mouthMode === 'synthetic') {
-          startSyntheticMouth(mouthText, audio);
-        } else {
-          startAnalysedMouth(mouthText, audio);
-        }
+        if (audio.dataset.mouthMode === 'envelope') startEnvelopeMouth(mouthText, audio);
+        else startSyntheticMouth(mouthText, audio);
       };
       audio.onplay = () => {
         stopMouth();
