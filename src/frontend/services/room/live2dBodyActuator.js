@@ -1,3 +1,5 @@
+import { normalizeBehaviorBodyPose } from '../../constants/room/behaviorActionRegistry';
+
 const ROOM_ACT_EVENT = 'tsukuyomi:room-act';
 const DEFAULT_STAGE_MOTION_SCALE = 0;
 const BODY_PARAMETER_HINTS = [
@@ -89,10 +91,7 @@ function clamp(value, min, max) {
 }
 
 function normalizePose(value) {
-  const key = String(value || '').trim().toLowerCase().replace(/\s+/g, '_');
-  if (!key || key === 'none' || key === 'null') return '';
-  if (key === 'tap_body' || key === 'body_tap' || key === 'tapbody') return 'emphasis';
-  return BODY_POSES.has(key) ? key : '';
+  return normalizeBehaviorBodyPose(value);
 }
 
 function normalizeDuration(value) {

@@ -1,4 +1,8 @@
-import { roomLive2DManifest } from '../../constants/room/live2dManifest';
+﻿import { roomLive2DManifest } from '../../constants/room/live2dManifest';
+import {
+  matchBehaviorBodyPoseFromText,
+  normalizeBehaviorBodyPose
+} from '../../constants/room/behaviorActionRegistry';
 import { normalizeBehaviorActions } from './live2dBehaviorController';
 
 const DEBUG_STATE_KEY = 'roomLive2DDebugState';
@@ -19,13 +23,6 @@ const expressionAliases = {
   smile: 'smile',
   gentle: 'smile',
   warm: 'smile',
-  开心: 'smile',
-  高兴: 'smile',
-  愉快: 'smile',
-  微笑: 'smile',
-  笑: 'smile',
-  嬉しい: 'smile',
-  優しい: 'smile',
   shy: 'bsmile',
   blush: 'bsmile',
   embarrassed: 'bsmile',
@@ -33,29 +30,12 @@ const expressionAliases = {
   bsmile: 'bsmile',
   annoyed: 'bsmile',
   angry: 'bsmile',
-  害羞: 'bsmile',
-  脸红: 'bsmile',
-  調皮: 'bsmile',
-  生气: 'bsmile',
-  愤怒: 'bsmile',
-  照れ: 'bsmile',
   sad: 'namida',
   sorrow: 'namida',
   namida: 'namida',
-  难过: 'namida',
-  悲伤: 'namida',
-  伤心: 'namida',
-  眼泪: 'namida',
-  涙: 'namida',
-  悲しい: 'namida',
   tears: 'tears',
   crying: 'tears',
-  cry: 'tears',
-  哭: 'tears',
-  哭泣: 'tears',
-  流泪: 'tears',
-  大哭: 'tears',
-  泣く: 'tears'
+  cry: 'tears'
 };
 
 const motionAliases = {
@@ -64,10 +44,7 @@ const motionAliases = {
   tapbody: 'tap_body',
   nod: 'tap_body',
   lean: 'tap_body',
-  emphasis: 'tap_body',
-  点头: 'tap_body',
-  靠近: 'tap_body',
-  轻动: 'tap_body'
+  emphasis: 'tap_body'
 };
 
 const bodyPoseAliases = {
@@ -94,10 +71,7 @@ const bodyPoseAliases = {
   bounce: 'bounce',
   excited: 'bounce',
   emphasis: 'emphasis',
-  accent: 'emphasis',
-  鐐瑰ご: 'nod',
-  闈犺繎: 'lean_in',
-  杞诲姩: 'sway'
+  accent: 'emphasis'
 };
 
 const emotionAliases = {
@@ -106,140 +80,21 @@ const emotionAliases = {
   cheerful: 'smile',
   smile: 'smile',
   warm: 'smile',
-  开心: 'smile',
-  高兴: 'smile',
-  愉快: 'smile',
-  微笑: 'smile',
   shy: 'bsmile',
   blush: 'bsmile',
   embarrassed: 'bsmile',
   playful: 'bsmile',
   angry: 'bsmile',
   annoyed: 'bsmile',
-  害羞: 'bsmile',
-  脸红: 'bsmile',
-  调皮: 'bsmile',
-  生气: 'bsmile',
-  愤怒: 'bsmile',
   sad: 'namida',
   sorrow: 'namida',
-  难过: 'namida',
-  悲伤: 'namida',
-  伤心: 'namida',
-  眼泪: 'namida',
   crying: 'tears',
   cry: 'tears',
   tears: 'tears',
-  哭泣: 'tears',
-  流泪: 'tears',
-  大哭: 'tears',
   neutral: 'neutral',
   calm: 'neutral',
   default: 'neutral'
 };
-
-Object.assign(expressionAliases, {
-  开心: 'smile',
-  高兴: 'smile',
-  愉快: 'smile',
-  微笑: 'smile',
-  笑: 'smile',
-  害羞: 'bsmile',
-  脸红: 'bsmile',
-  臉紅: 'bsmile',
-  调皮: 'bsmile',
-  調皮: 'bsmile',
-  生气: 'bsmile',
-  生氣: 'bsmile',
-  难过: 'namida',
-  難過: 'namida',
-  悲伤: 'namida',
-  悲傷: 'namida',
-  伤心: 'namida',
-  傷心: 'namida',
-  眼泪: 'namida',
-  眼淚: 'namida',
-  哭: 'tears',
-  哭泣: 'tears',
-  流泪: 'tears',
-  流淚: 'tears',
-  大哭: 'tears'
-});
-
-Object.assign(motionAliases, {
-  点头: 'tap_body',
-  點頭: 'tap_body',
-  靠近: 'tap_body',
-  前倾: 'tap_body',
-  前傾: 'tap_body',
-  强调: 'tap_body',
-  強調: 'tap_body'
-});
-
-Object.assign(bodyPoseAliases, {
-  点头: 'nod',
-  點頭: 'nod',
-  颔首: 'nod',
-  頷首: 'nod',
-  摇头: 'shake_head',
-  搖頭: 'shake_head',
-  摆头: 'shake_head',
-  擺頭: 'shake_head',
-  靠近: 'lean_in',
-  凑近: 'lean_in',
-  湊近: 'lean_in',
-  贴近: 'lean_in',
-  貼近: 'lean_in',
-  前倾: 'lean_in',
-  前傾: 'lean_in',
-  左倾: 'lean_left',
-  左傾: 'lean_left',
-  向左: 'lean_left',
-  右倾: 'lean_right',
-  右傾: 'lean_right',
-  向右: 'lean_right',
-  摇摆: 'sway',
-  搖擺: 'sway',
-  晃动: 'sway',
-  晃動: 'sway',
-  轻晃: 'sway',
-  輕晃: 'sway',
-  蹦: 'bounce',
-  跳: 'bounce',
-  弹跳: 'bounce',
-  彈跳: 'bounce',
-  强调: 'emphasis',
-  強調: 'emphasis',
-  重音: 'emphasis',
-  拍: 'emphasis'
-});
-
-Object.assign(emotionAliases, {
-  开心: 'smile',
-  高兴: 'smile',
-  愉快: 'smile',
-  微笑: 'smile',
-  害羞: 'bsmile',
-  脸红: 'bsmile',
-  臉紅: 'bsmile',
-  调皮: 'bsmile',
-  調皮: 'bsmile',
-  生气: 'bsmile',
-  生氣: 'bsmile',
-  难过: 'namida',
-  難過: 'namida',
-  悲伤: 'namida',
-  悲傷: 'namida',
-  伤心: 'namida',
-  傷心: 'namida',
-  眼泪: 'namida',
-  眼淚: 'namida',
-  哭: 'tears',
-  哭泣: 'tears',
-  流泪: 'tears',
-  流淚: 'tears',
-  大哭: 'tears'
-});
 
 function manifestIds(items) {
   return new Set(items.map((item) => item.id));
@@ -326,10 +181,8 @@ export function normalizeLive2DMotion(value, manifest = roomLive2DManifest) {
 
 export function normalizeLive2DBodyPose(value, manifest = roomLive2DManifest) {
   const ids = manifestIds(manifest.motions);
-  const key = normalizeToken(value);
-  if (!key || key === 'none' || key === 'null') return '';
-  const aliased = bodyPoseAliases[key] ?? key;
-  return ids.has(aliased) ? aliased : '';
+  const normalized = normalizeBehaviorBodyPose(value);
+  return normalized && ids.has(normalized) ? normalized : '';
 }
 
 function manifestParameterMap(manifest = roomLive2DManifest) {
@@ -742,23 +595,13 @@ export function normalizeLive2DIntent(input, manifest = roomLive2DManifest) {
 function inferActionLive2DIntent(text, manifest) {
   const value = String(text || '').toLowerCase();
   const expressionMatchers = [
-    { expression: 'tears', pattern: /(大哭|哭泣|流泪|流淚|痛哭|crying|tears|泣く)/iu, emotion: 'crying' },
-    { expression: 'namida', pattern: /(难过|難過|悲伤|悲傷|伤心|傷心|寂寞|眼泪|眼淚|sad|sorrow|悲しい)/iu, emotion: 'sad' },
-    { expression: 'bsmile', pattern: /(害羞|脸红|臉紅|调皮|調皮|生气|生氣|愤怒|憤怒|shy|blush|angry|annoyed|照れ)/iu, emotion: 'shy' },
-    { expression: 'smile', pattern: /(开心|開心|高兴|高興|愉快|微笑|笑|happy|smile|joy|嬉しい|優しい)/iu, emotion: 'happy' }
-  ];
-  const bodyMatchers = [
-    { bodyPose: 'shake_head', pattern: /(摇头|搖頭|摆头|擺頭|否认|否認|拒绝|拒絕|shake(?:s|ing)?(?:\s|-|_)?head|headshake|nope|首を振)/iu, intensity: 0.9, durationMs: 2600 },
-    { bodyPose: 'nod', pattern: /(点头|點頭|颔首|頷首|同意|认可|認可|nod|nodd?ing|うなず|頷)/iu, intensity: 0.88, durationMs: 2400 },
-    { bodyPose: 'lean_left', pattern: /(左倾|左傾|向左|lean(?:s|ing)?(?:\s|-|_)?left|tilt(?:s|ing)?(?:\s|-|_)?left)/iu, intensity: 0.86, durationMs: 3200 },
-    { bodyPose: 'lean_right', pattern: /(右倾|右傾|向右|lean(?:s|ing)?(?:\s|-|_)?right|tilt(?:s|ing)?(?:\s|-|_)?right)/iu, intensity: 0.86, durationMs: 3200 },
-    { bodyPose: 'lean_in', pattern: /(靠近|凑近|湊近|贴近|貼近|前倾|前傾|lean(?:s|ing)?(?:\s|-|_)?(?:in|forward)|closer|近づ)/iu, intensity: 0.92, durationMs: 3200 },
-    { bodyPose: 'bounce', pattern: /(蹦|跳|弹跳|彈跳|雀跃|雀躍|兴奋|興奮|bounce|jump|excited|跳ね)/iu, intensity: 0.96, durationMs: 2800 },
-    { bodyPose: 'sway', pattern: /(摇摆|搖擺|晃动|晃動|轻晃|輕晃|摆动|擺動|sway|swing|ゆら)/iu, intensity: 0.82, durationMs: 3600 },
-    { bodyPose: 'emphasis', pattern: /(强调|強調|重音|拍|用力|认真|認真|emphasis|accent|punchline|hit|ドン)/iu, intensity: 0.9, durationMs: 2200 }
+    { expression: 'tears', pattern: /(澶у摥|鍝常|娴佹唱|娴佹窔|鐥涘摥|crying|tears|娉ｃ亸)/iu, emotion: 'crying' },
+    { expression: 'namida', pattern: /(闅捐繃|闆ｉ亷|鎮蹭激|鎮插偡|浼ゅ績|鍌峰績|瀵傚癁|鐪兼唱|鐪兼窔|sad|sorrow|鎮层仐銇?/iu, emotion: 'sad' },
+    { expression: 'bsmile', pattern: /(瀹崇緸|鑴哥孩|鑷夌磪|璋冪毊|瑾跨毊|鐢熸皵|鐢熸埃|鎰ゆ€抾鎲ゆ€抾shy|blush|angry|annoyed|鐓с倢)/iu, emotion: 'shy' },
+    { expression: 'smile', pattern: /(寮€蹇億闁嬪績|楂樺叴|楂樿垐|鎰夊揩|寰瑧|绗憒happy|smile|joy|瀣夈仐銇剕鍎仐銇?/iu, emotion: 'happy' }
   ];
   const expressionMatch = expressionMatchers.find((item) => item.pattern.test(value));
-  const bodyMatch = bodyMatchers.find((item) => item.pattern.test(value));
+  const bodyMatch = matchBehaviorBodyPoseFromText(value);
   if (!expressionMatch && !bodyMatch) return null;
   return normalizeLive2DIntent({
     emotion: expressionMatch?.emotion || null,
@@ -774,10 +617,10 @@ export function inferLive2DIntentFromText(text, manifest = roomLive2DManifest) {
   if (structured) return structured;
   const value = String(text || '').toLowerCase();
   const matchers = [
-    { expression: 'tears', pattern: /(大哭|哭泣|流泪|崩溃|crying|tears|泣く)/u, emotion: 'crying' },
-    { expression: 'namida', pattern: /(难过|悲伤|伤心|寂寞|眼泪|sad|sorrow|悲しい)/u, emotion: 'sad' },
-    { expression: 'bsmile', pattern: /(害羞|脸红|调皮|生气|愤怒|shy|blush|angry|annoyed|照れ)/u, emotion: 'shy' },
-    { expression: 'smile', pattern: /(开心|高兴|愉快|微笑|笑|happy|smile|joy|嬉しい|優しい)/u, emotion: 'happy' }
+    { expression: 'tears', pattern: /(澶у摥|鍝常|娴佹唱|宕╂簝|crying|tears|娉ｃ亸)/u, emotion: 'crying' },
+    { expression: 'namida', pattern: /(闅捐繃|鎮蹭激|浼ゅ績|瀵傚癁|鐪兼唱|sad|sorrow|鎮层仐銇?/u, emotion: 'sad' },
+    { expression: 'bsmile', pattern: /(瀹崇緸|鑴哥孩|璋冪毊|鐢熸皵|鎰ゆ€抾shy|blush|angry|annoyed|鐓с倢)/u, emotion: 'shy' },
+    { expression: 'smile', pattern: /(寮€蹇億楂樺叴|鎰夊揩|寰瑧|绗憒happy|smile|joy|瀣夈仐銇剕鍎仐銇?/u, emotion: 'happy' }
   ];
   const matched = matchers.find((item) => item.pattern.test(value));
   return matched

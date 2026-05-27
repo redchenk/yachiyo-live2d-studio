@@ -7,6 +7,7 @@ import {
   compileBehaviorIntent,
   semanticActionPromptCatalog
 } from './live2dBehaviorController';
+import { behaviorActionComboPrompt } from '../../constants/room/behaviorActionRegistry';
 import {
   cleanLive2DReply,
   extractLive2DStageDirections
@@ -239,7 +240,7 @@ export function live2DControlSystemPrompt() {
     'The reply field must contain only natural dialogue. Never put stage directions, parenthesized action hints, asterisk actions, action labels, or pose descriptions in reply.',
     'The actions field is required and must contain at least 2 semantic actions. If the moment is calm, use look_at_chat + breathe.',
     'Use semantic actions, not raw Live2D parameters, for normal turns. The behavior controller maps actions to VTube Studio tracking curves.',
-    'Choose 2-5 actions per live-stream turn. Good combos: look_at_chat + smirk + head_tilt, nod + smile, lean_in + blink, shake_head + smirk, bounce + smile, shiver + shy.',
+    `Choose 2-5 actions per live-stream turn. Good combos: ${behaviorActionComboPrompt()}.`,
     'Use intensity 0.45-0.85 for normal talking, 0.85-1.0 for punchlines or surprise.',
     'Use duration in seconds. Overlapping actions are allowed by repeating similar delay values; omit delay for a natural staggered performance.',
     'Only use raw live2d.parameters when a very specific model parameter is necessary.',

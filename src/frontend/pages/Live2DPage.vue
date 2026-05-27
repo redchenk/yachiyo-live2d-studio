@@ -9,6 +9,10 @@ import {
 import { dispatchRoomLive2D } from '../services/room/live2dControl';
 import { createLive2DSpeechPlayer } from '../services/room/live2dSpeech';
 import { cleanLive2DReply } from '../services/room/live2dText';
+import {
+  behaviorActionComboPrompt,
+  behaviorBodyActionButtons
+} from '../constants/room/behaviorActionRegistry';
 
 const live2d = useLive2D();
 const booted = ref(false);
@@ -67,16 +71,7 @@ const testActions = [
   { label: 'Tears', expression: 'tears' }
 ];
 
-const bodyActions = [
-  { label: 'Nod', bodyPose: 'nod' },
-  { label: 'Shake', bodyPose: 'shake_head' },
-  { label: 'Lean', bodyPose: 'lean_in' },
-  { label: 'Sway', bodyPose: 'sway' },
-  { label: 'Left', bodyPose: 'lean_left' },
-  { label: 'Right', bodyPose: 'lean_right' },
-  { label: 'Bounce', bodyPose: 'bounce' },
-  { label: 'Hit', bodyPose: 'emphasis' }
-];
+const bodyActions = behaviorBodyActionButtons();
 
 const parameterActions = [
   {
@@ -329,7 +324,7 @@ function buildLiveDirectorPrompt(audienceLines) {
     'Act like an autonomous AI VTuber streamer. Reply with 1-2 short spoken sentences.',
     'Do not wait passively for instructions. React, tease gently, ask a tiny hook, or continue the topic.',
     'Choose 2-5 semantic actions every turn unless the moment is intentionally calm.',
-    'Prefer action combos like look_at_chat + smirk + head_tilt, nod + smile, lean_in + blink, shake_head + smirk, bounce + smile, or shiver + shy.',
+    `Prefer action combos like ${behaviorActionComboPrompt()}.`,
     'Use emotion plus actions instead of raw Live2D parameters. Let the behavior controller map actions to VTube Studio tracking curves.',
     'Never show action cues in the spoken reply or caption: no parentheses, no asterisk actions, no Action/Pose labels, and no body descriptions in reply. Put movement only in the actions array.',
     'Return the required JSON object only.'

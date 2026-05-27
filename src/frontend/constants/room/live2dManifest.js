@@ -1,3 +1,5 @@
+import { behaviorBodyPoseManifestItems } from './behaviorActionRegistry';
+
 export const roomLive2DManifest = {
   id: 'tsukimi-yachiyo',
   name: 'Tsukimi Yachiyo',
@@ -34,48 +36,7 @@ export const roomLive2DManifest = {
       prompt: 'crying, strongly hurt, or clearly shedding tears'
     }
   ],
-  motions: [
-    {
-      id: 'nod',
-      label: 'Nod',
-      prompt: 'agreeing, greeting, or acknowledging the audience'
-    },
-    {
-      id: 'shake_head',
-      label: 'Shake head',
-      prompt: 'gentle refusal, surprise, or playful disagreement'
-    },
-    {
-      id: 'lean_in',
-      label: 'Lean in',
-      prompt: 'curiosity, whispering, intimacy, or focusing on the audience'
-    },
-    {
-      id: 'lean_left',
-      label: 'Lean left',
-      prompt: 'playful tilt or soft side movement'
-    },
-    {
-      id: 'lean_right',
-      label: 'Lean right',
-      prompt: 'playful tilt or soft side movement'
-    },
-    {
-      id: 'sway',
-      label: 'Sway',
-      prompt: 'idle rhythmic body movement or cheerful energy'
-    },
-    {
-      id: 'bounce',
-      label: 'Bounce',
-      prompt: 'excited response or lively emphasis'
-    },
-    {
-      id: 'emphasis',
-      label: 'Emphasis',
-      prompt: 'small body accent when stressing a line'
-    }
-  ],
+  motions: behaviorBodyPoseManifestItems(),
   parameterControls: [
     {
       id: 'ParamAngleX',

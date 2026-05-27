@@ -1,4 +1,9 @@
-import { readRoomVTubeStudioSettings } from './roomSettings';
+﻿import { readRoomVTubeStudioSettings } from './roomSettings';
+import {
+  behaviorActionBlocksAutoBlink,
+  behaviorActionPriority,
+  normalizeBehaviorBodyPose
+} from '../../constants/room/behaviorActionRegistry';
 
 const ROOM_ACT_EVENT = 'tsukuyomi:room-act';
 const FACE_CAPTURE_EVENT = 'tsukuyomi:live2d-face';
@@ -10,18 +15,18 @@ const API_NAME = 'VTubeStudioPublicAPI';
 const API_VERSION = '1.0';
 
 const VTS_EXPRESSION_ALIASES = {
-  happy: ['happy', 'smile', '微笑', '笑'],
-  joy: ['happy', 'smile', '微笑', '笑'],
-  smile: ['smile', 'happy', '微笑', '笑'],
-  bsmile: ['bsmile', 'blush', 'shy', 'smug', '照れ', '脸红', '臉紅'],
-  blush: ['bsmile', 'blush', 'shy', '照れ', '脸红', '臉紅'],
-  shy: ['bsmile', 'blush', 'shy', '照れ', '脸红', '臉紅'],
-  smug: ['bsmile', 'smug', 'bsmile', '得意'],
-  playful: ['bsmile', 'smug', 'playful', '調皮', '调皮'],
-  namida: ['namida', 'sad', 'tear', '涙', '眼泪', '眼淚'],
-  sad: ['namida', 'sad', 'tear', '涙', '眼泪', '眼淚'],
-  tears: ['tears', 'cry', 'crying', '涙', '哭'],
-  crying: ['tears', 'cry', 'crying', '涙', '哭'],
+  happy: ['happy', 'smile'],
+  joy: ['happy', 'smile'],
+  smile: ['smile', 'happy'],
+  bsmile: ['bsmile', 'blush', 'shy', 'smug'],
+  blush: ['bsmile', 'blush', 'shy'],
+  shy: ['bsmile', 'blush', 'shy'],
+  smug: ['bsmile', 'smug'],
+  playful: ['bsmile', 'smug', 'playful'],
+  namida: ['namida', 'sad', 'tear'],
+  sad: ['namida', 'sad', 'tear'],
+  tears: ['tears', 'cry', 'crying'],
+  crying: ['tears', 'cry', 'crying'],
   neutral: ['neutral', 'normal', 'default']
 };
 
@@ -216,12 +221,7 @@ function mapLive2DParametersToVTS(parameters, options) {
 }
 
 function normalizePose(value) {
-  const key = String(value || '').trim().toLowerCase().replace(/\s+/g, '_');
-  if (!key || key === 'none' || key === 'null') return '';
-  if (key === 'tap_body' || key === 'body_tap' || key === 'tapbody') return 'emphasis';
-  return new Set(['nod', 'shake_head', 'lean_in', 'lean_left', 'lean_right', 'sway', 'bounce', 'emphasis']).has(key)
-    ? key
-    : '';
+  return normalizeBehaviorBodyPose(value);
 }
 
 function ease(value) {
@@ -584,21 +584,6 @@ function addBehaviorActionSample(values, action, progress) {
   }
 }
 
-const DIRECT_MOTION_PRIORITY = {
-  emphasis: 9,
-  bounce: 8.4,
-  lean_in: 8,
-  lean_left: 7.8,
-  lean_right: 7.8,
-  head_tilt: 7.6,
-  nod: 7,
-  shake_head: 7,
-  shiver: 5.8,
-  sway: 5.4,
-  look_at_chat: 4,
-  breathe: 1
-};
-
 function activeBehaviorSamples(actions, elapsedMs) {
   return (Array.isArray(actions) ? actions : []).map((action) => {
     const started = Number(action.delayMs) || 0;
@@ -631,10 +616,10 @@ function autoBlinkOpen(nowMs) {
 
 function pickDominantMotion(samples) {
   return samples
-    .filter((sample) => DIRECT_MOTION_PRIORITY[sample.action.type])
+    .filter((sample) => behaviorActionPriority(sample.action.type) > 0)
     .sort((left, right) => (
-      (DIRECT_MOTION_PRIORITY[right.action.type] * right.energy) -
-      (DIRECT_MOTION_PRIORITY[left.action.type] * left.energy)
+      (behaviorActionPriority(right.action.type) * right.energy) -
+      (behaviorActionPriority(left.action.type) * left.energy)
     ))[0] || null;
 }
 
@@ -785,7 +770,7 @@ function applyDirectOverlay(frame, sample, dominant) {
 }
 
 function applyAutoBlink(frame, samples, nowMs) {
-  const hasManualEye = samples.some((sample) => ['blink', 'wink', 'surprised'].includes(sample.action.type));
+  const hasManualEye = samples.some((sample) => behaviorActionBlocksAutoBlink(sample.action.type));
   if (hasManualEye) return;
   const open = autoBlinkOpen(nowMs);
   setFrameValue(frame, 'EyeOpenLeft', open, 0.92);
