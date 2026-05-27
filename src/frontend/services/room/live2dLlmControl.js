@@ -4,6 +4,10 @@ import {
   normalizeLive2DIntent
 } from './live2dControl';
 import {
+  compileBehaviorIntent,
+  semanticActionPromptCatalog
+} from './live2dBehaviorController';
+import {
   cleanLive2DReply,
   extractLive2DStageDirections
 } from './live2dText';
@@ -81,6 +85,7 @@ function mergeInferredLive2DIntent(explicitIntent, inferredIntent) {
   if (!explicitIntent) return inferredIntent;
   if (!inferredIntent) return explicitIntent;
 
+  const explicitHasBehavior = Array.isArray(explicitIntent.behaviorActions) && explicitIntent.behaviorActions.length > 0;
   const explicitHasBody = hasBodyPose(explicitIntent);
   const explicitHasExpression = hasExpression(explicitIntent);
   const strongerIntensity = Math.max(Number(explicitIntent.intensity) || 0, Number(inferredIntent.intensity) || 0) || undefined;
@@ -93,18 +98,20 @@ function mergeInferredLive2DIntent(explicitIntent, inferredIntent) {
     bodyPose: explicitHasBody ? explicitIntent.bodyPose : inferredIntent.bodyPose,
     intensity: strongerIntensity || explicitIntent.intensity || inferredIntent.intensity,
     durationMs: explicitIntent.durationMs || inferredIntent.durationMs,
+    behaviorActions: explicitIntent.behaviorActions || [],
+    speechStyle: explicitIntent.speechStyle || inferredIntent.speechStyle || null,
     parameters: mergeParameterTargets(
       explicitIntent.parameters,
-      explicitHasBody ? [] : inferredIntent.parameters
+      explicitHasBody || explicitHasBehavior ? [] : inferredIntent.parameters
     )
   };
 
   if (Array.isArray(explicitIntent.sequence) && explicitIntent.sequence.length) {
-    if (!explicitHasBody && explicitIntent.sequence.length === 1) {
+    if (!explicitHasBody && !explicitHasBehavior && explicitIntent.sequence.length === 1) {
       delete next.sequence;
     } else {
       next.sequence = explicitIntent.sequence.map((step, index) => {
-        if (explicitHasBody || index > 0) return step;
+        if (explicitHasBody || explicitHasBehavior || index > 0) return step;
         return {
           ...step,
           bodyPose: step.bodyPose || inferredIntent.bodyPose,
@@ -120,6 +127,23 @@ function mergeInferredLive2DIntent(explicitIntent, inferredIntent) {
   return normalizeLive2DIntent(next) || explicitIntent;
 }
 
+function mergeBehaviorAndExplicitIntent(behaviorIntent, explicitIntent) {
+  if (!behaviorIntent) return explicitIntent;
+  if (!explicitIntent) return normalizeLive2DIntent(behaviorIntent);
+  return normalizeLive2DIntent({
+    ...explicitIntent,
+    emotion: explicitIntent.emotion || behaviorIntent.emotion,
+    expression: explicitIntent.expression || behaviorIntent.expression,
+    expressionMix: explicitIntent.expressionMix?.length ? explicitIntent.expressionMix : behaviorIntent.expressionMix,
+    bodyPose: explicitIntent.bodyPose || behaviorIntent.bodyPose,
+    intensity: Math.max(Number(explicitIntent.intensity) || 0, Number(behaviorIntent.intensity) || 0) || behaviorIntent.intensity,
+    durationMs: Math.max(Number(explicitIntent.durationMs) || 0, Number(behaviorIntent.durationMs) || 0) || behaviorIntent.durationMs,
+    parameters: mergeParameterTargets(behaviorIntent.parameters, explicitIntent.parameters),
+    behaviorActions: behaviorIntent.behaviorActions,
+    speechStyle: behaviorIntent.speechStyle
+  });
+}
+
 export function parseLive2DControlPayload(rawText) {
   const jsonText = extractJsonObject(rawText);
   try {
@@ -127,7 +151,11 @@ export function parseLive2DControlPayload(rawText) {
     const rawReply = data.reply || data.text || data.message || '';
     const stageText = extractLive2DStageDirections(`${rawReply}\n${rawText}`);
     const reply = cleanReplyForSpeech(rawReply);
-    const explicitLive2D = normalizeLive2DIntent(data.live2d || data.act || data.pose || data);
+    const behaviorLive2D = compileBehaviorIntent(data);
+    const explicitLive2D = mergeBehaviorAndExplicitIntent(
+      behaviorLive2D,
+      normalizeLive2DIntent(data.live2d || data.act || data.pose || data)
+    );
     const inferredLive2D = inferLive2DIntentFromText([stageText, reply].filter(Boolean).join('\n'));
     const live2d = mergeInferredLive2DIntent(explicitLive2D, inferredLive2D);
     return {
@@ -205,17 +233,14 @@ export function live2DControlSystemPrompt() {
     'Yachiyo is being tested as an autonomous AI VTuber streamer: keep her present, reactive, playful, and concise.',
     'Return exactly one JSON object. Do not use Markdown. Do not add prose outside JSON.',
     'JSON schema:',
-    '{"reply":"short visible reply","live2d":{"emotion":"happy|shy|sad|crying|neutral","expression":"neutral|smile|bsmile|namida|tears","expressionMix":[{"expression":"smile","weight":1}],"bodyPose":"none|nod|shake_head|lean_in|lean_left|lean_right|sway|bounce|emphasis","parameters":[{"id":"ParamOutput_BodyX","value":16,"weight":0.9,"durationMs":1500}],"intensity":1,"durationMs":4200,"sequence":[]}}',
+    '{"reply":"short visible reply","emotion":"smug|happy|shy|surprised|sad|neutral","intensity":0.72,"actions":[{"type":"look_at_chat","duration":1.2},{"type":"smirk","duration":2.0},{"type":"head_tilt","side":"right","duration":1.5}],"speech_style":{"speed":1.05,"pitch":0.08,"pause":"playful"}}',
     'The reply field must contain only natural dialogue. Never put stage directions, parenthesized action hints, asterisk actions, action labels, or pose descriptions in reply.',
-    'If you need Yachiyo to nod, lean, sway, bounce, shake her head, or emphasize a line, put that only in live2d.bodyPose, live2d.parameters, or live2d.sequence.',
-    'For live-stream turns, choose a visible bodyPose unless the line is intentionally quiet. Do not only change the face.',
-    'Vary bodyPose across turns: nod for acknowledgement, lean_in for focus, sway for idle talk, bounce for excitement, shake_head for playful refusal, emphasis for punchlines.',
-    'Use parameters for precise acting: gaze, head motion, torso lean, body roll, chest/hip split, shoulders, hair follow-through, brows, mouth shape, cheek, and breathing. Prefer 5-10 parameter targets per active turn.',
-    'When bodyPose is visible, use intensity 0.95-1.0, enable ParamSwitchCtrl_BodyX/Y/Z/ChestZ/HipZ at value 1, and pair it with Yachiyo body-chain targets such as ParamBodyInput_BodyX, ParamBodyInput_BodyY, ParamBodyInput_BodyZ, ParamOutput_BodyX, ParamOutput_BodyY, ParamOutput_BodyZ, ParamPhysicsRAM_BodyX, ParamPhysicsRAM_BodyY, ParamPhysicsRAM_BodyZ, ParamAngle_BodyX, ParamAngle_BodyY, ParamAngle_BodyZ, ParamAngle_ChestZ, ParamAngle_HipZ, PositionZ, or ParamPosition_Z.',
-    'For a Neuro-sama-like stream feel, use tiny gaze shifts plus VTube Studio-style head targets ParamAngle_HeadX/Y/Z, visible but smooth body leans, chest/hip counter-motion, shoulder accents, brow changes, and breath accents that match the spoken line.',
-    'Avoid fighting TTS mouth opening. Use ParamMouthForm for smile/frown shape and leave ParamMouthOpenY to voice unless you intentionally need a manual mouth override.',
-    'Use durationMs on each parameter target when you want a quick glance or eyebrow shift, and keep the value within the listed range.',
-    'Use sequence only when a multi-step performance is clearly helpful. Keep sequence to 3 steps or fewer.',
+    'Use semantic actions, not raw Live2D parameters, for normal turns. The behavior controller maps actions to VTube Studio tracking curves.',
+    'Choose 2-5 actions per live-stream turn. Good combos: look_at_chat + smirk + head_tilt, nod + smile, lean_in + blink, shake_head + smirk, bounce + smile, shiver + shy.',
+    'Use intensity 0.45-0.85 for normal talking, 0.85-1.0 for punchlines or surprise.',
+    'Use duration in seconds. Overlapping actions are allowed by repeating similar delay values; omit delay for a natural staggered performance.',
+    'Only use raw live2d.parameters when a very specific model parameter is necessary.',
+    semanticActionPromptCatalog(),
     live2DPromptCatalog()
   ].join('\n');
 }

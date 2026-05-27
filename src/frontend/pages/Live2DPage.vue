@@ -285,11 +285,10 @@ function buildLiveDirectorPrompt(audienceLines) {
     chat,
     'Act like an autonomous AI VTuber streamer. Reply with 1-2 short spoken sentences.',
     'Do not wait passively for instructions. React, tease gently, ask a tiny hook, or continue the topic.',
-    'Choose a visible bodyPose or precise parameter set every turn unless the moment is intentionally calm. Use intensity 0.95-1.0 for visible body acting.',
-    'Prefer nod, lean_in, sway, bounce, shake_head, or emphasis. Use expression and expressionMix too.',
-    'For visible body acting, enable ParamSwitchCtrl_BodyX/Y/Z/ChestZ/HipZ at value 1 and include Yachiyo body-chain parameters such as ParamOutput_BodyX, ParamOutput_BodyY, ParamOutput_BodyZ, ParamAngle_BodyX, ParamAngle_BodyY, ParamAngle_BodyZ, ParamAngle_ChestZ, ParamAngle_HipZ, PositionZ, or ParamPosition_Z.',
-    'Use parameters for VTube Studio-style head targets ParamAngle_HeadX/Y/Z, gaze, head tilt, torso, chest/hip split, shoulder accents, hair follow-through, brow shape, mouth form, cheek, and breathing nuance.',
-    'Never show action cues in the spoken reply or caption: no parentheses, no asterisk actions, no Action/Pose labels, and no body descriptions in reply. Put movement only in live2d JSON.',
+    'Choose 2-5 semantic actions every turn unless the moment is intentionally calm.',
+    'Prefer action combos like look_at_chat + smirk + head_tilt, nod + smile, lean_in + blink, shake_head + smirk, bounce + smile, or shiver + shy.',
+    'Use emotion plus actions instead of raw Live2D parameters. Let the behavior controller map actions to VTube Studio tracking curves.',
+    'Never show action cues in the spoken reply or caption: no parentheses, no asterisk actions, no Action/Pose labels, and no body descriptions in reply. Put movement only in the actions array.',
     'Return the required JSON object only.'
   ].join('\n');
 }

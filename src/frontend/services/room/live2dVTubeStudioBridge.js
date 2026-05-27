@@ -268,6 +268,256 @@ function sampleVTSBodyPose(pose, progress, intensity) {
   return finalizeWeighted(values);
 }
 
+function actionSideSign(action, fallback = 1) {
+  if (action.side === 'left') return -1;
+  if (action.side === 'right') return 1;
+  return fallback;
+}
+
+function actionEnvelope(progress) {
+  const t = clamp(progress, 0, 1);
+  if (t < 0.14) return ease(t / 0.14);
+  if (t > 0.82) return ease((1 - t) / 0.18);
+  return 1;
+}
+
+function addEyeTracking(values, x = 0, y = 0, weight = 0.8) {
+  addWeighted(values, 'EyeLeftX', x, weight);
+  addWeighted(values, 'EyeRightX', x, weight);
+  addWeighted(values, 'EyeLeftY', y, weight);
+  addWeighted(values, 'EyeRightY', y, weight);
+}
+
+function addBodyTracking(values, pose = {}, weight = 1) {
+  const bodyX = Number(pose.x) || 0;
+  const bodyY = Number(pose.y) || 0;
+  const bodyZ = Number(pose.z) || 0;
+  const posX = Number(pose.posX) || 0;
+  const posY = Number(pose.posY) || 0;
+  const posZ = Number(pose.posZ) || 0;
+  const connected = pose.connected === 0 ? 0 : 1;
+
+  addWeighted(values, 'MocopiConnected', connected, connected ? Math.max(weight, 0.2) : 1);
+  addWeighted(values, 'MocopiAngleX', bodyX * 2.8, weight * 0.75);
+  addWeighted(values, 'MocopiAngleY', bodyY * 2.8, weight * 0.75);
+  addWeighted(values, 'MocopiAngleZ', bodyZ * 2.8, weight * 0.75);
+  addWeighted(values, 'MocopiBodyAngleX', bodyX, weight);
+  addWeighted(values, 'MocopiBodyAngleY', bodyY, weight);
+  addWeighted(values, 'MocopiBodyAngleZ', bodyZ, weight);
+  addWeighted(values, 'MocopiBodyPositionX', posX, weight * 0.75);
+  addWeighted(values, 'MocopiBodyPositionY', posY, weight * 0.75);
+  addWeighted(values, 'MocopiBodyPositionZ', posZ, weight * 0.75);
+}
+
+function seedBehaviorTrackingFrame(values) {
+  addWeighted(values, 'FaceAngleX', 0, 0.08);
+  addWeighted(values, 'FaceAngleY', 0, 0.08);
+  addWeighted(values, 'FaceAngleZ', 0, 0.08);
+  addWeighted(values, 'FacePositionX', 0, 0.08);
+  addWeighted(values, 'FacePositionY', 0, 0.08);
+  addWeighted(values, 'FacePositionZ', 0, 0.08);
+  addWeighted(values, 'MouthOpen', 0.06, 0.12);
+  addWeighted(values, 'MouthSmile', 0.58, 0.26);
+  addWeighted(values, 'Brows', 0.55, 0.2);
+  addWeighted(values, 'BrowLeftY', 0.55, 0.2);
+  addWeighted(values, 'BrowRightY', 0.55, 0.2);
+  addWeighted(values, 'EyeOpenLeft', 0.92, 0.32);
+  addWeighted(values, 'EyeOpenRight', 0.92, 0.32);
+  addEyeTracking(values, 0, 0, 0.1);
+  addBodyTracking(values, {}, 0.08);
+}
+
+function behaviorResetFrame() {
+  const values = new Map();
+  addWeighted(values, 'FaceAngleX', 0, 0.65);
+  addWeighted(values, 'FaceAngleY', 0, 0.65);
+  addWeighted(values, 'FaceAngleZ', 0, 0.65);
+  addWeighted(values, 'FacePositionX', 0, 0.65);
+  addWeighted(values, 'FacePositionY', 0, 0.65);
+  addWeighted(values, 'FacePositionZ', 0, 0.65);
+  addWeighted(values, 'MouthSmile', 0.55, 0.46);
+  addWeighted(values, 'Brows', 0.52, 0.42);
+  addWeighted(values, 'BrowLeftY', 0.52, 0.42);
+  addWeighted(values, 'BrowRightY', 0.52, 0.42);
+  addWeighted(values, 'EyeOpenLeft', 0.92, 0.55);
+  addWeighted(values, 'EyeOpenRight', 0.92, 0.55);
+  addEyeTracking(values, 0, 0, 0.55);
+  addBodyTracking(values, { connected: 0 }, 0.85);
+  return finalizeWeighted(values);
+}
+
+function addBehaviorActionSample(values, action, progress) {
+  const t = clamp(progress, 0, 1);
+  const e = actionEnvelope(t) * clamp(action.intensity, 0.05, 1);
+  const sign = actionSideSign(action, Math.sin((action.delayMs || 0) * 0.017) >= 0 ? 1 : -1);
+  const phase = t * Math.PI * 2;
+  const fast = Math.sin(phase * 2);
+  const slow = Math.sin(phase);
+  const beat = Math.abs(Math.sin(phase * 2));
+
+  switch (action.type) {
+    case 'look_at_chat':
+      addWeighted(values, 'FaceAngleX', 14 * slow * e, 0.9);
+      addWeighted(values, 'FaceAngleY', 3 * Math.sin(phase * 0.7) * e - 1.2 * e, 0.72);
+      addWeighted(values, 'FaceAngleZ', 8 * Math.sin(phase * 0.5) * e, 0.62);
+      addWeighted(values, 'FacePositionZ', 1.2 * e, 0.34);
+      addEyeTracking(values, -0.38 * slow * e, -0.12 * e, 0.88);
+      addBodyTracking(values, {
+        x: (14 * slow * e) / 8,
+        z: (8 * Math.sin(phase * 0.5) * e) / 5
+      }, 0.78);
+      break;
+    case 'smile':
+      addWeighted(values, 'MouthSmile', 0.72 + 0.12 * e, 0.72);
+      addWeighted(values, 'Brows', 0.56 + 0.08 * e, 0.42);
+      addWeighted(values, 'BrowLeftY', 0.56 + 0.08 * e, 0.4);
+      addWeighted(values, 'BrowRightY', 0.56 + 0.08 * e, 0.4);
+      break;
+    case 'smirk':
+      addWeighted(values, 'MouthSmile', 0.78 + 0.14 * e, 0.84);
+      addWeighted(values, 'FaceAngleZ', 3.8 * sign * e, 0.38);
+      addWeighted(values, 'Brows', 0.58 + 0.1 * e, 0.48);
+      addWeighted(values, 'BrowLeftY', sign < 0 ? 0.72 : 0.54, 0.5);
+      addWeighted(values, 'BrowRightY', sign > 0 ? 0.72 : 0.54, 0.5);
+      break;
+    case 'blink':
+      addWeighted(values, 'EyeOpenLeft', t < 0.45 ? 1 - e : 0.92, 0.94);
+      addWeighted(values, 'EyeOpenRight', t < 0.45 ? 1 - e : 0.92, 0.94);
+      break;
+    case 'wink':
+      addWeighted(values, action.side === 'left' ? 'EyeOpenLeft' : 'EyeOpenRight', t < 0.62 ? 1 - e : 0.92, 0.96);
+      addWeighted(values, 'MouthSmile', 0.72, 0.44);
+      break;
+    case 'nod':
+      addWeighted(values, 'FaceAngleY', 13 * beat * e - 4 * e, 0.94);
+      addWeighted(values, 'FacePositionY', -2.5 * beat * e, 0.62);
+      addBodyTracking(values, {
+        y: 5.5 * beat * e,
+        posY: 0.22 * beat * e
+      }, 0.88);
+      break;
+    case 'shake_head':
+      addWeighted(values, 'FaceAngleX', 15 * fast * e, 0.94);
+      addWeighted(values, 'FaceAngleZ', 6 * fast * e, 0.58);
+      addEyeTracking(values, -0.28 * fast * e, 0, 0.58);
+      addBodyTracking(values, {
+        x: 4.8 * fast * e,
+        z: 1.8 * fast * e
+      }, 0.78);
+      break;
+    case 'head_tilt':
+      addWeighted(values, 'FaceAngleX', 4.2 * sign * e, 0.5);
+      addWeighted(values, 'FaceAngleZ', 17 * sign * e, 0.95);
+      addWeighted(values, 'FacePositionX', 3.6 * sign * e, 0.58);
+      addEyeTracking(values, -0.18 * sign * e, 0, 0.56);
+      addBodyTracking(values, {
+        z: 8 * sign * e,
+        posX: 0.28 * sign * e
+      }, 0.84);
+      break;
+    case 'lean_in':
+      addWeighted(values, 'FacePositionZ', 5.4 * e, 0.84);
+      addWeighted(values, 'FacePositionY', -2.8 * e, 0.52);
+      addWeighted(values, 'FaceAngleY', -5.2 * e, 0.66);
+      addEyeTracking(values, 0, -0.16 * e, 0.62);
+      addBodyTracking(values, {
+        y: -6.2 * e,
+        posZ: 0.42 * e
+      }, 0.9);
+      break;
+    case 'lean_left':
+    case 'lean_right': {
+      const leanSign = action.type === 'lean_left' ? -1 : 1;
+      addWeighted(values, 'FaceAngleX', 5 * leanSign * e, 0.62);
+      addWeighted(values, 'FaceAngleZ', 16 * leanSign * e, 0.92);
+      addWeighted(values, 'FacePositionX', 5.5 * leanSign * e, 0.82);
+      addEyeTracking(values, -0.35 * leanSign * e, 0, 0.72);
+      addBodyTracking(values, {
+        z: 8 * leanSign * e,
+        posX: 0.38 * leanSign * e
+      }, 0.94);
+      break;
+    }
+    case 'sway':
+      addWeighted(values, 'FaceAngleX', 5.5 * slow * e, 0.64);
+      addWeighted(values, 'FaceAngleZ', 9 * slow * e, 0.76);
+      addWeighted(values, 'FacePositionX', 3.2 * slow * e, 0.58);
+      addWeighted(values, 'MouthSmile', 0.66, 0.32);
+      addEyeTracking(values, -0.18 * slow * e, 0, 0.58);
+      addBodyTracking(values, {
+        x: 3.2 * slow * e,
+        z: 6.8 * slow * e,
+        posX: 0.25 * slow * e
+      }, 0.86);
+      break;
+    case 'bounce':
+      addWeighted(values, 'FaceAngleY', 4 * beat * e, 0.56);
+      addWeighted(values, 'FacePositionY', -6.5 * beat * e, 0.82);
+      addWeighted(values, 'FacePositionZ', 3.2 * beat * e, 0.62);
+      addWeighted(values, 'MouthOpen', 0.16 + 0.22 * beat * e, 0.34);
+      addWeighted(values, 'MouthSmile', 0.78, 0.46);
+      addWeighted(values, 'Brows', 0.62, 0.34);
+      addBodyTracking(values, {
+        y: 8.2 * beat * e,
+        posY: 0.36 * beat * e,
+        posZ: 0.26 * beat * e
+      }, 0.96);
+      break;
+    case 'shiver':
+      addWeighted(values, 'FaceAngleX', 4.2 * fast * e, 0.72);
+      addWeighted(values, 'FaceAngleZ', 3.2 * Math.sin(phase * 3) * e, 0.66);
+      addWeighted(values, 'FacePositionX', 1.6 * Math.sin(phase * 4.1) * e, 0.36);
+      addBodyTracking(values, {
+        x: 1.8 * fast * e,
+        z: 3.5 * Math.sin(phase * 3.3) * e
+      }, 0.68);
+      break;
+    case 'surprised':
+      addWeighted(values, 'EyeOpenLeft', 1, 0.9);
+      addWeighted(values, 'EyeOpenRight', 1, 0.9);
+      addWeighted(values, 'MouthOpen', 0.22 + 0.14 * e, 0.5);
+      addWeighted(values, 'MouthSmile', 0.48, 0.32);
+      addWeighted(values, 'Brows', 0.76, 0.66);
+      addWeighted(values, 'BrowLeftY', 0.78, 0.66);
+      addWeighted(values, 'BrowRightY', 0.78, 0.66);
+      addWeighted(values, 'FacePositionZ', -1.4 * e, 0.3);
+      break;
+    case 'emphasis':
+      addWeighted(values, 'FaceAngleZ', -10.5 * fast * e, 0.78);
+      addWeighted(values, 'FaceAngleY', -3.2 * Math.abs(Math.sin(Math.PI * t)) * e, 0.46);
+      addWeighted(values, 'FacePositionY', -4.8 * Math.abs(Math.sin(Math.PI * t)) * e, 0.58);
+      addBodyTracking(values, {
+        y: -4.6 * Math.abs(Math.sin(Math.PI * t)) * e,
+        z: -8.2 * fast * e
+      }, 0.9);
+      break;
+    case 'breathe':
+      addBodyTracking(values, {
+        y: 1.8 * Math.sin(phase) * e,
+        posY: 0.07 * Math.sin(phase) * e
+      }, 0.34);
+      break;
+    case 'reset':
+      behaviorResetFrame().forEach((item) => addWeighted(values, item.id, item.value, item.weight));
+      break;
+    default:
+      break;
+  }
+}
+
+function sampleVTSBehaviorActions(actions, elapsedMs) {
+  const values = new Map();
+  seedBehaviorTrackingFrame(values);
+  for (const action of Array.isArray(actions) ? actions : []) {
+    const started = Number(action.delayMs) || 0;
+    const duration = Math.max(Number(action.durationMs) || 1000, 1);
+    const progress = (elapsedMs - started) / duration;
+    if (progress < 0 || progress > 1) continue;
+    addBehaviorActionSample(values, action, progress);
+  }
+  return finalizeWeighted(values);
+}
+
 export function mountVTubeStudioBridge() {
   if (typeof window === 'undefined' || typeof WebSocket === 'undefined') return () => {};
 
@@ -278,6 +528,8 @@ export function mountVTubeStudioBridge() {
   let requestCounter = 0;
   let bodyFrameId = 0;
   let bodyMotion = null;
+  let behaviorFrameId = 0;
+  let behaviorPlan = null;
   const pendingRequests = new Map();
   const pendingInjection = new Map();
   let flushTimer = 0;
@@ -452,6 +704,11 @@ export function mountVTubeStudioBridge() {
     bodyFrameId = 0;
   }
 
+  function stopBehaviorFrame() {
+    if (behaviorFrameId) window.cancelAnimationFrame(behaviorFrameId);
+    behaviorFrameId = 0;
+  }
+
   function tickBody(now = performance.now()) {
     if (!bodyMotion) {
       stopBodyFrame();
@@ -467,8 +724,43 @@ export function mountVTubeStudioBridge() {
     bodyFrameId = window.requestAnimationFrame(tickBody);
   }
 
+  function tickBehavior(now = performance.now()) {
+    if (!behaviorPlan) {
+      stopBehaviorFrame();
+      return;
+    }
+    const elapsedMs = now - behaviorPlan.startedAt;
+    if (elapsedMs >= behaviorPlan.durationMs) {
+      behaviorPlan = null;
+      queueInjection(behaviorResetFrame());
+      stopBehaviorFrame();
+      return;
+    }
+    queueInjection(sampleVTSBehaviorActions(behaviorPlan.actions, elapsedMs));
+    behaviorFrameId = window.requestAnimationFrame(tickBehavior);
+  }
+
+  function startBehaviorPlan(actions, durationMs) {
+    if (!Array.isArray(actions) || !actions.length) return;
+    behaviorPlan = {
+      actions,
+      durationMs: Math.max(
+        Number(durationMs) || 0,
+        ...actions.map((action) => (Number(action.delayMs) || 0) + (Number(action.durationMs) || 0)),
+        800
+      ),
+      startedAt: performance.now()
+    };
+    stopBehaviorFrame();
+    behaviorFrameId = window.requestAnimationFrame(tickBehavior);
+  }
+
   function onRoomAct(event) {
     const detail = event.detail || {};
+    const behaviorActions = Array.isArray(detail.behaviorActions) ? detail.behaviorActions : [];
+    if (behaviorActions.length) {
+      startBehaviorPlan(behaviorActions, detail.durationMs || detail.duration);
+    }
     if (settings.injectFace) {
       const expression = String(detail.expression || detail.emotion || '').toLowerCase();
       if (expression.includes('smile') || expression.includes('happy')) {
@@ -477,7 +769,7 @@ export function mountVTubeStudioBridge() {
         queueInjection([{ id: 'MouthSmile', value: 0.26, weight: 0.35 }, { id: 'Brows', value: 0.32, weight: 0.28 }]);
       }
     }
-    if (settings.injectBody) {
+    if (settings.injectBody && !behaviorActions.length) {
       const mapped = mapLive2DParametersToVTS(detail.parameters || detail.parameterTargets || detail.params, {
         face: false,
         body: true
@@ -544,6 +836,7 @@ export function mountVTubeStudioBridge() {
     window.removeEventListener(SETTINGS_EVENT, reloadSettings);
     window.clearTimeout(flushTimer);
     stopBodyFrame();
+    stopBehaviorFrame();
     closeSocket();
   };
 }

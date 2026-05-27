@@ -1,4 +1,5 @@
 import { roomLive2DManifest } from '../../constants/room/live2dManifest';
+import { normalizeBehaviorActions } from './live2dBehaviorController';
 
 const DEBUG_STATE_KEY = 'roomLive2DDebugState';
 export const ROOM_LIVE2D_PENDING_INTENT_KEY = 'roomLive2DPendingIntent';
@@ -681,6 +682,9 @@ function mergeParameterTargets(explicitTargets, fallbackTargets) {
 
 function normalizeLive2DStep(input, manifest = roomLive2DManifest) {
   if (!input || typeof input !== 'object') return null;
+  const behaviorActions = normalizeBehaviorActions(input.behaviorActions || input.actions, {
+    intensity: input.intensity
+  });
   const rawExpression = input.expression || input.expressionId || input.face || input.mood || input.emotion || '';
   const expression = normalizeLive2DExpression(rawExpression, manifest) || normalizeLive2DEmotion(input.emotion || input.mood, manifest);
   const motion = normalizeLive2DMotion(input.motion || input.action, manifest);
@@ -694,7 +698,7 @@ function normalizeLive2DStep(input, manifest = roomLive2DManifest) {
     bodyPose ? bodyPoseParameterTargets(bodyPose, intensity, durationMs, manifest) : []
   );
   const primaryExpression = expressionMix[0]?.expression || expression;
-  const hasControl = primaryExpression || motion || bodyPose || parameters.length;
+  const hasControl = primaryExpression || motion || bodyPose || parameters.length || behaviorActions.length;
   if (!hasControl) return null;
   return {
     emotion: String(input.emotion || input.mood || '').trim() || null,
@@ -703,6 +707,8 @@ function normalizeLive2DStep(input, manifest = roomLive2DManifest) {
     motion: motion || null,
     bodyPose: bodyPose || null,
     parameters,
+    behaviorActions,
+    speechStyle: input.speechStyle || input.speech_style || null,
     intensity,
     durationMs,
     delayMs: normalizeDelay(input.delayMs || input.delay)
@@ -714,7 +720,7 @@ function normalizeSequence(input, manifest = roomLive2DManifest) {
   return rawSequence
     .map((step) => normalizeLive2DStep(step, manifest))
     .filter(Boolean)
-    .flatMap((step) => (step.bodyPose ? bodyPosePerformanceSequence(step, manifest) : [step]))
+    .flatMap((step) => (step.bodyPose && !step.behaviorActions?.length ? bodyPosePerformanceSequence(step, manifest) : [step]))
     .slice(0, 12);
 }
 
@@ -724,7 +730,7 @@ export function normalizeLive2DIntent(input, manifest = roomLive2DManifest) {
   const baseStep = normalizeLive2DStep(input, manifest);
   const steps = sequence.length
     ? sequence
-    : (baseStep?.bodyPose ? bodyPosePerformanceSequence(baseStep, manifest) : (baseStep ? [baseStep] : []));
+    : (baseStep?.bodyPose && !baseStep.behaviorActions?.length ? bodyPosePerformanceSequence(baseStep, manifest) : (baseStep ? [baseStep] : []));
   if (!steps.length) return null;
   const primary = baseStep || steps[0];
   return {
