@@ -188,10 +188,6 @@ function mapLive2DParametersToVTS(parameters, options) {
         addWeighted(merged, 'MocopiConnected', 1, 1);
         addWeighted(merged, 'MocopiBodyAngleY', value * 0.32, weight);
         addWeighted(merged, 'MocopiAngleY', value, weight * 0.55);
-        if (key === 'positionz' || key === 'paramposition_z') {
-          addWeighted(merged, 'FacePositionZ', value * 0.18, weight * 0.5);
-          addWeighted(merged, 'MocopiBodyPositionZ', value * 0.035, weight * 0.5);
-        }
       } else if ([
         'parambodyanglez',
         'paramangle_bodyz',
@@ -260,10 +256,8 @@ function sampleVTSBodyPose(pose, progress, intensity) {
       addWeighted(values, 'MocopiBodyAngleX', 3.5 * fast * e, 0.58);
       break;
     case 'lean_in':
-      addWeighted(values, 'FacePositionZ', 4.2 * e, 0.72);
       addWeighted(values, 'FaceAngleY', -4.5 * e, 0.52);
       addWeighted(values, 'MocopiBodyAngleY', -4.2 * e, 0.68);
-      addWeighted(values, 'MocopiBodyPositionZ', 0.32 * e, 0.58);
       break;
     case 'lean_left':
       addWeighted(values, 'FacePositionX', -4.2 * e, 0.64);
@@ -285,7 +279,6 @@ function sampleVTSBodyPose(pose, progress, intensity) {
       break;
     case 'bounce':
       addWeighted(values, 'FacePositionY', -4.8 * beat * e, 0.56);
-      addWeighted(values, 'FacePositionZ', 1.8 * beat * e, 0.38);
       addWeighted(values, 'MocopiBodyAngleY', 4.8 * beat * e, 0.72);
       addWeighted(values, 'MocopiBodyPositionY', 0.28 * beat * e, 0.5);
       break;
@@ -340,7 +333,7 @@ function setFrameBody(frame, pose = {}, weight = 1) {
   const bodyZ = Number(pose.z) || 0;
   const posX = Number(pose.posX) || 0;
   const posY = Number(pose.posY) || 0;
-  const posZ = Number(pose.posZ) || 0;
+  const posZ = 0;
   const connected = pose.connected === 0 ? 0 : 1;
 
   setFrameValue(frame, 'MocopiConnected', connected, connected ? 1 : 1);
@@ -391,7 +384,7 @@ function addBodyTracking(values, pose = {}, weight = 1) {
   const bodyZ = Number(pose.z) || 0;
   const posX = Number(pose.posX) || 0;
   const posY = Number(pose.posY) || 0;
-  const posZ = Number(pose.posZ) || 0;
+  const posZ = 0;
   const connected = pose.connected === 0 ? 0 : 1;
 
   addWeighted(values, 'MocopiConnected', connected, connected ? Math.max(weight, 0.2) : 1);
@@ -436,7 +429,7 @@ function behaviorResetFrame() {
   setFrameValue(frame, 'Brows', 0.52, 0.55);
   setFrameValue(frame, 'BrowLeftY', 0.52, 0.55);
   setFrameValue(frame, 'BrowRightY', 0.52, 0.55);
-  setFrameBody(frame, { connected: 0 }, 0.85);
+  setFrameBody(frame, {}, 0.85);
   return finalizeDirectFrame(frame);
 }
 
@@ -454,7 +447,6 @@ function addBehaviorActionSample(values, action, progress) {
       addWeighted(values, 'FaceAngleX', 14 * slow * e, 0.9);
       addWeighted(values, 'FaceAngleY', 3 * Math.sin(phase * 0.7) * e - 1.2 * e, 0.72);
       addWeighted(values, 'FaceAngleZ', 8 * Math.sin(phase * 0.5) * e, 0.62);
-      addWeighted(values, 'FacePositionZ', 1.2 * e, 0.34);
       addEyeTracking(values, -0.38 * slow * e, -0.12 * e, 0.88);
       addBodyTracking(values, {
         x: (14 * slow * e) / 8,
@@ -510,13 +502,11 @@ function addBehaviorActionSample(values, action, progress) {
       }, 0.84);
       break;
     case 'lean_in':
-      addWeighted(values, 'FacePositionZ', 5.4 * e, 0.84);
       addWeighted(values, 'FacePositionY', -2.8 * e, 0.52);
       addWeighted(values, 'FaceAngleY', -5.2 * e, 0.66);
       addEyeTracking(values, 0, -0.16 * e, 0.62);
       addBodyTracking(values, {
-        y: -6.2 * e,
-        posZ: 0.42 * e
+        y: -6.2 * e
       }, 0.9);
       break;
     case 'lean_left':
@@ -547,13 +537,11 @@ function addBehaviorActionSample(values, action, progress) {
     case 'bounce':
       addWeighted(values, 'FaceAngleY', 4 * beat * e, 0.56);
       addWeighted(values, 'FacePositionY', -6.5 * beat * e, 0.82);
-      addWeighted(values, 'FacePositionZ', 3.2 * beat * e, 0.62);
       addWeighted(values, 'MouthSmile', 0.78, 0.46);
       addWeighted(values, 'Brows', 0.62, 0.34);
       addBodyTracking(values, {
         y: 8.2 * beat * e,
-        posY: 0.36 * beat * e,
-        posZ: 0.26 * beat * e
+        posY: 0.36 * beat * e
       }, 0.96);
       break;
     case 'shiver':
@@ -572,7 +560,6 @@ function addBehaviorActionSample(values, action, progress) {
       addWeighted(values, 'Brows', 0.76, 0.66);
       addWeighted(values, 'BrowLeftY', 0.78, 0.66);
       addWeighted(values, 'BrowRightY', 0.78, 0.66);
-      addWeighted(values, 'FacePositionZ', -1.4 * e, 0.3);
       break;
     case 'emphasis':
       addWeighted(values, 'FaceAngleZ', -10.5 * fast * e, 0.78);
@@ -619,7 +606,7 @@ function activeBehaviorSamples(actions, elapsedMs) {
     const progress = (elapsedMs - started) / duration;
     if (progress < 0 || progress > 1) return null;
     const envelopeValue = actionEnvelope(progress);
-    const intensity = clamp((Number(action.intensity) || 0.86) * 1.35, 0.2, 1.45);
+    const intensity = clamp((Number(action.intensity) || 0.92) * 1.7, 0.3, 1.85);
     return {
       action,
       progress,
@@ -630,6 +617,16 @@ function activeBehaviorSamples(actions, elapsedMs) {
       sign: actionSideSign(action, Math.sin((action.delayMs || 0) * 0.017) >= 0 ? 1 : -1)
     };
   }).filter(Boolean);
+}
+
+function autoBlinkOpen(nowMs) {
+  const seconds = Number(nowMs || 0) / 1000;
+  const cycle = 3.35 + 0.28 * Math.sin(seconds * 0.17);
+  const phase = ((seconds + 0.41 * Math.sin(seconds * 0.31)) % cycle + cycle) % cycle;
+  if (phase < 0.055) return 0.92 * (1 - phase / 0.055);
+  if (phase < 0.095) return 0.04;
+  if (phase < 0.22) return 0.92 * ((phase - 0.095) / 0.125);
+  return 0.92;
 }
 
 function pickDominantMotion(samples) {
@@ -680,9 +677,8 @@ function applyDirectMotion(frame, sample) {
     case 'lean_in':
       setFrameValue(frame, 'FaceAngleY', -5.2 * e, 0.78);
       setFrameValue(frame, 'FacePositionY', -2.8 * e, 0.72);
-      setFrameValue(frame, 'FacePositionZ', 1.8 * e, 0.72);
       setFrameEyes(frame, 0, -0.16 * e, 0.72);
-      setFrameBody(frame, { y: -6.2 * e, posZ: 0.42 * e }, 1);
+      setFrameBody(frame, { y: -6.2 * e }, 1);
       break;
     case 'lean_left':
     case 'lean_right': {
@@ -706,12 +702,11 @@ function applyDirectMotion(frame, sample) {
     case 'bounce':
       setFrameValue(frame, 'FaceAngleY', 4 * beat * e, 0.72);
       setFrameValue(frame, 'FacePositionY', -6.5 * beat * e, 0.95);
-      setFrameValue(frame, 'FacePositionZ', 1.2 * beat * e, 0.7);
       setFrameValue(frame, 'MouthSmile', 0.78, 0.8);
       setFrameValue(frame, 'Brows', 0.62, 0.55);
       setFrameValue(frame, 'BrowLeftY', 0.62, 0.55);
       setFrameValue(frame, 'BrowRightY', 0.62, 0.55);
-      setFrameBody(frame, { y: 8.2 * beat * e, posY: 0.36 * beat * e, posZ: 0.26 * beat * e }, 1);
+      setFrameBody(frame, { y: 8.2 * beat * e, posY: 0.36 * beat * e }, 1);
       break;
     case 'shiver': {
       const jitter = Math.sin(phase * 6) * e;
@@ -783,14 +778,21 @@ function applyDirectOverlay(frame, sample, dominant) {
       setFrameValue(frame, 'Brows', 0.78, 0.78);
       setFrameValue(frame, 'BrowLeftY', 0.78, 0.78);
       setFrameValue(frame, 'BrowRightY', 0.78, 0.78);
-      addFrameValue(frame, 'FacePositionZ', -1.4 * e, 0.48);
       break;
     default:
       break;
   }
 }
 
-function sampleVTSBehaviorActions(actions, elapsedMs) {
+function applyAutoBlink(frame, samples, nowMs) {
+  const hasManualEye = samples.some((sample) => ['blink', 'wink', 'surprised'].includes(sample.action.type));
+  if (hasManualEye) return;
+  const open = autoBlinkOpen(nowMs);
+  setFrameValue(frame, 'EyeOpenLeft', open, 0.92);
+  setFrameValue(frame, 'EyeOpenRight', open, 0.92);
+}
+
+function sampleVTSBehaviorActions(actions, elapsedMs, nowMs = performance.now()) {
   const samples = activeBehaviorSamples(actions, elapsedMs);
   if (samples.some((sample) => sample.action.type === 'reset' && sample.energy > 0.5)) return behaviorResetFrame();
 
@@ -798,6 +800,13 @@ function sampleVTSBehaviorActions(actions, elapsedMs) {
   const dominant = pickDominantMotion(samples);
   applyDirectMotion(frame, dominant);
   samples.forEach((sample) => applyDirectOverlay(frame, sample, dominant));
+  applyAutoBlink(frame, samples, nowMs);
+  return finalizeDirectFrame(frame);
+}
+
+function sampleVTSIdleFrame(nowMs = performance.now()) {
+  const frame = createDirectTrackingFrame();
+  applyAutoBlink(frame, [], nowMs);
   return finalizeDirectFrame(frame);
 }
 
@@ -812,6 +821,7 @@ export function mountVTubeStudioBridge() {
   let bodyFrameId = 0;
   let bodyMotion = null;
   let behaviorFrameId = 0;
+  let idleFrameId = 0;
   let behaviorPlan = null;
   let expressionFiles = [];
   let expressionsLoadedAt = 0;
@@ -901,6 +911,7 @@ export function mountVTubeStudioBridge() {
   }
 
   function closeSocket() {
+    stopIdleFrame();
     authenticated = false;
     connectPromise = null;
     pendingRequests.forEach((item) => item.reject(new Error('VTube Studio connection closed.')));
@@ -917,7 +928,10 @@ export function mountVTubeStudioBridge() {
 
   async function connect() {
     if (!settings.enabled) throw new Error('VTube Studio output is disabled.');
-    if (socket?.readyState === WebSocket.OPEN && authenticated) return socket;
+    if (socket?.readyState === WebSocket.OPEN && authenticated) {
+      startIdleFrame();
+      return socket;
+    }
     if (connectPromise) return connectPromise;
 
     connectPromise = new Promise((resolve, reject) => {
@@ -928,6 +942,7 @@ export function mountVTubeStudioBridge() {
         try {
           await authenticate();
           setStatus('connected');
+          startIdleFrame();
           resolve(nextSocket);
         } catch (error) {
           setStatus('error', error.message || 'VTube Studio authentication failed.');
@@ -944,6 +959,7 @@ export function mountVTubeStudioBridge() {
       };
       nextSocket.onclose = () => {
         authenticated = false;
+        stopIdleFrame();
         if (socket === nextSocket) setStatus(settings.enabled ? 'disconnected' : 'disabled');
       };
       nextSocket.onmessage = (event) => {
@@ -1077,6 +1093,11 @@ export function mountVTubeStudioBridge() {
     behaviorFrameId = 0;
   }
 
+  function stopIdleFrame() {
+    if (idleFrameId) window.cancelAnimationFrame(idleFrameId);
+    idleFrameId = 0;
+  }
+
   function tickBody(now = performance.now()) {
     if (!bodyMotion) {
       stopBodyFrame();
@@ -1104,8 +1125,22 @@ export function mountVTubeStudioBridge() {
       stopBehaviorFrame();
       return;
     }
-    queueInjection(sampleVTSBehaviorActions(behaviorPlan.actions, elapsedMs));
+    queueInjection(sampleVTSBehaviorActions(behaviorPlan.actions, elapsedMs, now));
     behaviorFrameId = window.requestAnimationFrame(tickBehavior);
+  }
+
+  function tickIdle(now = performance.now()) {
+    if (!settings.enabled || !authenticated || socket?.readyState !== WebSocket.OPEN) {
+      stopIdleFrame();
+      return;
+    }
+    if (!behaviorPlan) queueInjection(sampleVTSIdleFrame(now));
+    idleFrameId = window.requestAnimationFrame(tickIdle);
+  }
+
+  function startIdleFrame() {
+    if (idleFrameId || !settings.enabled || !authenticated || socket?.readyState !== WebSocket.OPEN) return;
+    idleFrameId = window.requestAnimationFrame(tickIdle);
   }
 
   function startBehaviorPlan(actions, durationMs) {
@@ -1148,14 +1183,10 @@ export function mountVTubeStudioBridge() {
       queueInjection(mapped);
       const pose = normalizePose(detail.bodyPose || detail.pose || detail.posture || detail.motion || detail.action);
       if (pose) {
-        bodyMotion = {
-          pose,
-          intensity: clamp(Math.max(Number(detail.intensity) || 0, 0.72), 0.45, 1),
-          durationMs: clamp(Math.round(Number(detail.durationMs || detail.duration) || 2400), 650, 8000),
-          startedAt: performance.now()
-        };
+        const durationMs = clamp(Math.round(Number(detail.durationMs || detail.duration) || 2400), 650, 8000);
+        const intensity = clamp(Math.max(Number(detail.intensity) || 0, 0.86), 0.65, 1);
         stopBodyFrame();
-        bodyFrameId = window.requestAnimationFrame(tickBody);
+        startBehaviorPlan([{ type: pose, intensity, durationMs, delayMs: 0 }], durationMs);
       }
     }
   }
@@ -1212,6 +1243,7 @@ export function mountVTubeStudioBridge() {
     activeExpressionFiles.clear();
     stopBodyFrame();
     stopBehaviorFrame();
+    stopIdleFrame();
     closeSocket();
   };
 }
