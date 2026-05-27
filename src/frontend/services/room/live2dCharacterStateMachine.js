@@ -126,7 +126,7 @@ function startIdleGesture(state, at) {
     ? 1.0 + Math.random() * 0.7
     : 0.9 + Math.random() * 0.65;
   state.gestureSide = Math.random() > 0.5 ? 1 : -1;
-  state.nextGestureAt = at + state.gestureDurationMs + 3600 + Math.random() * 6200;
+  state.nextGestureAt = at + state.gestureDurationMs + 260 + Math.random() * 820;
 }
 
 function speakingGestureValue(state, at) {
@@ -277,7 +277,7 @@ export function createLive2DCharacterStateMachine() {
         startSpeakingMotionSegment(state, at, 0, 1800);
       }
       if (['idle', 'listening'].includes(state.mode)) {
-        if (!state.nextGestureAt) state.nextGestureAt = at + 1800 + Math.random() * 4200;
+        if (!state.nextGestureAt) state.nextGestureAt = at + 280 + Math.random() * 720;
         if (at >= state.nextGestureAt && !state.gestureStartedAt) startIdleGesture(state, at);
       } else {
         state.nextGestureAt = 0;
