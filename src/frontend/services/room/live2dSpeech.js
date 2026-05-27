@@ -263,6 +263,9 @@ export function createLive2DSpeechPlayer({ onState } = {}) {
     if (currentAudio) {
       currentAudio.pause();
       currentAudio.onplay = null;
+      currentAudio.onplaying = null;
+      currentAudio.onwaiting = null;
+      currentAudio.onpause = null;
       currentAudio.onended = null;
       currentAudio.onerror = null;
       currentAudio = null;
@@ -369,7 +372,10 @@ export function createLive2DSpeechPlayer({ onState } = {}) {
       const audio = await makeAudio(speechText, settings);
       currentAudio = audio;
       audio.preload = 'auto';
-      audio.onplay = () => {
+      let mouthStarted = false;
+      const startMouth = () => {
+        if (mouthStarted || currentAudio !== audio) return;
+        mouthStarted = true;
         setState({ status: 'playing', error: '' });
         const mouthText = audio.dataset.speechText || speechText;
         if (audio.dataset.mouthMode === 'synthetic') {
@@ -377,6 +383,18 @@ export function createLive2DSpeechPlayer({ onState } = {}) {
         } else {
           startAnalysedMouth(mouthText, audio);
         }
+      };
+      audio.onplay = () => {
+        stopMouth();
+        setState({ status: 'loading', error: '' });
+      };
+      audio.onplaying = startMouth;
+      audio.onwaiting = () => {
+        stopMouth();
+        if (!audio.ended && currentAudio === audio) setState({ status: 'loading', error: '' });
+      };
+      audio.onpause = () => {
+        if (!audio.ended && currentAudio === audio) stopMouth();
       };
       await new Promise((resolve, reject) => {
         audio.onended = resolve;

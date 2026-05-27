@@ -189,7 +189,7 @@ export function mountLive2DFaceCaptureSimulator() {
 
   function onMouth(event) {
     const value = Number(event.detail?.value);
-    if (Number.isFinite(value)) mouthEnergy = Math.max(mouthEnergy, clamp(value, 0, 1));
+    if (Number.isFinite(value)) mouthEnergy = clamp(value, 0, 1);
   }
 
   function tick(now = performance.now()) {

@@ -316,7 +316,6 @@ function seedBehaviorTrackingFrame(values) {
   addWeighted(values, 'FacePositionX', 0, 0.08);
   addWeighted(values, 'FacePositionY', 0, 0.08);
   addWeighted(values, 'FacePositionZ', 0, 0.08);
-  addWeighted(values, 'MouthOpen', 0.06, 0.12);
   addWeighted(values, 'MouthSmile', 0.58, 0.26);
   addWeighted(values, 'Brows', 0.55, 0.2);
   addWeighted(values, 'BrowLeftY', 0.55, 0.2);
@@ -335,6 +334,9 @@ function behaviorResetFrame() {
   addWeighted(values, 'FacePositionX', 0, 0.65);
   addWeighted(values, 'FacePositionY', 0, 0.65);
   addWeighted(values, 'FacePositionZ', 0, 0.65);
+  addWeighted(values, 'MouthOpen', 0, 0.72);
+  addWeighted(values, 'VoiceVolumePlusMouthOpen', 0, 0.58);
+  addWeighted(values, 'VoiceVolume', 0, 0.38);
   addWeighted(values, 'MouthSmile', 0.55, 0.46);
   addWeighted(values, 'Brows', 0.52, 0.42);
   addWeighted(values, 'BrowLeftY', 0.52, 0.42);
@@ -454,7 +456,6 @@ function addBehaviorActionSample(values, action, progress) {
       addWeighted(values, 'FaceAngleY', 4 * beat * e, 0.56);
       addWeighted(values, 'FacePositionY', -6.5 * beat * e, 0.82);
       addWeighted(values, 'FacePositionZ', 3.2 * beat * e, 0.62);
-      addWeighted(values, 'MouthOpen', 0.16 + 0.22 * beat * e, 0.34);
       addWeighted(values, 'MouthSmile', 0.78, 0.46);
       addWeighted(values, 'Brows', 0.62, 0.34);
       addBodyTracking(values, {
@@ -475,7 +476,6 @@ function addBehaviorActionSample(values, action, progress) {
     case 'surprised':
       addWeighted(values, 'EyeOpenLeft', 1, 0.9);
       addWeighted(values, 'EyeOpenRight', 1, 0.9);
-      addWeighted(values, 'MouthOpen', 0.22 + 0.14 * e, 0.5);
       addWeighted(values, 'MouthSmile', 0.48, 0.32);
       addWeighted(values, 'Brows', 0.76, 0.66);
       addWeighted(values, 'BrowLeftY', 0.78, 0.66);

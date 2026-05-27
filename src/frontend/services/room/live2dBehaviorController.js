@@ -93,6 +93,11 @@ const ACTION_ALIASES = {
   重置: 'reset'
 };
 
+const KNOWN_ACTION_TYPES = new Set([
+  ...Object.keys(ACTION_ALIASES),
+  ...Object.values(ACTION_ALIASES)
+]);
+
 const EMOTION_EXPRESSIONS = {
   happy: 'smile',
   joy: 'smile',
@@ -169,6 +174,10 @@ function normalizeActionType(value) {
   return ACTION_ALIASES[key] || key;
 }
 
+function isKnownActionType(type) {
+  return KNOWN_ACTION_TYPES.has(type);
+}
+
 function normalizeActionInput(action) {
   if (typeof action === 'string') return { type: action };
   if (!action || typeof action !== 'object') return null;
@@ -187,7 +196,7 @@ export function normalizeBehaviorActions(actions = [], options = {}) {
   for (const rawAction of source) {
     const action = normalizeActionInput(rawAction);
     const type = normalizeActionType(action?.type);
-    if (!type || !ACTION_ALIASES[type] && !Object.values(ACTION_ALIASES).includes(type)) continue;
+    if (!type || !isKnownActionType(type)) continue;
 
     const durationSeconds = Number(action.duration ?? action.seconds);
     const durationMs = clamp(
@@ -283,32 +292,98 @@ function parametersForAction(action) {
   }
 }
 
+function pickNestedControl(payload = {}) {
+  return payload.live2d || payload.act || payload.pose || payload.motion || {};
+}
+
+function payloadText(payload = {}, nested = {}) {
+  return [
+    payload.reply,
+    payload.text,
+    payload.message,
+    payload.emotion,
+    payload.mood,
+    nested.reply,
+    nested.text,
+    nested.message,
+    nested.emotion,
+    nested.mood,
+    nested.bodyPose,
+    nested.pose,
+    nested.action,
+    nested.motion
+  ].filter(Boolean).join('\n');
+}
+
+function fallbackActionsForPayload(payload = {}, nested = {}) {
+  const directAction = normalizeActionType(
+    payload.bodyPose ||
+    payload.pose ||
+    payload.action ||
+    payload.motion ||
+    nested.bodyPose ||
+    nested.pose ||
+    nested.action ||
+    nested.motion
+  );
+  if (isKnownActionType(directAction)) {
+    return [{ type: directAction, duration: directAction === 'blink' ? 0.36 : 1.6 }];
+  }
+
+  const text = payloadText(payload, nested).toLowerCase();
+  if (/(点头|點頭|颔首|頷首|nod|うなず|頷)/iu.test(text)) return [{ type: 'nod', duration: 1.5 }];
+  if (/(摇头|搖頭|摆头|擺頭|shake(?:\s|-|_)?head|首を振)/iu.test(text)) return [{ type: 'shake_head', duration: 1.5 }];
+  if (/(靠近|凑近|湊近|贴近|貼近|前倾|前傾|lean(?:\s|-|_)?in|closer|近づ)/iu.test(text)) return [{ type: 'lean_in', duration: 1.5 }];
+  if (/(蹦|跳|弹跳|彈跳|bounce|jump|跳ね)/iu.test(text)) return [{ type: 'bounce', duration: 1.4 }];
+  if (/(摇摆|搖擺|晃动|晃動|sway|ゆら|揺)/iu.test(text)) return [{ type: 'sway', duration: 2.0 }];
+  if (/(惊讶|驚訝|surpris|びっくり)/iu.test(text)) return [{ type: 'surprised', duration: 1.2 }, { type: 'lean_in', duration: 1.2, delay: 0.2 }];
+  if (/(害羞|脸红|臉紅|shy|blush|照れ)/iu.test(text)) return [{ type: 'look_at_chat', duration: 1.0 }, { type: 'shiver', duration: 1.2, delay: 0.2 }];
+  if (/(坏笑|壞笑|得意|smug|smirk|teas|playful|調皮|调皮)/iu.test(text)) {
+    return [{ type: 'look_at_chat', duration: 1.0 }, { type: 'smirk', duration: 1.5, delay: 0.1 }, { type: 'head_tilt', side: 'right', duration: 1.2, delay: 0.2 }];
+  }
+  if (/(开心|開心|高兴|高興|愉快|微笑|happy|smile|joy|嬉しい)/iu.test(text)) {
+    return [{ type: 'look_at_chat', duration: 1.0 }, { type: 'smile', duration: 1.6, delay: 0.1 }, { type: 'nod', duration: 1.2, delay: 0.2 }];
+  }
+  return [{ type: 'look_at_chat', duration: 1.0 }, { type: 'breathe', duration: 1.8, delay: 0.1 }];
+}
+
 export function compileBehaviorIntent(payload = {}) {
-  const actions = normalizeBehaviorActions(payload.actions || payload.behaviorActions || [], {
-    intensity: payload.intensity,
-    style: payload.speech_style?.pause || payload.speechStyle?.pause
-  });
-  const expression = behaviorExpressionFromEmotion(payload.emotion || payload.mood) || undefined;
+  const nested = pickNestedControl(payload);
+  let actions = normalizeBehaviorActions(
+    payload.actions || payload.behaviorActions || nested.actions || nested.behaviorActions || [],
+    {
+      intensity: payload.intensity ?? nested.intensity,
+      style: payload.speech_style?.pause || payload.speechStyle?.pause || nested.speech_style?.pause || nested.speechStyle?.pause
+    }
+  );
+  if (!actions.length) {
+    actions = normalizeBehaviorActions(fallbackActionsForPayload(payload, nested), {
+      intensity: payload.intensity ?? nested.intensity ?? 0.68
+    });
+  }
+  const emotion = payload.emotion || payload.mood || nested.emotion || nested.mood;
+  const speechStyle = payload.speech_style || payload.speechStyle || nested.speech_style || nested.speechStyle || null;
+  const expression = behaviorExpressionFromEmotion(emotion) || undefined;
   const parameters = actions.flatMap(parametersForAction);
   const bodyAction = actions.find((action) => BODY_POSE_BY_ACTION[action.type]);
   const durationMs = Math.max(
     1200,
     ...actions.map((action) => action.delayMs + action.durationMs),
-    Number(payload.durationMs) || 0
+    Number(payload.durationMs ?? nested.durationMs) || 0
   );
 
   if (!actions.length && !expression) return null;
 
   return {
-    emotion: payload.emotion || null,
+    emotion: emotion || null,
     expression: expression || null,
     expressionMix: expression ? [{ expression, weight: 1 }] : [],
     bodyPose: bodyAction ? BODY_POSE_BY_ACTION[bodyAction.type] : null,
-    intensity: clamp(payload.intensity, 0.05, 1, 0.72),
+    intensity: clamp(payload.intensity ?? nested.intensity, 0.05, 1, 0.72),
     durationMs,
     parameters,
     behaviorActions: actions,
-    speechStyle: payload.speech_style || payload.speechStyle || null
+    speechStyle
   };
 }
 

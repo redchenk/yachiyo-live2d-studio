@@ -166,9 +166,11 @@ export function parseLive2DControlPayload(rawText) {
   } catch (_) {
     const stageText = extractLive2DStageDirections(rawText);
     const reply = cleanReplyForSpeech(rawText) || 'OK.';
+    const behaviorLive2D = compileBehaviorIntent({ reply, text: [stageText, reply].filter(Boolean).join('\n') });
+    const inferredLive2D = inferLive2DIntentFromText([stageText, reply].filter(Boolean).join('\n'));
     return {
       reply,
-      live2d: inferLive2DIntentFromText([stageText, reply].filter(Boolean).join('\n')),
+      live2d: mergeBehaviorAndExplicitIntent(behaviorLive2D, inferredLive2D),
       raw: rawText
     };
   }
@@ -235,6 +237,7 @@ export function live2DControlSystemPrompt() {
     'JSON schema:',
     '{"reply":"short visible reply","emotion":"smug|happy|shy|surprised|sad|neutral","intensity":0.72,"actions":[{"type":"look_at_chat","duration":1.2},{"type":"smirk","duration":2.0},{"type":"head_tilt","side":"right","duration":1.5}],"speech_style":{"speed":1.05,"pitch":0.08,"pause":"playful"}}',
     'The reply field must contain only natural dialogue. Never put stage directions, parenthesized action hints, asterisk actions, action labels, or pose descriptions in reply.',
+    'The actions field is required and must contain at least 2 semantic actions. If the moment is calm, use look_at_chat + breathe.',
     'Use semantic actions, not raw Live2D parameters, for normal turns. The behavior controller maps actions to VTube Studio tracking curves.',
     'Choose 2-5 actions per live-stream turn. Good combos: look_at_chat + smirk + head_tilt, nod + smile, lean_in + blink, shake_head + smirk, bounce + smile, shiver + shy.',
     'Use intensity 0.45-0.85 for normal talking, 0.85-1.0 for punchlines or surprise.',
