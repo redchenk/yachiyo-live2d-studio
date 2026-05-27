@@ -592,15 +592,36 @@ export function normalizeLive2DIntent(input, manifest = roomLive2DManifest) {
   };
 }
 
+const textExpressionMatchers = [
+  {
+    expression: 'tears',
+    pattern: /(\u5927\u54ed|\u54ed\u6ce3|\u6d41\u6cea|\u6d41\u6dda|\u75db\u54ed|crying|tears|sob|weeping|\u6ce3\u304f|\u6ce3\u3044\u3066)/iu,
+    emotion: 'crying'
+  },
+  {
+    expression: 'namida',
+    pattern: /(\u96be\u8fc7|\u96e3\u904e|\u60b2\u4f24|\u60b2\u50b7|\u4f24\u5fc3|\u50b7\u5fc3|\u5bc2\u5bde|\u773c\u6cea|\u6d99|sad|sorrow|lonely|\u60b2\u3057\u3044)/iu,
+    emotion: 'sad'
+  },
+  {
+    expression: 'bsmile',
+    pattern: /(\u5bb3\u7f9e|\u8138\u7ea2|\u81c9\u7d05|\u8c03\u76ae|\u8abf\u76ae|\u751f\u6c14|\u751f\u6c23|\u6124\u6012|\u61a4\u6012|shy|blush|angry|annoyed|smug|teasing|\u7167\u308c)/iu,
+    emotion: 'shy'
+  },
+  {
+    expression: 'smile',
+    pattern: /(\u5f00\u5fc3|\u958b\u5fc3|\u9ad8\u5174|\u9ad8\u8208|\u6109\u5feb|\u5fae\u7b11|\u7b11|happy|smile|joy|cheerful|\u5b09\u3057\u3044|\u512a\u3057\u3044)/iu,
+    emotion: 'happy'
+  }
+];
+
+function matchTextExpression(value) {
+  return textExpressionMatchers.find((item) => item.pattern.test(value)) || null;
+}
+
 function inferActionLive2DIntent(text, manifest) {
   const value = String(text || '').toLowerCase();
-  const expressionMatchers = [
-    { expression: 'tears', pattern: /(澶у摥|鍝常|娴佹唱|娴佹窔|鐥涘摥|crying|tears|娉ｃ亸)/iu, emotion: 'crying' },
-    { expression: 'namida', pattern: /(闅捐繃|闆ｉ亷|鎮蹭激|鎮插偡|浼ゅ績|鍌峰績|瀵傚癁|鐪兼唱|鐪兼窔|sad|sorrow|鎮层仐銇?/iu, emotion: 'sad' },
-    { expression: 'bsmile', pattern: /(瀹崇緸|鑴哥孩|鑷夌磪|璋冪毊|瑾跨毊|鐢熸皵|鐢熸埃|鎰ゆ€抾鎲ゆ€抾shy|blush|angry|annoyed|鐓с倢)/iu, emotion: 'shy' },
-    { expression: 'smile', pattern: /(寮€蹇億闁嬪績|楂樺叴|楂樿垐|鎰夊揩|寰瑧|绗憒happy|smile|joy|瀣夈仐銇剕鍎仐銇?/iu, emotion: 'happy' }
-  ];
-  const expressionMatch = expressionMatchers.find((item) => item.pattern.test(value));
+  const expressionMatch = matchTextExpression(value);
   const bodyMatch = matchBehaviorBodyPoseFromText(value);
   if (!expressionMatch && !bodyMatch) return null;
   return normalizeLive2DIntent({
@@ -616,13 +637,7 @@ export function inferLive2DIntentFromText(text, manifest = roomLive2DManifest) {
   const structured = inferActionLive2DIntent(text, manifest);
   if (structured) return structured;
   const value = String(text || '').toLowerCase();
-  const matchers = [
-    { expression: 'tears', pattern: /(澶у摥|鍝常|娴佹唱|宕╂簝|crying|tears|娉ｃ亸)/u, emotion: 'crying' },
-    { expression: 'namida', pattern: /(闅捐繃|鎮蹭激|浼ゅ績|瀵傚癁|鐪兼唱|sad|sorrow|鎮层仐銇?/u, emotion: 'sad' },
-    { expression: 'bsmile', pattern: /(瀹崇緸|鑴哥孩|璋冪毊|鐢熸皵|鎰ゆ€抾shy|blush|angry|annoyed|鐓с倢)/u, emotion: 'shy' },
-    { expression: 'smile', pattern: /(寮€蹇億楂樺叴|鎰夊揩|寰瑧|绗憒happy|smile|joy|瀣夈仐銇剕鍎仐銇?/u, emotion: 'happy' }
-  ];
-  const matched = matchers.find((item) => item.pattern.test(value));
+  const matched = matchTextExpression(value);
   return matched
     ? normalizeLive2DIntent({ ...matched, intensity: 0.5, durationMs: 5000 }, manifest)
     : null;
