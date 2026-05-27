@@ -823,7 +823,7 @@ function applyDirectOverlay(frame, sample, dominant, options = {}) {
       break;
     case 'smirk':
       setFrameValue(frame, 'MouthSmile', 0.8 + 0.12 * e, 0.9);
-      addFrameValue(frame, 'FaceAngleZ', 3.8 * sign * e, 0.78);
+      if (!faceOnly) addFrameValue(frame, 'FaceAngleZ', 3.8 * sign * e, 0.78);
       setFrameValue(frame, 'Brows', 0.6 + 0.08 * e, 0.66);
       setFrameValue(frame, 'BrowLeftY', sign < 0 ? 0.72 : 0.54, 0.66);
       setFrameValue(frame, 'BrowRightY', sign > 0 ? 0.72 : 0.54, 0.66);
@@ -893,8 +893,8 @@ function sampleVTSBehaviorActions(actions, elapsedMs, nowMs = performance.now(),
   if (samples.some((sample) => sample.action.type === 'reset' && sample.energy > 0.5)) return behaviorResetFrame();
 
   const frame = createDirectTrackingFrame();
-  applyCharacterStateFrame(frame, character, 0.68);
   const speaking = character?.mode === 'speaking';
+  applyCharacterStateFrame(frame, character, speaking ? 1 : 0.68);
   const dominant = speaking ? null : pickDominantMotion(samples);
   if (!speaking) applyDirectMotion(frame, dominant);
   samples.forEach((sample) => applyDirectOverlay(frame, sample, dominant, { faceOnly: speaking }));
