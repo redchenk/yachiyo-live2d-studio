@@ -122,9 +122,35 @@ function startSpeakingGesture(state, at) {
   state.nextGestureAt = at + state.gestureDurationMs + actionMs(420 + Math.random() * 980);
 }
 
+function pickIdleGestureType(state) {
+  let type = Math.random() < 0.44 ? 'nod' : 'tilt';
+  if (type === state.lastIdleGestureType) {
+    const shouldSwitch = state.idleGestureRepeatCount >= 2 || Math.random() < 0.72;
+    if (shouldSwitch) type = type === 'nod' ? 'tilt' : 'nod';
+  }
+  return type;
+}
+
+function pickIdleGestureSide(state, type) {
+  let side = Math.random() > 0.5 ? 1 : -1;
+  if (type === 'tilt' && state.lastIdleGestureType === 'tilt' && side === state.lastIdleGestureSide && Math.random() < 0.8) {
+    side *= -1;
+  }
+  return side;
+}
+
+function rememberIdleGesture(state, type, side) {
+  state.idleGestureRepeatCount = state.lastIdleGestureType === type
+    ? state.idleGestureRepeatCount + 1
+    : 1;
+  state.lastIdleGestureType = type;
+  state.lastIdleGestureSide = side;
+}
+
 function startIdleGesture(state, at) {
-  const nod = Math.random() < 0.44;
-  state.gestureType = nod ? 'nod' : 'tilt';
+  const type = pickIdleGestureType(state);
+  const nod = type === 'nod';
+  state.gestureType = type;
   state.gestureStartedAt = at;
   state.gestureDurationMs = nod
     ? actionMs(620 + Math.random() * 520)
@@ -132,7 +158,8 @@ function startIdleGesture(state, at) {
   state.gestureAmount = nod
     ? 1.0 + Math.random() * 0.7
     : 0.9 + Math.random() * 0.65;
-  state.gestureSide = Math.random() > 0.5 ? 1 : -1;
+  state.gestureSide = pickIdleGestureSide(state, type);
+  rememberIdleGesture(state, type, state.gestureSide);
   state.nextGestureAt = at + state.gestureDurationMs + actionMs(260 + Math.random() * 820);
 }
 
@@ -197,6 +224,9 @@ export function createLive2DCharacterStateMachine() {
     gestureDurationMs: 0,
     gestureAmount: 0,
     gestureSide: 1,
+    lastIdleGestureType: 'none',
+    lastIdleGestureSide: 1,
+    idleGestureRepeatCount: 0,
     seed: Math.random() * 1000
   };
 
