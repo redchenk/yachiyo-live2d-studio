@@ -9,6 +9,27 @@ function parameter(id, min, max, domain, options = {}) {
   };
 }
 
+function chain(prefix, side, count, domain, options = {}) {
+  return Array.from(
+    { length: count },
+    (_, index) => parameter(`${prefix}_${side}${index + 1}`, options.min ?? -30, options.max ?? 30, domain, options)
+  );
+}
+
+function numbered(prefix, count, domain, options = {}) {
+  return Array.from(
+    { length: count },
+    (_, index) => parameter(`${prefix}${index + 1}`, options.min ?? -30, options.max ?? 30, domain, options)
+  );
+}
+
+function paired(prefix, count, domain, options = {}) {
+  return [
+    ...chain(prefix, 'L', count, domain, options),
+    ...chain(prefix, 'R', count, domain, options)
+  ];
+}
+
 export const YACHIYO_BODY_SWITCH_PARAMETER_IDS = [
   'ParamSwitchCtrl_BodyX',
   'ParamSwitchCtrl_BodyY',
@@ -60,8 +81,43 @@ export const YACHIYO_MODEL_PARAMETERS = [
   parameter('ParamHairFront', -30, 30, 'hair'),
   parameter('ParamHairSide', -30, 30, 'hair'),
   parameter('ParamHairBack', -30, 30, 'hair'),
+  parameter('ParamBreath', 0, 1, 'breath', { defaultValue: 0.5 }),
   parameter('ParamBreath2', 0, 1, 'breath'),
   parameter('ParamBreath3', 0, 1, 'breath'),
+
+  ...paired('ParamEarShape', 3, 'ear-shape', { min: -1, max: 1 }),
+  ...paired('ParamEarPhysics', 4, 'ear'),
+  ...paired('ParamEarPhysicsBS', 2, 'ear'),
+  ...paired('ParamHatEar', 3, 'ear'),
+
+  ...paired('ParamWingPhysics', 4, 'wing'),
+  ...paired('ParamTailPhysics', 7, 'tail'),
+
+  ...paired('ParamDressAngle', 3, 'cloth'),
+  ...numbered('ParamDressPhysics_X', 6, 'cloth'),
+  ...numbered('ParamDressPhysics_Y', 5, 'cloth'),
+  ...numbered('ParamCheongsamPhysics_X', 5, 'cloth'),
+  ...paired('ParamDressPhysics', 4, 'cloth'),
+  ...paired('ParamSleevePhysics', 6, 'cloth'),
+  ...paired('ParamSleeveLPhysics', 4, 'cloth'),
+  ...paired('ParamBackClothesPhysics', 4, 'cloth'),
+  ...numbered('ParamBackClothesPhysics_X', 4, 'cloth'),
+  ...numbered('ParamBackClothesPhysics_Y', 4, 'cloth'),
+  ...paired('ParamOvercoatPhysics', 5, 'cloth'),
+  ...numbered('ParamOvercoatPhysics_X', 5, 'cloth'),
+  ...numbered('ParamOvercoatPhysics_Y', 5, 'cloth'),
+
+  ...paired('ParamBowHPhysics', 5, 'accessory'),
+  ...paired('ParamBowBPhysics', 5, 'accessory'),
+  ...paired('ParamHChainPhysics', 3, 'accessory'),
+  ...paired('ParamBChainPhysics', 3, 'accessory'),
+  ...paired('ParamHeadPendantPhysics', 6, 'accessory'),
+  ...paired('ParamBodyPendantePhysics', 6, 'accessory'),
+  ...numbered('ParamLiquidPhysics_X', 3, 'accessory'),
+  parameter('ParamLiquidPhysics_Y', -30, 30, 'accessory'),
+  parameter('ParamLiquidPhysics_Z', -30, 30, 'accessory'),
+  parameter('ParamPearlPhysics_L1', -30, 30, 'accessory'),
+  parameter('ParamPearlPhysics_L2', -30, 30, 'accessory'),
 
   parameter('ParamEyeBallX2', -1, 1, 'eye'),
   parameter('ParamEyeBallY2', -1, 1, 'eye'),

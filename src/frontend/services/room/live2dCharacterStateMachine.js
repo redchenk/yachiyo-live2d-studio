@@ -652,6 +652,7 @@ export function createLive2DCharacterStateMachine() {
     );
     const browBase = emotionProfile.brow + modeProfile.brow;
     const softBrow = clamp(lerp(browBase, 0.55, speechEnergy * 0.34), 0.18, 0.82);
+    const breathMain = clamp(0.5 + breathMotion * 0.26 + speechLift * 0.035 + state.arousal * 0.035, 0, 1);
     const breath2 = clamp(0.48 + breathMotion * 0.22 + speechLift * 0.035 + state.arousal * 0.04, 0, 1);
     const breath3 = clamp(0.44 + bodyFloat * 0.18 - speechNod * 0.025 + state.arousal * 0.035, 0, 1);
     const eyeSquint = clamp(
@@ -702,6 +703,7 @@ export function createLive2DCharacterStateMachine() {
       browLeftY: clamp(softBrow + smoothNoise(motionSeconds, 0.83, 1.41, 2.2) * 0.024, 0.18, 0.84),
       browRightY: clamp(softBrow + smoothNoise(motionSeconds + 0.6, 0.79, 1.33, 2.08) * 0.024, 0.18, 0.84),
       eyeSquint,
+      breath: breathMain,
       breath2,
       breath3,
       hairFront,
