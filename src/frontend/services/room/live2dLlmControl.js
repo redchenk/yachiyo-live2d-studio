@@ -17,7 +17,8 @@ import { readJson, writeJson } from './roomStorage';
 const HISTORY_KEY = 'live2dLLMControlHistory';
 const SENTENCE_END_PATTERN = /[\u3002\uff01\uff1f\uff0c\u3001,.;\uff1b!?\u2026\n]/u;
 const SENTENCE_TRAILING_PATTERN = /[\s"'\u201d\u2019\uff09)\]\u3011\u300b\u300d\u300f]+/u;
-const SOFT_CHUNK_UNIT_LIMIT = 5;
+const SOFT_CHUNK_UNIT_LIMIT = 8;
+const MIN_TTS_CHUNK_UNIT_LIMIT = 7;
 const SPEECH_STYLE_BY_EMOTION = {
   happy: { speed: 1.08, pitch: 0.08, pause: 'bright' },
   smile: { speed: 1.06, pitch: 0.07, pause: 'warm' },
@@ -215,12 +216,25 @@ function splitCompletedSentences(buffer, flush = false) {
   return { sentences, rest };
 }
 
+function shouldJoinSpeechChunksWithSpace(left, right) {
+  return /[A-Za-z0-9]$/.test(String(left || '').trim()) && /^[A-Za-z0-9]/.test(String(right || '').trim());
+}
+
+function joinSpeechChunks(left, right) {
+  const previous = cleanReplyForSpeech(left);
+  const next = cleanReplyForSpeech(right);
+  if (!previous) return next;
+  if (!next) return previous;
+  return `${previous}${shouldJoinSpeechChunksWithSpace(previous, next) ? ' ' : ''}${next}`;
+}
+
 function createReplySentenceEmitter(handlers = {}) {
   let seenReply = '';
   let sentenceBuffer = '';
+  let pendingShortSentence = '';
   let emittedCount = 0;
 
-  const emitSentence = (text) => {
+  const dispatchSentence = (text) => {
     const sentence = cleanReplyForSpeech(text);
     if (!sentence || speakableUnitLength(sentence) < 2) return;
     const analysis = analyzeLive2DSentenceEmotion(sentence);
@@ -234,6 +248,27 @@ function createReplySentenceEmitter(handlers = {}) {
     });
   };
 
+  const emitSentence = (text, options = {}) => {
+    let sentence = cleanReplyForSpeech(text);
+    if (pendingShortSentence) {
+      sentence = joinSpeechChunks(pendingShortSentence, sentence);
+      pendingShortSentence = '';
+    }
+    if (!sentence) return;
+    if (options.allowHold !== false && speakableUnitLength(sentence) < MIN_TTS_CHUNK_UNIT_LIMIT) {
+      pendingShortSentence = sentence;
+      return;
+    }
+    dispatchSentence(sentence);
+  };
+
+  const flushPendingSentence = () => {
+    if (!pendingShortSentence) return;
+    const sentence = pendingShortSentence;
+    pendingShortSentence = '';
+    dispatchSentence(sentence);
+  };
+
   const pushReply = (reply, options = {}) => {
     const current = String(reply || '');
     if (current.length > seenReply.length) {
@@ -242,7 +277,8 @@ function createReplySentenceEmitter(handlers = {}) {
     }
     const split = splitCompletedSentences(sentenceBuffer, Boolean(options.flush));
     sentenceBuffer = split.rest;
-    split.sentences.forEach(emitSentence);
+    split.sentences.forEach((sentence) => emitSentence(sentence, { allowHold: !options.flush }));
+    if (options.flush) flushPendingSentence();
   };
 
   return {
@@ -702,13 +738,14 @@ export function live2DStreamingControlSystemPrompt() {
     'You are controlling a Live2D character named Yachiyo.',
     'This is a low-latency streaming turn. Start output with Japanese spoken VOICE lines immediately, then output control JSON at the end.',
     'Output format must be exactly:',
-    'VOICE: first tiny Japanese reaction, 2-6 characters if possible, such as うん、 えへへ、 そうだね、 or あっ、.',
+    'VOICE: first short Japanese phrase, 7-14 kana/characters if possible, such as うん、聞いてるよ、 or えへへ、いいね、.',
     'VOICE: next short natural Japanese spoken clause, ending as soon as a comma or sentence punctuation is natural.',
-    'VOICE: continue in very small comma-sized Japanese chunks so TTS can start quickly.',
+    'VOICE: continue in compact comma-sized Japanese chunks so TTS can start quickly.',
     'CONTROL: {"reply":"same Japanese spoken text without VOICE labels","emotion":"smug|happy|shy|surprised|angry|puff|tongue|dizzy|sad|crying|fire|neutral","intensity":0.72,"actions":[{"type":"look_at_chat","duration":1.2},{"type":"smirk","duration":2.0}],"speech_style":{"speed":1.05,"pitch":0.08,"pause":"playful"}}',
     'The VOICE lines must come before CONTROL. Do not wait to decide actions before writing the VOICE lines.',
     'Emit the first VOICE before planning the full answer. Do not wait for CONTROL before speaking.',
-    'Keep each VOICE line short: one comma-delimited Japanese clause or about 5-8 Japanese characters per VOICE line is ideal.',
+    'Avoid standalone ultra-short VOICE lines like only うん、 あっ、 えへへ、. Attach a few spoken words so each chunk is stable for TTS.',
+    'Keep each VOICE line short but speakable: one comma-delimited Japanese clause or about 7-14 Japanese characters per VOICE line is ideal.',
     'VOICE lines must contain only natural Japanese dialogue. Never put stage directions, parenthesized action hints, asterisk actions, action labels, pose descriptions, or JSON in VOICE.',
     'CONTROL must be one JSON object after the CONTROL label. The reply field must exactly match the spoken VOICE text.',
     'Choose 2-5 semantic actions that match the spoken meaning and mood.',
