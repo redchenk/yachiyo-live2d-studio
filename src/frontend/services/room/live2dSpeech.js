@@ -273,7 +273,7 @@ async function translateForJapaneseTts(text, options = {}) {
 }
 
 function pickSplitMethod(text) {
-  return compactSpeechText(text).length <= 4 ? 'cut0' : 'cut5';
+  return compactSpeechText(text).length <= 42 ? 'cut0' : 'cut5';
 }
 
 function buildGptSovitsControlUrl(settings, pathname, params) {
@@ -348,7 +348,7 @@ function buildGptSovitsAudioUrl(text, settings) {
   url.searchParams.set('batch_size', '1');
   url.searchParams.set('media_type', 'wav');
   url.searchParams.set('streaming_mode', 'true');
-  url.searchParams.set('parallel_infer', 'true');
+  url.searchParams.set('parallel_infer', 'false');
   url.searchParams.set('_', String(Date.now()));
   return url.toString();
 }
