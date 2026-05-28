@@ -15,7 +15,7 @@ import {
 import { readJson, writeJson } from './roomStorage';
 
 const HISTORY_KEY = 'live2dLLMControlHistory';
-const SENTENCE_END_PATTERN = /[\u3002\uff01\uff1f!?\u2026\n]/u;
+const SENTENCE_END_PATTERN = /[\u3002\uff01\uff1f\uff0c\u3001,.;\uff1b!?\u2026\n]/u;
 const SENTENCE_TRAILING_PATTERN = /[\s"'\u201d\u2019\uff09)\]\u3011\u300b\u300d\u300f]+/u;
 const SPEECH_STYLE_BY_EMOTION = {
   happy: { speed: 1.08, pitch: 0.08, pause: 'bright' },
@@ -587,10 +587,11 @@ export function live2DStreamingControlSystemPrompt() {
     'You are controlling a Live2D character named Yachiyo.',
     'This is a low-latency streaming turn. Start output with spoken lines immediately, then output control JSON at the end.',
     'Output format must be exactly:',
-    'SAY: first natural spoken sentence with punctuation.',
-    'SAY: optional second natural spoken sentence with punctuation.',
+    'SAY: first short natural spoken clause, ending as soon as a comma or sentence punctuation is natural.',
+    'SAY: next short natural spoken clause. Prefer comma-sized chunks so TTS can start quickly.',
     'CONTROL: {"reply":"same spoken text without SAY labels","emotion":"smug|happy|shy|surprised|angry|puff|tongue|dizzy|sad|crying|fire|neutral","intensity":0.72,"actions":[{"type":"look_at_chat","duration":1.2},{"type":"smirk","duration":2.0}],"speech_style":{"speed":1.05,"pitch":0.08,"pause":"playful"}}',
     'The SAY lines must come before CONTROL. Do not wait to decide actions before writing the SAY lines.',
+    'Keep each SAY line short: one comma-delimited clause per SAY line is ideal.',
     'SAY lines must contain only natural dialogue. Never put stage directions, parenthesized action hints, asterisk actions, action labels, pose descriptions, or JSON in SAY.',
     'CONTROL must be one JSON object after the CONTROL label. The reply field must exactly match the spoken SAY text.',
     'Choose 2-5 semantic actions that match the spoken meaning and mood.',
