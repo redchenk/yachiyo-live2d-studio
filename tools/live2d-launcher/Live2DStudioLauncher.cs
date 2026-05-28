@@ -998,6 +998,7 @@ internal static class DesktopApiProxy
 
     private static Dictionary<string, object> BuildChatPayload(Dictionary<string, object> input, string apiUrl, string model, string systemPrompt, string message)
     {
+        var maxTokens = (int)Math.Round(GetDouble(input, "maxTokens", 1000, 64, 1000));
         var history = new List<object>();
         var rawHistory = GetArray(input, "conversation");
         if (rawHistory != null)
@@ -1025,7 +1026,7 @@ internal static class DesktopApiProxy
                 { "model", string.IsNullOrWhiteSpace(model) ? "gpt-4o-mini" : model },
                 { "instructions", systemPrompt },
                 { "input", inputList },
-                { "max_output_tokens", 1000 }
+                { "max_output_tokens", maxTokens }
             };
         }
 
@@ -1045,7 +1046,7 @@ internal static class DesktopApiProxy
             { "model", string.IsNullOrWhiteSpace(model) ? "gpt-4o-mini" : model },
             { "messages", messages },
             { "temperature", RegexContains(apiUrl + " " + model, @"moonshot|kimi") ? 1 : 0.4 },
-            { "max_tokens", 1000 },
+            { "max_tokens", maxTokens },
             { "stream", false }
         };
     }

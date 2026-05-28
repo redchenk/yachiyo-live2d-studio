@@ -368,6 +368,8 @@ async function performStreamingLiveTurn(message) {
   const playbackPromises = [];
   let streamedReply = '';
   let finalResult = null;
+  let firstSentenceArrived = false;
+  let firstResponseTimer = 0;
 
   dispatchCharacterState('thinking', { holdMs: 2400, attention: 0.82, arousal: 0.5 });
   llmState.value = {
@@ -377,8 +379,39 @@ async function performStreamingLiveTurn(message) {
   };
 
   try {
+    firstResponseTimer = window.setTimeout(() => {
+      if (firstSentenceArrived || !llmState.value.loading || !speechPlayer) return;
+      const fallbackText = '嗯，我想想。';
+      firstSentenceArrived = true;
+      streamedReply = joinSpeechText(streamedReply, fallbackText);
+      upsertLogLine(logId, 'yachiyo', streamedReply, {
+        emotion: 'neutral',
+        streaming: true,
+        localFiller: true
+      });
+      llmState.value = {
+        ...llmState.value,
+        reply: streamedReply
+      };
+      liveDirector.status = 'speaking';
+      playbackPromises.push(speechPlayer.enqueue('うん、ちょっと考えるね。', {
+        emotion: 'neutral',
+        speechStyle: { speed: 1.04, pitch: 0.03, pause: 'thinking' },
+        onStart: ({ durationMs }) => {
+          dispatchCharacterState('speaking', {
+            holdMs: Math.max(durationMs || 0, 1000),
+            emotion: 'neutral',
+            attention: 0.82,
+            arousal: 0.52
+          });
+        }
+      }).catch(() => {}));
+    }, 2200);
+
     finalResult = await requestLive2DControlStream(value, {
       onSentence: (sentence) => {
+        firstSentenceArrived = true;
+        window.clearTimeout(firstResponseTimer);
         const visibleSentence = visibleYachiyoText(sentence.displayText);
         const speechSentence = visibleYachiyoText(sentence.speechText || sentence.text);
         if (!visibleSentence && !speechSentence) return;
@@ -417,6 +450,7 @@ async function performStreamingLiveTurn(message) {
         }));
       }
     });
+    window.clearTimeout(firstResponseTimer);
 
     const visibleReply = visibleYachiyoText(finalResult.reply) || streamedReply || 'OK.';
     if (!streamedReply && visibleReply) {
@@ -453,6 +487,7 @@ async function performStreamingLiveTurn(message) {
     dispatchCharacterState('listening', { holdMs: 1000, attention: 0.62 });
     return { ...finalResult, reply: visibleReply };
   } catch (error) {
+    window.clearTimeout(firstResponseTimer);
     llmState.value = {
       ...llmState.value,
       loading: false,
