@@ -402,10 +402,47 @@ async function postMemoryTool(path, settingsOverrides = {}) {
   return result;
 }
 
+async function postMemoryAction(path, payload = {}, settingsOverrides = {}) {
+  const settings = configuredMemorySettings(settingsOverrides);
+  const response = await fetch(path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      vaultPath: settings.vaultPath,
+      ...(payload || {})
+    })
+  });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok || !result.success) {
+    throw new Error(result.message || `Memory action failed: ${response.status}`);
+  }
+  return result;
+}
+
 export function initializeLive2DMemoryVault(settingsOverrides = {}) {
   return postMemoryTool('/api/memory/init', settingsOverrides);
 }
 
 export function rebuildLive2DMemoryIndex(settingsOverrides = {}) {
   return postMemoryTool('/api/memory/reindex', settingsOverrides);
+}
+
+export function listLive2DMemoryNotes(options = {}, settingsOverrides = {}) {
+  return postMemoryAction('/api/memory/list', {
+    includeDisabled: Boolean(options.includeDisabled),
+    maxNotes: Number(options.maxNotes) || 200
+  }, settingsOverrides);
+}
+
+export function setLive2DMemoryNoteDisabled(path, disabled = true, settingsOverrides = {}) {
+  return postMemoryAction('/api/memory/disable', {
+    path,
+    disabled
+  }, settingsOverrides);
+}
+
+export function deleteLive2DMemoryNote(path, settingsOverrides = {}) {
+  return postMemoryAction('/api/memory/delete', {
+    path
+  }, settingsOverrides);
 }

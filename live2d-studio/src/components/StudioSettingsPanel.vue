@@ -27,7 +27,10 @@ import {
   writeRoomVTubeStudioSettings
 } from '@frontend/services/room/roomSettings';
 import {
+  deleteLive2DMemoryNote,
   initializeLive2DMemoryVault,
+  listLive2DMemoryNotes,
+  setLive2DMemoryNoteDisabled,
   rebuildLive2DMemoryIndex
 } from '@frontend/services/room/live2dMemory';
 
@@ -81,6 +84,7 @@ const retrievalModeOptions = [
 const activeTab = ref('llm');
 const status = ref('');
 const memoryBusy = ref('');
+const memoryManagePath = ref('');
 const llm = reactive(readRoomLLMSettings());
 const tts = reactive(readRoomTTSSettings());
 const model = reactive(readRoomModelSettings());
@@ -207,6 +211,56 @@ async function runMemoryTool(action, label) {
     setStatus(`${label}: ${detail}`);
   } catch (error) {
     setStatus(error?.message || `${label} failed`);
+  } finally {
+    memoryBusy.value = '';
+  }
+}
+
+async function listMemoryNotes() {
+  if (memoryBusy.value) return;
+  memoryBusy.value = 'list';
+  try {
+    const savedMemory = writeRoomMemorySettings(memory);
+    Object.assign(memory, savedMemory);
+    const result = await listLive2DMemoryNotes({ includeDisabled: true, maxNotes: 500 }, savedMemory);
+    const disabledCount = (result.notes || []).filter((note) => note.disabled).length;
+    setStatus(`Memory notes: ${(result.notes || []).length}, disabled: ${disabledCount}`);
+  } catch (error) {
+    setStatus(error?.message || 'List notes failed');
+  } finally {
+    memoryBusy.value = '';
+  }
+}
+
+async function setManagedMemoryDisabled(disabled) {
+  const path = memoryManagePath.value.trim();
+  if (!path || memoryBusy.value) return;
+  memoryBusy.value = disabled ? 'disable' : 'enable';
+  try {
+    const savedMemory = writeRoomMemorySettings(memory);
+    Object.assign(memory, savedMemory);
+    await setLive2DMemoryNoteDisabled(path, disabled, savedMemory);
+    setStatus(disabled ? 'Memory note disabled' : 'Memory note enabled');
+  } catch (error) {
+    setStatus(error?.message || 'Memory update failed');
+  } finally {
+    memoryBusy.value = '';
+  }
+}
+
+async function deleteManagedMemoryNote() {
+  const path = memoryManagePath.value.trim();
+  if (!path || memoryBusy.value) return;
+  if (!window.confirm(`Move this memory note to 00_Inbox/deleted?\n${path}`)) return;
+  memoryBusy.value = 'delete';
+  try {
+    const savedMemory = writeRoomMemorySettings(memory);
+    Object.assign(memory, savedMemory);
+    const result = await deleteLive2DMemoryNote(path, savedMemory);
+    memoryManagePath.value = '';
+    setStatus(`Memory note moved: ${result.deletedPath}`);
+  } catch (error) {
+    setStatus(error?.message || 'Delete note failed');
   } finally {
     memoryBusy.value = '';
   }
@@ -415,6 +469,24 @@ onUnmounted(() => {
             @click="runMemoryTool('reindex', 'Index rebuilt')"
           >
             Rebuild Index
+          </button>
+        </div>
+        <label class="studio-wide-field">
+          <span>Manage Note Path</span>
+          <input v-model="memoryManagePath" type="text" spellcheck="false" placeholder="03_Viewers/viewer-redchenk.md">
+        </label>
+        <div class="studio-memory-actions studio-wide-field">
+          <button class="studio-secondary-btn" type="button" :disabled="Boolean(memoryBusy)" @click="listMemoryNotes">
+            List Notes
+          </button>
+          <button class="studio-secondary-btn" type="button" :disabled="Boolean(memoryBusy) || !memoryManagePath.trim()" @click="setManagedMemoryDisabled(true)">
+            Disable
+          </button>
+          <button class="studio-secondary-btn" type="button" :disabled="Boolean(memoryBusy) || !memoryManagePath.trim()" @click="setManagedMemoryDisabled(false)">
+            Enable
+          </button>
+          <button class="studio-secondary-btn" type="button" :disabled="Boolean(memoryBusy) || !memoryManagePath.trim()" @click="deleteManagedMemoryNote">
+            Delete
           </button>
         </div>
       </section>

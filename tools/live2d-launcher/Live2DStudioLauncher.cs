@@ -402,6 +402,24 @@ internal sealed class LocalStudioServer : IDisposable
                 return;
             }
 
+            if (method == "POST" && string.Equals(path, "/api/memory/list", StringComparison.OrdinalIgnoreCase))
+            {
+                WriteApiResponse(stream, DesktopApiProxy.MemoryList(request.Body));
+                return;
+            }
+
+            if (method == "POST" && string.Equals(path, "/api/memory/disable", StringComparison.OrdinalIgnoreCase))
+            {
+                WriteApiResponse(stream, DesktopApiProxy.MemoryDisable(request.Body));
+                return;
+            }
+
+            if (method == "POST" && string.Equals(path, "/api/memory/delete", StringComparison.OrdinalIgnoreCase))
+            {
+                WriteApiResponse(stream, DesktopApiProxy.MemoryDelete(request.Body));
+                return;
+            }
+
             if (method != "GET" && method != "HEAD")
             {
                 WritePlainResponse(stream, 405, "Method Not Allowed", "text/plain; charset=utf-8", "Method Not Allowed", false);
@@ -719,6 +737,7 @@ internal static class DesktopApiProxy
     private const int MaxMemoryWriteChars = 2000;
     private const int MaxMemorySearchFiles = 800;
     private const string MemoryIndexRelativePath = ".yachiyo-index/memory-index.json";
+    private const string DisabledMemoryRelativePath = ".yachiyo-index/disabled-memory.json";
 
     public static StudioApiResponse Chat(byte[] body)
     {
@@ -985,6 +1004,85 @@ internal static class DesktopApiProxy
         }
     }
 
+    public static StudioApiResponse MemoryList(byte[] body)
+    {
+        try
+        {
+            var input = ParseObject(body);
+            var vaultPath = ValidateMemoryVaultPath(GetString(input, "vaultPath"));
+            var includeDisabled = GetBoolean(input, "includeDisabled", false);
+            var maxNotes = (int)Math.Round(GetDouble(input, "maxNotes", 200, 1, 1000));
+            var notes = ListMemoryNotes(vaultPath, includeDisabled, maxNotes);
+            return JsonOk(new Dictionary<string, object>
+            {
+                { "success", true },
+                { "notes", notes }
+            });
+        }
+        catch (Exception ex)
+        {
+            return JsonError(400, ex.Message);
+        }
+    }
+
+    public static StudioApiResponse MemoryDisable(byte[] body)
+    {
+        try
+        {
+            var input = ParseObject(body);
+            var vaultPath = ValidateMemoryVaultPath(GetString(input, "vaultPath"));
+            var relativePath = NormalizeMemoryNotePath(vaultPath, GetString(input, "path"), true);
+            var disabled = GetBoolean(input, "disabled", true);
+            var disabledPaths = ReadDisabledMemoryPaths(vaultPath);
+            if (disabled)
+            {
+                if (!disabledPaths.Contains(relativePath)) disabledPaths.Add(relativePath);
+            }
+            else
+            {
+                disabledPaths.RemoveAll(path => string.Equals(path, relativePath, StringComparison.OrdinalIgnoreCase));
+            }
+            WriteDisabledMemoryPaths(vaultPath, disabledPaths);
+            InvalidateMemoryIndex(vaultPath);
+            return JsonOk(new Dictionary<string, object>
+            {
+                { "success", true },
+                { "path", relativePath },
+                { "disabled", disabled }
+            });
+        }
+        catch (Exception ex)
+        {
+            return JsonError(400, ex.Message);
+        }
+    }
+
+    public static StudioApiResponse MemoryDelete(byte[] body)
+    {
+        try
+        {
+            var input = ParseObject(body);
+            var vaultPath = ValidateMemoryVaultPath(GetString(input, "vaultPath"));
+            var relativePath = NormalizeMemoryNotePath(vaultPath, GetString(input, "path"), true);
+            var fullPath = SafeCombineMemoryPath(vaultPath, relativePath, false);
+            var deletedRelativePath = MoveDeletedMemoryNote(vaultPath, fullPath);
+            var disabledPaths = ReadDisabledMemoryPaths(vaultPath);
+            disabledPaths.RemoveAll(path => string.Equals(path, relativePath, StringComparison.OrdinalIgnoreCase));
+            WriteDisabledMemoryPaths(vaultPath, disabledPaths);
+            InvalidateMemoryIndex(vaultPath);
+            return JsonOk(new Dictionary<string, object>
+            {
+                { "success", true },
+                { "path", relativePath },
+                { "deletedPath", deletedRelativePath }
+            });
+        }
+        catch (Exception ex)
+        {
+            return JsonError(400, ex.Message);
+        }
+    }
+
     private static Dictionary<string, object> ParseObject(byte[] body)
     {
         var text = Encoding.UTF8.GetString(body ?? new byte[0]);
@@ -1042,6 +1140,22 @@ internal static class DesktopApiProxy
         if (numeric < min) return min;
         if (numeric > max) return max;
         return numeric;
+    }
+
+    private static bool GetBoolean(Dictionary<string, object> data, string key, bool fallback)
+    {
+        object value;
+        if (data == null || !data.TryGetValue(key, out value) || value == null)
+        {
+            return fallback;
+        }
+        if (value is bool)
+        {
+            return (bool)value;
+        }
+        var text = Convert.ToString(value).Trim();
+        bool parsed;
+        return bool.TryParse(text, out parsed) ? parsed : fallback;
     }
 
     private static string ValidateMemoryVaultPath(string vaultPath, bool allowCreate = false)
@@ -1372,6 +1486,122 @@ internal static class DesktopApiProxy
         return builder.ToString();
     }
 
+    private static string NormalizeMemoryNotePath(string vaultPath, string relativePath, bool mustExist)
+    {
+        if (string.IsNullOrWhiteSpace(relativePath))
+        {
+            throw new InvalidOperationException("Memory note path is required.");
+        }
+        var fullPath = SafeCombineMemoryPath(vaultPath, relativePath, false);
+        if (!string.Equals(Path.GetExtension(fullPath), ".md", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException("Memory note path must point to a markdown file.");
+        }
+        if (IsIgnoredMemoryPath(fullPath))
+        {
+            throw new InvalidOperationException("Memory inbox, index, trash, and Obsidian internals cannot be managed as active memory.");
+        }
+        if (mustExist && !File.Exists(fullPath))
+        {
+            throw new InvalidOperationException("Memory note does not exist.");
+        }
+        return fullPath.Substring(vaultPath.Length).TrimStart(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar).Replace(Path.DirectorySeparatorChar, '/');
+    }
+
+    private static List<string> ReadDisabledMemoryPaths(string vaultPath)
+    {
+        try
+        {
+            var path = SafeCombineMemoryPath(vaultPath, DisabledMemoryRelativePath, true);
+            if (!File.Exists(path)) return new List<string>();
+            var raw = Json.DeserializeObject(File.ReadAllText(path, Encoding.UTF8)) as object[];
+            var result = new List<string>();
+            if (raw == null) return result;
+            foreach (var item in raw)
+            {
+                var relativePath = Convert.ToString(item ?? string.Empty).Trim().Replace('\\', '/');
+                if (relativePath.Length < 1 || result.Contains(relativePath)) continue;
+                result.Add(relativePath);
+            }
+            return result;
+        }
+        catch
+        {
+            return new List<string>();
+        }
+    }
+
+    private static void WriteDisabledMemoryPaths(string vaultPath, List<string> disabledPaths)
+    {
+        var path = SafeCombineMemoryPath(vaultPath, DisabledMemoryRelativePath, true);
+        Directory.CreateDirectory(Path.GetDirectoryName(path));
+        var normalized = new List<object>();
+        foreach (var item in disabledPaths ?? new List<string>())
+        {
+            var relativePath = item.Replace('\\', '/').Trim();
+            if (relativePath.Length < 1 || normalized.Contains(relativePath)) continue;
+            normalized.Add(relativePath);
+        }
+        File.WriteAllText(path, Json.Serialize(normalized), Encoding.UTF8);
+    }
+
+    private static bool IsDisabledMemoryPath(List<string> disabledPaths, string relativePath)
+    {
+        foreach (var path in disabledPaths ?? new List<string>())
+        {
+            if (string.Equals(path, relativePath, StringComparison.OrdinalIgnoreCase)) return true;
+        }
+        return false;
+    }
+
+    private static string MoveDeletedMemoryNote(string vaultPath, string fullPath)
+    {
+        var deletedDir = SafeCombineMemoryPath(vaultPath, Path.Combine("00_Inbox", "deleted"), false);
+        Directory.CreateDirectory(deletedDir);
+        var fileName = DateTimeOffset.Now.ToString("yyyyMMddHHmmss") + "-" + Path.GetFileName(fullPath);
+        var destination = SafeCombineMemoryPath(vaultPath, Path.Combine("00_Inbox", "deleted", fileName), true);
+        var counter = 1;
+        while (File.Exists(destination))
+        {
+            fileName = DateTimeOffset.Now.ToString("yyyyMMddHHmmss") + "-" + counter + "-" + Path.GetFileName(fullPath);
+            destination = SafeCombineMemoryPath(vaultPath, Path.Combine("00_Inbox", "deleted", fileName), true);
+            counter += 1;
+        }
+        File.Move(fullPath, destination);
+        return destination.Substring(vaultPath.Length).TrimStart(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar).Replace(Path.DirectorySeparatorChar, '/');
+    }
+
+    private static List<object> ListMemoryNotes(string vaultPath, bool includeDisabled, int maxNotes)
+    {
+        var disabledPaths = ReadDisabledMemoryPaths(vaultPath);
+        var notes = new List<Dictionary<string, object>>();
+        var files = Directory.GetFiles(vaultPath, "*.md", SearchOption.AllDirectories);
+        var scanned = 0;
+        foreach (var file in files)
+        {
+            if (scanned >= MaxMemorySearchFiles || notes.Count >= maxNotes) break;
+            if (IsIgnoredMemoryPath(file)) continue;
+            var info = new FileInfo(file);
+            if (!info.Exists || info.Length > MaxMemoryNoteBytes) continue;
+            scanned += 1;
+            var text = File.ReadAllText(file, Encoding.UTF8);
+            var note = ParseMemoryNote(vaultPath, file, text);
+            var relativePath = GetString(note, "path");
+            var disabled = IsDisabledMemoryPath(disabledPaths, relativePath);
+            if (disabled && !includeDisabled) continue;
+            note["disabled"] = disabled;
+            notes.Add(note);
+        }
+
+        notes.Sort((left, right) => string.Compare(GetString(left, "path"), GetString(right, "path"), StringComparison.OrdinalIgnoreCase));
+        var result = new List<object>();
+        foreach (var note in notes)
+        {
+            result.Add(note);
+        }
+        return result;
+    }
+
     private static void InvalidateMemoryIndex(string vaultPath)
     {
         try
@@ -1419,6 +1649,7 @@ internal static class DesktopApiProxy
     {
         var notes = new List<Dictionary<string, object>>();
         var files = Directory.GetFiles(vaultPath, "*.md", SearchOption.AllDirectories);
+        var disabledPaths = ReadDisabledMemoryPaths(vaultPath);
         var scanned = 0;
         foreach (var file in files)
         {
@@ -1429,6 +1660,7 @@ internal static class DesktopApiProxy
             scanned += 1;
             var text = File.ReadAllText(file, Encoding.UTF8);
             var note = ParseMemoryNote(vaultPath, file, text);
+            if (IsDisabledMemoryPath(disabledPaths, GetString(note, "path"))) continue;
             notes.Add(note);
         }
 
@@ -1453,13 +1685,14 @@ internal static class DesktopApiProxy
     private static List<Dictionary<string, object>> LoadOrBuildMemoryIndex(string vaultPath)
     {
         var indexPath = SafeCombineMemoryPath(vaultPath, MemoryIndexRelativePath, true);
+        var disabledPaths = ReadDisabledMemoryPaths(vaultPath);
         if (IsMemoryIndexFresh(vaultPath, indexPath))
         {
-            var existing = TryReadMemoryIndex(vaultPath, indexPath);
+            var existing = TryReadMemoryIndex(vaultPath, indexPath, disabledPaths);
             if (existing != null) return existing;
         }
 
-        var built = BuildMemoryIndex(vaultPath);
+        var built = BuildMemoryIndex(vaultPath, disabledPaths);
         TryWriteMemoryIndex(indexPath, built);
         return built;
     }
@@ -1468,6 +1701,8 @@ internal static class DesktopApiProxy
     {
         if (!File.Exists(indexPath)) return false;
         var indexTime = File.GetLastWriteTimeUtc(indexPath);
+        var disabledPath = SafeCombineMemoryPath(vaultPath, DisabledMemoryRelativePath, true);
+        if (File.Exists(disabledPath) && File.GetLastWriteTimeUtc(disabledPath) > indexTime) return false;
         foreach (var file in Directory.GetFiles(vaultPath, "*.md", SearchOption.AllDirectories))
         {
             if (IsIgnoredMemoryPath(file)) continue;
@@ -1476,7 +1711,7 @@ internal static class DesktopApiProxy
         return true;
     }
 
-    private static List<Dictionary<string, object>> TryReadMemoryIndex(string vaultPath, string indexPath)
+    private static List<Dictionary<string, object>> TryReadMemoryIndex(string vaultPath, string indexPath, List<string> disabledPaths)
     {
         try
         {
@@ -1490,6 +1725,7 @@ internal static class DesktopApiProxy
                 var note = NormalizeMemoryIndexNote(source);
                 var path = GetString(note, "path");
                 if (string.IsNullOrWhiteSpace(path)) continue;
+                if (IsDisabledMemoryPath(disabledPaths, path)) continue;
                 if (!File.Exists(SafeCombineMemoryPath(vaultPath, path, false))) continue;
                 notes.Add(note);
                 if (notes.Count >= MaxMemorySearchFiles) break;
@@ -1504,6 +1740,11 @@ internal static class DesktopApiProxy
 
     private static List<Dictionary<string, object>> BuildMemoryIndex(string vaultPath)
     {
+        return BuildMemoryIndex(vaultPath, ReadDisabledMemoryPaths(vaultPath));
+    }
+
+    private static List<Dictionary<string, object>> BuildMemoryIndex(string vaultPath, List<string> disabledPaths)
+    {
         var notes = new List<Dictionary<string, object>>();
         var files = Directory.GetFiles(vaultPath, "*.md", SearchOption.AllDirectories);
         var scanned = 0;
@@ -1515,7 +1756,9 @@ internal static class DesktopApiProxy
             if (!info.Exists || info.Length > MaxMemoryNoteBytes) continue;
             scanned += 1;
             var text = File.ReadAllText(file, Encoding.UTF8);
-            notes.Add(ParseMemoryNote(vaultPath, file, text));
+            var note = ParseMemoryNote(vaultPath, file, text);
+            if (IsDisabledMemoryPath(disabledPaths, GetString(note, "path"))) continue;
+            notes.Add(note);
         }
         return notes;
     }
