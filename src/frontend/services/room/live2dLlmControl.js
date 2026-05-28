@@ -613,20 +613,10 @@ function buildDirectRequestBody(settings, systemPrompt, history, message) {
 }
 
 function buildStreamingDirectRequestBody(settings, systemPrompt, history, message) {
-  const body = buildDirectRequestBody(settings, systemPrompt, history, message);
-  if (isOpenAIResponsesApi(normalizeOpenAIUrl(settings.apiUrl || ''))) {
-    body.max_output_tokens = 320;
-  } else {
-    body.max_tokens = 320;
-  }
-  body.stream = true;
-  return body;
-}
-
-function compactStreamingSystemPrompt(prompt, maxLength = 900) {
-  const value = String(prompt || '').trim();
-  if (value.length <= maxLength) return value;
-  return `${value.slice(0, maxLength).trim()}\n[streaming note: omitted extra custom prompt text for low latency]`;
+  return {
+    ...buildDirectRequestBody(settings, systemPrompt, history, message),
+    stream: true
+  };
 }
 
 function finishLive2DControlRequest(message, history, rawReply, sentenceEmitter = null) {
@@ -666,17 +656,26 @@ export function live2DControlSystemPrompt() {
 export function live2DStreamingControlSystemPrompt() {
   return [
     'You are controlling a Live2D character named Yachiyo.',
-    'This is a low-latency live-stream speech turn.',
-    'Output only visible dialogue lines in this exact format:',
-    'TEXT: 嗯、',
-    'TEXT: 我在听，',
-    'TEXT: 继续说呀。',
-    'Start with the first TEXT line immediately. Do not plan actions first.',
-    'Use Simplified Chinese only. Never output Japanese.',
-    'Keep each TEXT line very short: 3-10 Chinese characters, or one comma-sized clause.',
-    'Reply in 1-2 short spoken sentences total.',
-    'Do not output JSON, CONTROL, VOICE, action hints, parentheses, stage directions, Markdown, or explanations.',
-    'The app will infer Live2D actions locally from each TEXT line.'
+    'This is a low-latency streaming turn. Start output with visible Simplified Chinese TEXT lines immediately, then output control JSON at the end.',
+    'Output format must be exactly:',
+    'TEXT: first tiny Simplified Chinese visible reaction, 1-4 Chinese characters if possible, such as 嗯、 欸嘿、 对呀、 or 啊、.',
+    'TEXT: next short Simplified Chinese visible clause.',
+    'TEXT: continue in very small comma-sized Simplified Chinese chunks so captions and TTS can start quickly.',
+    'CONTROL: {"reply":"same Simplified Chinese visible text without TEXT labels","emotion":"smug|happy|shy|surprised|angry|puff|tongue|dizzy|sad|crying|fire|neutral","intensity":0.72,"actions":[{"type":"look_at_chat","duration":1.2},{"type":"smirk","duration":2.0}],"speech_style":{"speed":1.05,"pitch":0.08,"pause":"playful"}}',
+    'TEXT is for captions and chat log. TEXT must be Simplified Chinese, never Japanese.',
+    'Do not output VOICE lines. The TTS layer will translate TEXT to Japanese by itself.',
+    'Do not wait to decide actions before writing the first TEXT line.',
+    'Emit the first TEXT before planning the full answer. Do not wait for CONTROL before speaking.',
+    'Keep each TEXT line short: one comma-delimited clause or about 5-8 Chinese characters per TEXT line is ideal.',
+    'TEXT lines must contain only visible dialogue. Never put stage directions, parenthesized action hints, asterisk actions, action labels, pose descriptions, or JSON in TEXT.',
+    'CONTROL must be one JSON object after the CONTROL label. The reply field must exactly match the visible TEXT text.',
+    'Choose 2-5 semantic actions that match the spoken meaning and mood.',
+    'Use only semantic emotion ids and semantic actions. Do not output raw Live2D parameters, VTube Studio parameter ids, expression file names, live2d.parameters, parameterTargets, or pose descriptions.',
+    `Good action combos: ${behaviorActionComboPrompt()}.`,
+    'Use intensity 0.45-0.85 for normal talking, 0.85-1.0 for punchlines or surprise.',
+    semanticExpressionPromptCatalog(),
+    semanticActionPromptCatalog(),
+    'The execution layer maps semantic emotions to expression presets, VTube Studio expressions, and fine motion overlays.'
   ].join('\n');
 }
 
@@ -739,8 +738,8 @@ export async function requestLive2DControlStream(message, handlers = {}) {
     throw new Error('Missing LLM settings. Configure LLM in Studio Settings first.');
   }
 
-  const history = readLive2DLLMHistory().slice(-4);
-  const systemPrompt = [compactStreamingSystemPrompt(settings.systemPrompt), live2DStreamingControlSystemPrompt()].filter(Boolean).join('\n\n');
+  const history = readLive2DLLMHistory();
+  const systemPrompt = [settings.systemPrompt, live2DStreamingControlSystemPrompt()].filter(Boolean).join('\n\n');
   const sentenceEmitter = createReplySentenceEmitter(handlers);
   let rawReply = '';
 
@@ -754,8 +753,7 @@ export async function requestLive2DControlStream(message, handlers = {}) {
         apiKey: settings.apiKey,
         apiUrl: settings.apiUrl,
         model: settings.model,
-        systemPrompt,
-        maxTokens: 320
+        systemPrompt
       })
     });
     if (!response.ok) {
