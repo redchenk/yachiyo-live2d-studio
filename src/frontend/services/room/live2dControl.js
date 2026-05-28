@@ -1,5 +1,6 @@
 ﻿import { roomLive2DManifest } from '../../constants/room/live2dManifest';
 import {
+  matchBehaviorActionsFromText,
   matchBehaviorBodyPoseFromText,
   normalizeBehaviorBodyPose
 } from '../../constants/room/behaviorActionRegistry';
@@ -629,11 +630,13 @@ function inferActionLive2DIntent(text, manifest) {
   const value = String(text || '').toLowerCase();
   const expressionMatch = matchTextExpression(value);
   const bodyMatch = matchBehaviorBodyPoseFromText(value);
-  if (!expressionMatch && !bodyMatch) return null;
+  const behaviorActions = matchBehaviorActionsFromText(value);
+  if (!expressionMatch && !bodyMatch && !behaviorActions.length) return null;
   return normalizeLive2DIntent({
     emotion: expressionMatch?.emotion || null,
     expression: expressionMatch?.expression || null,
     bodyPose: bodyMatch?.bodyPose || null,
+    behaviorActions,
     intensity: bodyMatch?.intensity || 0.55,
     durationMs: bodyMatch?.durationMs || 5000
   }, manifest);

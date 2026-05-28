@@ -63,14 +63,14 @@ const SENTENCE_EMOTION_RULES = [
 ];
 
 const SENTENCE_ACTIONS_BY_EMOTION = {
-  happy: [{ type: 'smile', duration: 1.2 }, { type: 'bounce', duration: 1.1, delay: 0.1 }, { type: 'nod', duration: 1.15, delay: 0.22 }],
-  smile: [{ type: 'smile', duration: 1.25 }, { type: 'sway', duration: 1.25, delay: 0.12 }, { type: 'look_at_chat', duration: 0.9, delay: 0.28 }],
+  happy: [{ type: 'smile', duration: 1.2 }, { type: 'bounce', duration: 1.1, delay: 0.1 }, { type: 'ear_wiggle', duration: 1.1, delay: 0.14, intensity: 0.62 }, { type: 'nod', duration: 1.15, delay: 0.22 }],
+  smile: [{ type: 'smile', duration: 1.25 }, { type: 'sway', duration: 1.25, delay: 0.12 }, { type: 'ear_perk', duration: 1.1, delay: 0.18, intensity: 0.54 }, { type: 'look_at_chat', duration: 0.9, delay: 0.28 }],
   smug: [{ type: 'smirk', duration: 1.25 }, { type: 'lean_in', duration: 1.2, delay: 0.12 }, { type: 'head_tilt', side: 'random', duration: 1.1, delay: 0.22 }],
   shy: [{ type: 'smile', duration: 1.1 }, { type: 'blink', duration: 0.34, delay: 0.1 }, { type: 'sway', duration: 1.25, delay: 0.24 }],
-  surprised: [{ type: 'surprised', duration: 0.95 }, { type: 'lean_in', duration: 1.1, delay: 0.08 }, { type: 'bounce', duration: 1, delay: 0.22 }],
+  surprised: [{ type: 'surprised', duration: 0.95 }, { type: 'ear_perk', duration: 1.05, delay: 0.05, intensity: 0.72 }, { type: 'lean_in', duration: 1.1, delay: 0.08 }, { type: 'bounce', duration: 1, delay: 0.22 }],
   angry: [{ type: 'lean_in', duration: 1.2 }, { type: 'emphasis', duration: 0.95, delay: 0.12 }, { type: 'shake_head', duration: 1.05, delay: 0.28 }],
   puff: [{ type: 'shake_head', duration: 0.95 }, { type: 'sway', duration: 1.2, delay: 0.12 }, { type: 'look_at_chat', duration: 0.9, delay: 0.26 }],
-  tongue: [{ type: 'smirk', duration: 1.1 }, { type: 'wink', side: 'random', duration: 0.52, delay: 0.12 }, { type: 'lean_in', duration: 1.05, delay: 0.24 }],
+  tongue: [{ type: 'tongue_out', duration: 0.72 }, { type: 'smirk', duration: 1.1, delay: 0.08 }, { type: 'ear_wiggle', duration: 1.08, delay: 0.14, intensity: 0.64 }, { type: 'wink', side: 'random', duration: 0.52, delay: 0.18 }, { type: 'lean_in', duration: 1.05, delay: 0.24 }],
   dizzy: [{ type: 'shake_head', duration: 1.05 }, { type: 'sway', duration: 1.25, delay: 0.12 }, { type: 'blink', duration: 0.34, delay: 0.5 }],
   sad: [{ type: 'breathe', duration: 1.4 }, { type: 'nod', duration: 1.15, delay: 0.16 }, { type: 'look_at_chat', duration: 0.9, delay: 0.34 }],
   crying: [{ type: 'shiver', duration: 1.05 }, { type: 'breathe', duration: 1.25, delay: 0.2 }, { type: 'nod', duration: 1.1, delay: 0.36 }],
@@ -521,7 +521,7 @@ function mergeInferredLive2DIntent(explicitIntent, inferredIntent) {
     bodyPose: explicitHasBody ? explicitIntent.bodyPose : inferredIntent.bodyPose,
     intensity: strongerIntensity || explicitIntent.intensity || inferredIntent.intensity,
     durationMs: explicitIntent.durationMs || inferredIntent.durationMs,
-    behaviorActions: explicitIntent.behaviorActions || [],
+    behaviorActions: mergeBehaviorActions(explicitIntent.behaviorActions, explicitHasBehavior ? [] : inferredIntent.behaviorActions),
     speechStyle: explicitIntent.speechStyle || inferredIntent.speechStyle || null,
     parameters: mergeParameterTargets(
       explicitIntent.parameters,
@@ -550,6 +550,20 @@ function mergeInferredLive2DIntent(explicitIntent, inferredIntent) {
   return normalizeLive2DIntent(next) || explicitIntent;
 }
 
+function mergeBehaviorActions(primary = [], secondary = []) {
+  const merged = [];
+  const seen = new Set();
+  for (const action of [...(Array.isArray(primary) ? primary : []), ...(Array.isArray(secondary) ? secondary : [])]) {
+    const type = String(action?.type || action?.action || action?.name || '').trim();
+    if (!type) continue;
+    const key = `${type}:${action?.side || action?.direction || ''}`;
+    if (seen.has(key)) continue;
+    merged.push({ ...action });
+    seen.add(key);
+  }
+  return merged.slice(0, 8);
+}
+
 function mergeBehaviorAndExplicitIntent(behaviorIntent, explicitIntent) {
   if (!behaviorIntent) return explicitIntent;
   if (!explicitIntent) return normalizeLive2DIntent(behaviorIntent);
@@ -562,7 +576,7 @@ function mergeBehaviorAndExplicitIntent(behaviorIntent, explicitIntent) {
     intensity: Math.max(Number(explicitIntent.intensity) || 0, Number(behaviorIntent.intensity) || 0) || behaviorIntent.intensity,
     durationMs: Math.max(Number(explicitIntent.durationMs) || 0, Number(behaviorIntent.durationMs) || 0) || behaviorIntent.durationMs,
     parameters: mergeParameterTargets(behaviorIntent.parameters, explicitIntent.parameters),
-    behaviorActions: behaviorIntent.behaviorActions,
+    behaviorActions: mergeBehaviorActions(explicitIntent.behaviorActions, behaviorIntent.behaviorActions),
     speechStyle: behaviorIntent.speechStyle
   });
 }

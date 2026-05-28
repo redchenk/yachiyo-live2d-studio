@@ -150,7 +150,14 @@ const EYE_OWNING_EXPRESSION_TOKENS = new Set([
 ]);
 
 const MOMENTARY_EXPRESSION_TOKENS = new Set(['blep', 'tongue', 'tongue_out']);
-const MOMENTARY_EXPRESSION_PARAMETER_IDS = new Set(['TongueOut']);
+const MOMENTARY_EXPRESSION_PARAMETER_IDS = new Set([
+  'TongueOut',
+  'ParamTongueOut_BS',
+  'ParamTonguePhysics_X1',
+  'ParamTonguePhysics_X2',
+  'ParamTonguePhysics_Y1',
+  'ParamTonguePhysics_Y2'
+]);
 const MOMENTARY_EXPRESSION_PULSE_MS = 640;
 
 const MOUTH_INJECTION_IDS = new Set([
@@ -159,6 +166,7 @@ const MOUTH_INJECTION_IDS = new Set([
   'VoiceVolume',
   'MouthX',
   'TongueOut',
+  'ParamTongueOut_BS',
   'JawOpen',
   'MouthPucker',
   'CheekPuff',
@@ -187,6 +195,13 @@ function clampFallback(value, min, max, fallback) {
 
 function injectionProfile(id) {
   if (id.startsWith('ParamEarShape')) return { alpha: 0.42, step: 0.16 };
+  if (id.startsWith('ParamEarPhysics')) return { alpha: 0.5, step: 8.5 };
+  if (id.startsWith('ParamHatEar')) return { alpha: 0.5, step: 6.8 };
+  if (id.startsWith('ParamHatPhysics')) return { alpha: 0.5, step: 5.2 };
+  if (id.startsWith('ParamWingPhysics')) return { alpha: 0.48, step: 8 };
+  if (id.startsWith('ParamCheongsamPhysics')) return { alpha: 0.44, step: 4.8 };
+  if (id.startsWith('ParamDollEarPhysics')) return { alpha: 0.46, step: 6.5 };
+  if (id.startsWith('ParamTonguePhysics')) return { alpha: 0.72, step: 11 };
   if (MOUTH_INJECTION_IDS.has(id)) return { alpha: 0.66, step: 0.26 };
   if (id === 'EyeOpenLeft' || id === 'EyeOpenRight') return { alpha: 0.88, step: 0.72 };
   if (id.startsWith('Eye')) return { alpha: 0.34, step: 0.11 };
@@ -401,6 +416,20 @@ function mapLive2DParametersToVTS(parameters, options) {
         addWeighted(merged, 'MocopiAngleZ', value, weight * 0.55);
       }
     }
+
+    if (
+      key.startsWith('paramearshape') ||
+      key.startsWith('paramearphysics') ||
+      key.startsWith('paramhatear') ||
+      key.startsWith('paramhatphysics') ||
+      key.startsWith('paramwingphysics') ||
+      key.startsWith('paramcheongsamphysics') ||
+      key.startsWith('paramdollearphysics') ||
+      key.startsWith('paramtonguephysics') ||
+      key === 'paramtongueout_bs'
+    ) {
+      addWeighted(merged, item.id, value, weight);
+    }
   }
   return finalizeWeighted(merged);
 }
@@ -527,6 +556,18 @@ function setFrameEyes(frame, x = 0, y = 0, weight = 0.8) {
   setFrameValue(frame, 'EyeRightY', y, weight);
 }
 
+function setChainFrame(frame, prefix, side, count, valueFactory, weight = 0.4) {
+  for (let index = 1; index <= count; index += 1) {
+    setFrameValue(frame, `${prefix}_${side}${index}`, valueFactory(index), weight);
+  }
+}
+
+function setAxisFrame(frame, prefix, axis, count, valueFactory, weight = 0.4) {
+  for (let index = 1; index <= count; index += 1) {
+    setFrameValue(frame, `${prefix}_${axis}${index}`, valueFactory(index), weight);
+  }
+}
+
 function setFrameYachiyoEars(frame, character = {}, strength = 1) {
   if (!yachiyoDirectInputsReady) return;
   const amount = clampFallback(strength, 0, 1, 1);
@@ -548,6 +589,33 @@ function setFrameYachiyoEars(frame, character = {}, strength = 1) {
   setFrameValue(frame, 'ParamEarShape_R2', clamp(base * 0.68 + lift, -0.45, 0.76), 0.42);
   setFrameValue(frame, 'ParamEarShape_L3', clamp(base * 0.42 - lift * 0.5 + lean * 0.35, -0.45, 0.72), 0.34);
   setFrameValue(frame, 'ParamEarShape_R3', clamp(base * 0.42 - lift * 0.5 - lean * 0.35, -0.45, 0.72), 0.34);
+
+  const headDrive = headZ * 1.9 - headX * 0.75 + headY * 0.32;
+  const bodyDrive = (Number(character.bodyZ) || 0) * 1.25 + (Number(character.bodyX) || 0) * 0.62;
+  const verticalDrive = headY * 0.8 + (Number(character.bodyY) || 0) * 0.34;
+  const accessoryEnergy = clamp(0.38 + energy * 0.42 + lively * 0.16 + alert * 0.16, 0.32, 1);
+  const earWeight = 0.24 + accessoryEnergy * 0.22;
+  const hatWeight = 0.2 + accessoryEnergy * 0.2;
+  const wingWeight = 0.18 + accessoryEnergy * 0.16;
+  const clothWeight = 0.16 + accessoryEnergy * 0.14;
+
+  setChainFrame(frame, 'ParamEarPhysics', 'L', 4, (index) => clamp((headDrive + lift * 22) * (1 / index) * amount, -52, 52), earWeight);
+  setChainFrame(frame, 'ParamEarPhysics', 'R', 4, (index) => clamp((-headDrive + lift * 22) * (1 / index) * amount, -52, 52), earWeight);
+  setFrameValue(frame, 'ParamEarPhysicsBS_L1', clamp((lift * 34 + headZ * 0.9 + alert * 10 - droop * 10) * amount, -44, 44), earWeight * 0.82);
+  setFrameValue(frame, 'ParamEarPhysicsBS_R1', clamp((lift * 34 - headZ * 0.9 + alert * 10 - droop * 10) * amount, -44, 44), earWeight * 0.82);
+  setFrameValue(frame, 'ParamEarPhysicsBS_L2', clamp((base * 18 + headX * 0.32) * amount, -36, 36), earWeight * 0.68);
+  setFrameValue(frame, 'ParamEarPhysicsBS_R2', clamp((base * 18 - headX * 0.32) * amount, -36, 36), earWeight * 0.68);
+
+  setAxisFrame(frame, 'ParamHatPhysics', 'X', 4, (index) => clamp((headDrive * 0.62 + bodyDrive * 0.18) * (1 / index) * amount, -24, 24), hatWeight);
+  setAxisFrame(frame, 'ParamHatPhysics', 'Y', 4, (index) => clamp((verticalDrive * 0.54 - lift * 16) * (1 / index) * amount, -22, 22), hatWeight);
+  setChainFrame(frame, 'ParamHatEar', 'L', 3, (index) => clamp((headDrive * 0.86 + alert * 8 - droop * 7) * (1 / index) * amount, -34, 34), hatWeight);
+  setChainFrame(frame, 'ParamHatEar', 'R', 3, (index) => clamp((-headDrive * 0.86 + alert * 8 - droop * 7) * (1 / index) * amount, -34, 34), hatWeight);
+
+  setChainFrame(frame, 'ParamWingPhysics', 'L', 4, (index) => clamp((bodyDrive * 1.1 - verticalDrive * 0.42) * (1 / index) * amount, -48, 48), wingWeight);
+  setChainFrame(frame, 'ParamWingPhysics', 'R', 4, (index) => clamp((-bodyDrive * 1.1 - verticalDrive * 0.42) * (1 / index) * amount, -48, 48), wingWeight);
+  setAxisFrame(frame, 'ParamCheongsamPhysics', 'X', 5, (index) => clamp((bodyDrive * 0.82 + headDrive * 0.16) * (1 / index) * amount, -24, 24), clothWeight);
+  setChainFrame(frame, 'ParamDollEarPhysics', 'L', 4, (index) => clamp((headDrive * 0.52 + bodyDrive * 0.34) * (1 / index) * amount, -38, 38), wingWeight * 0.82);
+  setChainFrame(frame, 'ParamDollEarPhysics', 'R', 4, (index) => clamp((-headDrive * 0.52 + bodyDrive * 0.34) * (1 / index) * amount, -38, 38), wingWeight * 0.82);
 }
 
 function setFrameBody(frame, pose = {}, weight = 1) {
@@ -1011,6 +1079,68 @@ function applyDirectMotion(frame, sample) {
   }
 }
 
+function applyTonguePulse(frame, sample) {
+  const { progress: t, phase, intensity, sign } = sample;
+  const pulse = clamp(Math.sin(Math.PI * t) * (0.74 + intensity * 0.18), 0, 1);
+  const sway = Math.sin(phase * 0.9) * pulse;
+  setFrameValue(frame, 'TongueOut', pulse, 0.96);
+  if (yachiyoDirectInputsReady) {
+    setFrameValue(frame, 'ParamTongueOut_BS', pulse, 0.88);
+    setFrameValue(frame, 'ParamTonguePhysics_X1', 9 * sign * sway, 0.54);
+    setFrameValue(frame, 'ParamTonguePhysics_X2', 5.5 * sign * sway, 0.42);
+    setFrameValue(frame, 'ParamTonguePhysics_Y1', -8 * pulse + 2.5 * Math.abs(sway), 0.52);
+    setFrameValue(frame, 'ParamTonguePhysics_Y2', -4.5 * pulse + 1.5 * Math.abs(sway), 0.4);
+  }
+  setFrameValue(frame, 'MouthSmile', 0.82, 0.62);
+  addFrameValue(frame, 'MouthOpen', 0.12 * pulse, 0.22);
+}
+
+function applyEarPerk(frame, sample, scale = 1) {
+  if (!yachiyoDirectInputsReady) return;
+  const { phase, energy: e, sign } = sample;
+  const perk = clamp(e * scale, 0, 1.85);
+  const wiggle = Math.sin(phase * 1.35) * perk;
+  setFrameValue(frame, 'ParamEarShape_L1', clamp(0.42 + 0.28 * perk + 0.08 * wiggle, -0.35, 0.92), 0.72);
+  setFrameValue(frame, 'ParamEarShape_R1', clamp(0.42 + 0.28 * perk - 0.08 * wiggle, -0.35, 0.92), 0.72);
+  setFrameValue(frame, 'ParamEarShape_L2', clamp(0.3 + 0.22 * perk + 0.05 * wiggle, -0.35, 0.86), 0.58);
+  setFrameValue(frame, 'ParamEarShape_R2', clamp(0.3 + 0.22 * perk - 0.05 * wiggle, -0.35, 0.86), 0.58);
+  setFrameValue(frame, 'ParamEarShape_L3', clamp(0.2 + 0.14 * perk - 0.04 * wiggle, -0.35, 0.76), 0.48);
+  setFrameValue(frame, 'ParamEarShape_R3', clamp(0.2 + 0.14 * perk + 0.04 * wiggle, -0.35, 0.76), 0.48);
+  setChainFrame(frame, 'ParamEarPhysics', 'L', 4, (index) => clamp((18 * sign + 14 * wiggle) * (1 / index), -58, 58), 0.48);
+  setChainFrame(frame, 'ParamEarPhysics', 'R', 4, (index) => clamp((-18 * sign - 14 * wiggle) * (1 / index), -58, 58), 0.48);
+  setFrameValue(frame, 'ParamEarPhysicsBS_L1', clamp(18 * perk + 8 * wiggle, -48, 48), 0.44);
+  setFrameValue(frame, 'ParamEarPhysicsBS_R1', clamp(18 * perk - 8 * wiggle, -48, 48), 0.44);
+  setFrameValue(frame, 'ParamEarPhysicsBS_L2', clamp(10 * perk + 5 * sign * wiggle, -40, 40), 0.38);
+  setFrameValue(frame, 'ParamEarPhysicsBS_R2', clamp(10 * perk - 5 * sign * wiggle, -40, 40), 0.38);
+}
+
+function applyHatEarWiggle(frame, sample) {
+  if (!yachiyoDirectInputsReady) return;
+  const { phase, energy: e, sign } = sample;
+  const flap = Math.sin(phase * 1.5) * e;
+  const lift = Math.sin(Math.PI * sample.progress) * e;
+  setChainFrame(frame, 'ParamHatEar', 'L', 3, (index) => clamp((18 * sign * lift + 15 * flap) / index, -38, 38), 0.54);
+  setChainFrame(frame, 'ParamHatEar', 'R', 3, (index) => clamp((-18 * sign * lift - 15 * flap) / index, -38, 38), 0.54);
+  setAxisFrame(frame, 'ParamHatPhysics', 'X', 4, (index) => clamp((12 * sign * lift + 9 * flap) / index, -28, 28), 0.42);
+  setAxisFrame(frame, 'ParamHatPhysics', 'Y', 4, (index) => clamp((-10 * lift + 5 * Math.abs(flap)) / index, -24, 24), 0.38);
+}
+
+function applyWingFlutter(frame, sample) {
+  if (!yachiyoDirectInputsReady) return;
+  const { phase, energy: e, sign } = sample;
+  const flutter = Math.sin(phase * 2.2) * e;
+  const lift = Math.sin(Math.PI * sample.progress) * e;
+  setChainFrame(frame, 'ParamWingPhysics', 'L', 4, (index) => clamp((24 * flutter + 12 * sign * lift) / index, -58, 58), 0.44);
+  setChainFrame(frame, 'ParamWingPhysics', 'R', 4, (index) => clamp((-24 * flutter + 12 * sign * lift) / index, -58, 58), 0.44);
+}
+
+function applyDressSway(frame, sample) {
+  if (!yachiyoDirectInputsReady) return;
+  const { phase, energy: e, sign } = sample;
+  const sway = Math.sin(phase * 0.92) * e;
+  setAxisFrame(frame, 'ParamCheongsamPhysics', 'X', 5, (index) => clamp((16 * sign * sway) / index, -26, 26), 0.4);
+}
+
 function applyDirectOverlay(frame, sample, dominant, options = {}) {
   const { action, progress: t, phase, energy: e, sign } = sample;
   const isDominant = dominant?.action === action;
@@ -1064,6 +1194,24 @@ function applyDirectOverlay(frame, sample, dominant, options = {}) {
       setFrameValue(frame, 'Brows', 0.78, 0.78);
       setFrameValue(frame, 'BrowLeftY', 0.78, 0.78);
       setFrameValue(frame, 'BrowRightY', 0.78, 0.78);
+      break;
+    case 'tongue_out':
+      applyTonguePulse(frame, sample);
+      break;
+    case 'ear_perk':
+      applyEarPerk(frame, sample, 1.05);
+      break;
+    case 'ear_wiggle':
+      applyEarPerk(frame, sample, 0.92);
+      break;
+    case 'hat_ear_wiggle':
+      applyHatEarWiggle(frame, sample);
+      break;
+    case 'wing_flutter':
+      applyWingFlutter(frame, sample);
+      break;
+    case 'dress_sway':
+      applyDressSway(frame, sample);
       break;
     default:
       break;

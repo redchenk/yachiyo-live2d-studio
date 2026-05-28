@@ -194,12 +194,15 @@ export const YACHIYO_EXPRESSION_PRESETS = [
     files: ['tongue', 'tongue_out', 'expression_tongue'],
     actions: [
       action('look_at_chat', 0.9),
+      action('tongue_out', 0.72, 0.04),
       action('smirk', 1.4, 0.06),
       action('wink', 0.52, 0.18, { side: 'right' }),
+      action('ear_wiggle', 1.1, 0.16, { intensity: 0.62 }),
       action('lean_in', 1.2, 0.26, { intensity: 0.64 })
     ],
     vts: [
       vts('TongueOut', 1, 0.86),
+      vts('ParamTongueOut_BS', 1, 0.72),
       vts('MouthSmile', 0.78, 0.62),
       vts('MouthOpen', 0.22, 0.22)
     ]
@@ -357,9 +360,9 @@ const EXPRESSION_ACTION_VARIANTS = {
     [action('look_at_chat', 0.85), action('head_tilt', 1.2, 0.1, { side: 'random' }), action('lean_in', 1.05, 0.26, { intensity: 0.5 })]
   ],
   tongue: [
-    [action('look_at_chat', 0.9), action('smirk', 1.4, 0.06), action('wink', 0.52, 0.18, { side: 'random' }), action('lean_in', 1.2, 0.26, { intensity: 0.64 })],
-    [action('smirk', 1.25), action('bounce', 1.0, 0.12, { intensity: 0.56 }), action('wink', 0.52, 0.34, { side: 'random' })],
-    [action('look_at_chat', 0.85), action('head_tilt', 1.15, 0.1, { side: 'random' }), action('smirk', 1.35, 0.2), action('lean_in', 1.1, 0.34, { intensity: 0.54 })]
+    [action('look_at_chat', 0.9), action('tongue_out', 0.72, 0.04), action('smirk', 1.4, 0.06), action('wink', 0.52, 0.18, { side: 'random' }), action('ear_wiggle', 1.1, 0.16, { intensity: 0.62 }), action('lean_in', 1.2, 0.26, { intensity: 0.64 })],
+    [action('tongue_out', 0.68), action('smirk', 1.25, 0.06), action('bounce', 1.0, 0.12, { intensity: 0.56 }), action('hat_ear_wiggle', 1.1, 0.18, { intensity: 0.58 }), action('wink', 0.52, 0.34, { side: 'random' })],
+    [action('look_at_chat', 0.85), action('tongue_out', 0.72, 0.06), action('head_tilt', 1.15, 0.1, { side: 'random' }), action('smirk', 1.35, 0.2), action('ear_wiggle', 1.05, 0.24, { intensity: 0.56 }), action('lean_in', 1.1, 0.34, { intensity: 0.54 })]
   ],
   dizzy: [
     [action('look_at_chat', 0.8), action('shake_head', 1.2, 0.05, { intensity: 0.55 }), action('sway', 1.6, 0.16, { intensity: 0.62 }), action('blink', 0.34, 0.9)],

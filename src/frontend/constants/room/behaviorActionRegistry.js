@@ -274,6 +274,148 @@ export const BEHAVIOR_ACTION_DEFINITIONS = [
     }
   },
   {
+    id: 'tongue_out',
+    label: 'Tongue out',
+    prompt: 'brief playful tongue-out/blep accent; use for cheeky jokes and teasing',
+    aliases: ['tongue', 'blep', 'tongueout', 'cheeky', 'mischief'],
+    defaultDurationMs: 760,
+    fallbackPattern: /(\u5410\u820c|\u8210\u820c|\u820c\u5934|\u820c\u982d|tongue|blep|cheeky|mischief|teasing)/iu,
+    fallbackActions: [
+      { type: 'look_at_chat', duration: 0.8 },
+      { type: 'tongue_out', duration: 0.76, delay: 0.08 },
+      { type: 'ear_wiggle', duration: 1.1, delay: 0.12 },
+      { type: 'smirk', duration: 1.1, delay: 0.16 }
+    ],
+    parameters(action) {
+      const amount = action.intensity;
+      return [
+        parameter('TongueOut', 1, 0.88, action.durationMs, action.delayMs),
+        parameter('ParamTongueOut_BS', 1, 0.82, action.durationMs, action.delayMs),
+        parameter('ParamTonguePhysics_X1', 8 * sideSign(action.side, 1) * amount, 0.52, action.durationMs, action.delayMs),
+        parameter('ParamTonguePhysics_X2', 5 * sideSign(action.side, 1) * amount, 0.42, action.durationMs, action.delayMs),
+        parameter('ParamTonguePhysics_Y1', -7 * amount, 0.46, action.durationMs, action.delayMs),
+        parameter('ParamTonguePhysics_Y2', -4 * amount, 0.38, action.durationMs, action.delayMs),
+        parameter('MouthSmile', 0.82, 0.58, action.durationMs, action.delayMs),
+        parameter('MouthOpen', 0.18, 0.28, action.durationMs, action.delayMs)
+      ];
+    }
+  },
+  {
+    id: 'ear_wiggle',
+    label: 'Ear wiggle',
+    prompt: 'animal ears twitch or wiggle in a lively way',
+    aliases: ['ears_wiggle', 'ear_twitch', 'twitch_ears', 'kemonomimi_wiggle'],
+    defaultDurationMs: 1150,
+    fallbackPattern: /(\u8033\u6735\u52a8|\u8033\u6735\u52d5|\u52a8\u8033\u6735|\u52d5\u8033\u6735|\u8033\u6735\u6296|\u8033\u6735\u6643|\u517d\u8033\u52a8|\u7378\u8033\u52d5|ear(?:s)?\s*(?:wiggle|twitch|move)|wiggle(?:s|ing)?\s*ear)/iu,
+    fallbackActions: [
+      { type: 'ear_wiggle', duration: 1.25 },
+      { type: 'smile', duration: 1.15, delay: 0.08 },
+      { type: 'sway', duration: 1.25, delay: 0.18, intensity: 0.58 }
+    ],
+    parameters(action) {
+      const amount = action.intensity;
+      const sign = sideSign(action.side, 1);
+      return [
+        parameter('ParamEarShape_L1', 0.62 * amount, 0.64, action.durationMs, action.delayMs),
+        parameter('ParamEarShape_R1', 0.54 * amount, 0.64, action.durationMs, action.delayMs),
+        parameter('ParamEarPhysics_L1', (18 + 5 * sign) * amount, 0.46, action.durationMs, action.delayMs),
+        parameter('ParamEarPhysics_R1', (-18 + 5 * sign) * amount, 0.46, action.durationMs, action.delayMs),
+        parameter('ParamEarPhysicsBS_L1', 14 * amount, 0.4, action.durationMs, action.delayMs),
+        parameter('ParamEarPhysicsBS_R1', 14 * amount, 0.4, action.durationMs, action.delayMs)
+      ];
+    }
+  },
+  {
+    id: 'ear_perk',
+    label: 'Ear perk',
+    prompt: 'animal ears perk up for curiosity, excitement, or sudden attention',
+    aliases: ['animal_ears', 'beast_ears', 'ears_up', 'perk_ears', 'kemonomimi'],
+    defaultDurationMs: 1200,
+    fallbackPattern: /(\u517d\u8033|\u7378\u8033|\u732b\u8033|\u8033\u6735\u7ad6|\u7ad6\u8033|animal ears|beast ears|cat ears|kemonomimi|ear(?:s)?\s*perk)/iu,
+    fallbackActions: [
+      { type: 'ear_perk', duration: 1.25 },
+      { type: 'look_at_chat', duration: 0.9, delay: 0.12 },
+      { type: 'smile', duration: 1.2, delay: 0.2 }
+    ],
+    parameters(action) {
+      const amount = action.intensity;
+      return [
+        parameter('ParamEarShape_L1', 0.72 * amount, 0.68, action.durationMs, action.delayMs),
+        parameter('ParamEarShape_R1', 0.72 * amount, 0.68, action.durationMs, action.delayMs),
+        parameter('ParamEarShape_L2', 0.48 * amount, 0.54, action.durationMs, action.delayMs),
+        parameter('ParamEarShape_R2', 0.48 * amount, 0.54, action.durationMs, action.delayMs),
+        parameter('ParamEarPhysicsBS_L1', 16 * amount, 0.42, action.durationMs, action.delayMs),
+        parameter('ParamEarPhysicsBS_R1', 16 * amount, 0.42, action.durationMs, action.delayMs)
+      ];
+    }
+  },
+  {
+    id: 'hat_ear_wiggle',
+    label: 'Hat ear wiggle',
+    prompt: 'hat ears flap or wiggle, separate from the animal ears',
+    aliases: ['hat_ears', 'hat_ear', 'hat_wiggle'],
+    defaultDurationMs: 1200,
+    fallbackPattern: /(\u5e3d\u5b50\u8033\u6735|\u5e3d\u8033|\u5e3d\u5b50\u52a8|\u5e3d\u5b50\u52d5|hat ears?|hat ear wiggle|hat wiggle)/iu,
+    fallbackActions: [
+      { type: 'hat_ear_wiggle', duration: 1.25 },
+      { type: 'head_tilt', side: 'random', duration: 1.05, delay: 0.14, intensity: 0.52 },
+      { type: 'smile', duration: 1.1, delay: 0.22 }
+    ],
+    parameters(action) {
+      const amount = action.intensity;
+      const sign = sideSign(action.side, 1);
+      return [
+        parameter('ParamHatEar_L1', (15 + 5 * sign) * amount, 0.48, action.durationMs, action.delayMs),
+        parameter('ParamHatEar_R1', (-15 + 5 * sign) * amount, 0.48, action.durationMs, action.delayMs),
+        parameter('ParamHatPhysics_X1', 9 * sign * amount, 0.42, action.durationMs, action.delayMs),
+        parameter('ParamHatPhysics_Y1', -7 * amount, 0.38, action.durationMs, action.delayMs)
+      ];
+    }
+  },
+  {
+    id: 'wing_flutter',
+    label: 'Wing flutter',
+    prompt: 'small wing flutter for excitement, surprise, or magical emphasis',
+    aliases: ['wings', 'wing', 'flutter_wings'],
+    defaultDurationMs: 1250,
+    fallbackPattern: /(\u7fc5\u8180|\u7ffc|wing(?:s)?|flutter(?:s|ing)?)/iu,
+    fallbackActions: [
+      { type: 'wing_flutter', duration: 1.25 },
+      { type: 'bounce', duration: 1.05, delay: 0.12, intensity: 0.56 },
+      { type: 'smile', duration: 1.1, delay: 0.2 }
+    ],
+    parameters(action) {
+      const amount = action.intensity;
+      return [
+        parameter('ParamWingPhysics_L1', 20 * amount, 0.44, action.durationMs, action.delayMs),
+        parameter('ParamWingPhysics_R1', -20 * amount, 0.44, action.durationMs, action.delayMs),
+        parameter('ParamWingPhysics_L2', 13 * amount, 0.36, action.durationMs, action.delayMs),
+        parameter('ParamWingPhysics_R2', -13 * amount, 0.36, action.durationMs, action.delayMs)
+      ];
+    }
+  },
+  {
+    id: 'dress_sway',
+    label: 'Dress sway',
+    prompt: 'qipao/cheongsam cloth sways with the body',
+    aliases: ['cheongsam_sway', 'qipao_sway', 'cloth_sway'],
+    defaultDurationMs: 1300,
+    fallbackPattern: /(\u65d7\u888d|\u88d9\u6446|\u8863\u6446|cheongsam|qipao|dress sway|cloth sway)/iu,
+    fallbackActions: [
+      { type: 'dress_sway', duration: 1.3 },
+      { type: 'sway', duration: 1.3, delay: 0.1, intensity: 0.55 }
+    ],
+    parameters(action) {
+      const amount = action.intensity;
+      const sign = sideSign(action.side, 1);
+      return [
+        parameter('ParamCheongsamPhysics_X1', 12 * sign * amount, 0.42, action.durationMs, action.delayMs),
+        parameter('ParamCheongsamPhysics_X2', 8 * sign * amount, 0.36, action.durationMs, action.delayMs),
+        parameter('ParamCheongsamPhysics_X3', 5 * sign * amount, 0.32, action.durationMs, action.delayMs)
+      ];
+    }
+  },
+  {
     id: 'emphasis',
     label: 'Emphasis',
     buttonLabel: 'Hit',
@@ -359,13 +501,19 @@ export function behaviorActionParameterTargets(action) {
   return definition?.parameters ? definition.parameters(action) : [];
 }
 
-export function fallbackBehaviorActionsForText(text) {
+export function matchBehaviorActionsFromText(text) {
   const value = String(text || '').toLowerCase();
   for (const definition of BEHAVIOR_ACTION_DEFINITIONS) {
     if (definition.fallbackPattern?.test(value) && definition.fallbackActions?.length) {
       return cloneActions(definition.fallbackActions);
     }
   }
+  return [];
+}
+
+export function fallbackBehaviorActionsForText(text) {
+  const matched = matchBehaviorActionsFromText(text);
+  if (matched.length) return matched;
   return [{ type: 'look_at_chat', duration: 1.0 }, { type: 'breathe', duration: 1.8, delay: 0.1 }];
 }
 
@@ -408,7 +556,7 @@ export function behaviorBodyActionButtons() {
 }
 
 export function behaviorActionComboPrompt() {
-  return 'happy: bounce + smile + nod; shy/smug: smirk + sway/head_tilt + lean_in; angry/fire: lean_in + emphasis/shake_head; sad: breathe + nod + sway; surprised: lean_in + bounce + blink. Vary the order and pick actions that match the emotion';
+  return 'happy: bounce + smile + nod + ear_wiggle; shy/smug: smirk + sway/head_tilt + lean_in; playful: tongue_out + smirk + ear_wiggle/hat_ear_wiggle; angry/fire: lean_in + emphasis/shake_head; sad: breathe + nod + sway; surprised: lean_in + bounce + blink + ear_perk. Vary the order and pick actions that match the emotion';
 }
 
 export function semanticActionPromptCatalog() {

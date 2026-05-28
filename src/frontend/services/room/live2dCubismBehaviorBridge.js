@@ -465,6 +465,61 @@ function applyAction(frame, sample, options = {}) {
       setFrameValue(frame, 'JawOpen', 0.34, 0.45);
       setFrameValue(frame, 'MouthFunnel', 0.34, 0.42);
       break;
+    case 'tongue_out': {
+      const pulse = clamp(Math.sin(Math.PI * t) * (0.74 + sample.intensity * 0.18), 0, 1, 0);
+      const tongueSway = Math.sin(phase * 0.9) * pulse * sign;
+      setFrameValue(frame, 'TongueOut', pulse, 0.96);
+      setFrameValue(frame, 'ParamTongueOut_BS', pulse, 0.88);
+      setFrameValue(frame, 'ParamTonguePhysics_X1', 9 * tongueSway, 0.54);
+      setFrameValue(frame, 'ParamTonguePhysics_X2', 5.5 * tongueSway, 0.42);
+      setFrameValue(frame, 'ParamTonguePhysics_Y1', -8 * pulse, 0.52);
+      setFrameValue(frame, 'ParamTonguePhysics_Y2', -4.5 * pulse, 0.4);
+      setMouthSmile(frame, 0.82, 0.62);
+      break;
+    }
+    case 'ear_perk':
+    case 'ear_wiggle': {
+      const wiggle = Math.sin(phase * 1.35) * e;
+      const perk = action.type === 'ear_perk' ? e * 1.05 : e * 0.92;
+      setFrameValue(frame, 'ParamEarShape_L1', clamp(0.42 + 0.28 * perk + 0.08 * wiggle, -0.35, 0.92, 0), 0.72);
+      setFrameValue(frame, 'ParamEarShape_R1', clamp(0.42 + 0.28 * perk - 0.08 * wiggle, -0.35, 0.92, 0), 0.72);
+      setFrameValue(frame, 'ParamEarShape_L2', clamp(0.3 + 0.22 * perk + 0.05 * wiggle, -0.35, 0.86, 0), 0.58);
+      setFrameValue(frame, 'ParamEarShape_R2', clamp(0.3 + 0.22 * perk - 0.05 * wiggle, -0.35, 0.86, 0), 0.58);
+      for (let index = 1; index <= 4; index += 1) {
+        setFrameValue(frame, `ParamEarPhysics_L${index}`, (18 * sign + 14 * wiggle) / index, 0.48);
+        setFrameValue(frame, `ParamEarPhysics_R${index}`, (-18 * sign - 14 * wiggle) / index, 0.48);
+      }
+      setFrameValue(frame, 'ParamEarPhysicsBS_L1', 18 * perk + 8 * wiggle, 0.44);
+      setFrameValue(frame, 'ParamEarPhysicsBS_R1', 18 * perk - 8 * wiggle, 0.44);
+      break;
+    }
+    case 'hat_ear_wiggle': {
+      const flap = Math.sin(phase * 1.5) * e;
+      const lift = Math.sin(Math.PI * t) * e;
+      for (let index = 1; index <= 3; index += 1) {
+        setFrameValue(frame, `ParamHatEar_L${index}`, (18 * sign * lift + 15 * flap) / index, 0.54);
+        setFrameValue(frame, `ParamHatEar_R${index}`, (-18 * sign * lift - 15 * flap) / index, 0.54);
+      }
+      for (let index = 1; index <= 4; index += 1) {
+        setFrameValue(frame, `ParamHatPhysics_X${index}`, (12 * sign * lift + 9 * flap) / index, 0.42);
+        setFrameValue(frame, `ParamHatPhysics_Y${index}`, (-10 * lift + 5 * Math.abs(flap)) / index, 0.38);
+      }
+      break;
+    }
+    case 'wing_flutter': {
+      const flutter = Math.sin(phase * 2.2) * e;
+      const lift = Math.sin(Math.PI * t) * e;
+      for (let index = 1; index <= 4; index += 1) {
+        setFrameValue(frame, `ParamWingPhysics_L${index}`, (24 * flutter + 12 * sign * lift) / index, 0.44);
+        setFrameValue(frame, `ParamWingPhysics_R${index}`, (-24 * flutter + 12 * sign * lift) / index, 0.44);
+      }
+      break;
+    }
+    case 'dress_sway':
+      for (let index = 1; index <= 5; index += 1) {
+        setFrameValue(frame, `ParamCheongsamPhysics_X${index}`, (16 * sign * slow * e) / index, 0.4);
+      }
+      break;
     case 'emphasis': {
       const hit = Math.abs(Math.sin(Math.PI * t)) * e;
       setHead(frame, { y: -3.2 * hit, z: sign * 10.5 * fast * e }, 0.92);

@@ -1,3 +1,5 @@
+import { YACHIYO_MODEL_PARAMETER_RANGES } from '../../constants/room/yachiyoModelParameterRegistry';
+
 const DEFAULT_RANGE = [-30, 30];
 
 export const TRACKING_PARAMETER_RANGES = {
@@ -110,6 +112,7 @@ function mapRange(value, inMin, inMax, outMin, outMax, fallback = outMin) {
 function parameterRange(id) {
   if (TRACKING_PARAMETER_RANGES[id]) return TRACKING_PARAMETER_RANGES[id];
   if (DIRECT_PARAMETER_RANGES[id]) return DIRECT_PARAMETER_RANGES[id];
+  if (YACHIYO_MODEL_PARAMETER_RANGES[id]) return YACHIYO_MODEL_PARAMETER_RANGES[id];
   if (String(id).startsWith('ParamEarShape')) return [-1, 1];
   if (String(id).startsWith('ParamSwitchCtrl_')) return [0, 1];
   if (String(id).startsWith('Param')) return [-30, 30];
