@@ -115,6 +115,32 @@ const EYE_INJECTION_IDS = new Set([
   'EyeRightY'
 ]);
 
+const EYE_OPEN_INJECTION_IDS = new Set(['EyeOpenLeft', 'EyeOpenRight']);
+const EYE_OWNING_EXPRESSION_TOKENS = new Set([
+  'angry',
+  'annoyed',
+  'bsmile',
+  'blush',
+  'crying',
+  'dizzy',
+  'fire',
+  'happy',
+  'namida',
+  'sad',
+  'shy',
+  'smile',
+  'smug',
+  'surprised',
+  'surprise',
+  'tears',
+  'tongue',
+  'tongue_out',
+  '眯眯眼',
+  '笑咪咪',
+  '泪珠',
+  '眼泪'
+]);
+
 const MOUTH_INJECTION_IDS = new Set([
   'MouthOpen',
   'VoiceVolumePlusMouthOpen',
@@ -215,6 +241,10 @@ function expressionCandidates(value) {
   const semanticCandidates = semanticExpressionFileCandidates(raw);
   const aliases = VTS_EXPRESSION_ALIASES[key] || [key];
   return [...new Set([raw, key, ...semanticCandidates, ...aliases].map(normalizeExpressionToken).filter(Boolean))];
+}
+
+function expressionOwnsEyeOpen(value) {
+  return expressionCandidates(value).some((candidate) => EYE_OWNING_EXPRESSION_TOKENS.has(candidate));
 }
 
 function addWeighted(target, id, value, weight = 1) {
@@ -494,7 +524,7 @@ function setFrameBody(frame, pose = {}, weight = 1) {
   setFrameValue(frame, 'MocopiBodyPositionZ', posZ, weight * 0.75);
 }
 
-function createDirectTrackingFrame() {
+function createDirectTrackingFrame(options = {}) {
   const frame = new Map();
   setFrameValue(frame, 'FaceAngleX', 0, 1);
   setFrameValue(frame, 'FaceAngleY', 0, 1);
@@ -505,8 +535,10 @@ function createDirectTrackingFrame() {
   setFrameValue(frame, 'Brows', 0.55, 0.55);
   setFrameValue(frame, 'BrowLeftY', 0.55, 0.55);
   setFrameValue(frame, 'BrowRightY', 0.55, 0.55);
-  setFrameValue(frame, 'EyeOpenLeft', 0.92, 0.85);
-  setFrameValue(frame, 'EyeOpenRight', 0.92, 0.85);
+  if (!options.suppressEyeOpen) {
+    setFrameValue(frame, 'EyeOpenLeft', 0.92, 0.85);
+    setFrameValue(frame, 'EyeOpenRight', 0.92, 0.85);
+  }
   setFrameEyes(frame, 0, 0, 0.8);
   setFrameBody(frame, {}, 1);
   return frame;
@@ -935,6 +967,7 @@ function applyDirectOverlay(frame, sample, dominant, options = {}) {
   const { action, progress: t, phase, energy: e, sign } = sample;
   const isDominant = dominant?.action === action;
   const faceOnly = Boolean(options.faceOnly);
+  const suppressEyeOpen = Boolean(options.suppressEyeOpen);
 
   switch (action.type) {
     case 'look_at_chat':
@@ -959,6 +992,7 @@ function applyDirectOverlay(frame, sample, dominant, options = {}) {
       setFrameValue(frame, 'BrowRightY', sign > 0 ? 0.72 : 0.54, 0.66);
       break;
     case 'blink': {
+      if (suppressEyeOpen) break;
       const close = Math.sin(Math.PI * t) * e;
       const open = clamp(0.92 - close, 0.04, 1);
       setFrameValue(frame, 'EyeOpenLeft', open, 0.96);
@@ -966,6 +1000,7 @@ function applyDirectOverlay(frame, sample, dominant, options = {}) {
       break;
     }
     case 'wink': {
+      if (suppressEyeOpen) break;
       const close = Math.sin(Math.PI * t) * e;
       const open = clamp(0.92 - close, 0.04, 1);
       setFrameValue(frame, action.side === 'left' ? 'EyeOpenLeft' : 'EyeOpenRight', open, 0.98);
@@ -973,8 +1008,10 @@ function applyDirectOverlay(frame, sample, dominant, options = {}) {
       break;
     }
     case 'surprised':
-      setFrameValue(frame, 'EyeOpenLeft', 1, 0.98);
-      setFrameValue(frame, 'EyeOpenRight', 1, 0.98);
+      if (!suppressEyeOpen) {
+        setFrameValue(frame, 'EyeOpenLeft', 1, 0.98);
+        setFrameValue(frame, 'EyeOpenRight', 1, 0.98);
+      }
       setFrameValue(frame, 'MouthSmile', 0.48, 0.54);
       setFrameValue(frame, 'Brows', 0.78, 0.78);
       setFrameValue(frame, 'BrowLeftY', 0.78, 0.78);
@@ -1023,7 +1060,8 @@ function applyCharacterStateFrame(frame, character, strength = 1) {
   }, bodyWeight);
 }
 
-function applyAutoBlink(frame, samples, nowMs, baseOpen = 0.92) {
+function applyAutoBlink(frame, samples, nowMs, baseOpen = 0.92, options = {}) {
+  if (options.suppressEyeOpen) return;
   const hasManualEye = samples.some((sample) => behaviorActionBlocksAutoBlink(sample.action.type));
   if (hasManualEye) return;
   const open = autoBlinkOpen(nowMs, baseOpen);
@@ -1031,26 +1069,28 @@ function applyAutoBlink(frame, samples, nowMs, baseOpen = 0.92) {
   setFrameValue(frame, 'EyeOpenRight', open, 0.92);
 }
 
-function sampleVTSBehaviorActions(actions, elapsedMs, nowMs = performance.now(), character = null, expression = '') {
+function sampleVTSBehaviorActions(actions, elapsedMs, nowMs = performance.now(), character = null, expression = '', options = {}) {
   const samples = activeBehaviorSamples(actions, elapsedMs);
   if (samples.some((sample) => sample.action.type === 'reset' && sample.energy > 0.5)) return behaviorResetFrame();
 
-  const frame = createDirectTrackingFrame();
+  const suppressEyeOpen = Boolean(options.suppressEyeOpen || expressionOwnsEyeOpen(expression));
+  const frame = createDirectTrackingFrame({ suppressEyeOpen });
   const speaking = character?.mode === 'speaking';
   const dominant = pickDominantMotion(samples);
   applyCharacterStateFrame(frame, character, speaking && dominant ? 0.42 : (speaking ? 0.82 : 0.68));
   applySemanticExpressionOverlay(frame, expression || character?.emotion, speaking ? 0.68 : 0.82);
   applyDirectMotion(frame, dominant);
-  samples.forEach((sample) => applyDirectOverlay(frame, sample, dominant, { faceOnly: false }));
-  applyAutoBlink(frame, samples, nowMs, character?.eyeOpen);
+  samples.forEach((sample) => applyDirectOverlay(frame, sample, dominant, { faceOnly: false, suppressEyeOpen }));
+  applyAutoBlink(frame, samples, nowMs, character?.eyeOpen, { suppressEyeOpen });
   return finalizeDirectFrame(frame);
 }
 
-function sampleVTSIdleFrame(nowMs = performance.now(), character = null) {
-  const frame = createDirectTrackingFrame();
+function sampleVTSIdleFrame(nowMs = performance.now(), character = null, options = {}) {
+  const suppressEyeOpen = Boolean(options.suppressEyeOpen);
+  const frame = createDirectTrackingFrame({ suppressEyeOpen });
   applyCharacterStateFrame(frame, character, 1);
   applySemanticExpressionOverlay(frame, character?.emotion, 0.52);
-  applyAutoBlink(frame, [], nowMs, character?.eyeOpen);
+  applyAutoBlink(frame, [], nowMs, character?.eyeOpen, { suppressEyeOpen });
   return finalizeDirectFrame(frame);
 }
 
@@ -1104,6 +1144,17 @@ export function mountVTubeStudioBridge() {
   const activeExpressionFiles = new Set();
   let flushTimer = 0;
   let lastInjectionAt = 0;
+
+  function activeExpressionOwnsEyeOpen() {
+    return [...activeExpressionFiles].some((file) => expressionOwnsEyeOpen(file));
+  }
+
+  function releaseInjectedEyeOpen() {
+    EYE_OPEN_INJECTION_IDS.forEach((id) => {
+      pendingInjection.delete(id);
+      smoothedInjection.delete(id);
+    });
+  }
 
   function setStatus(status, error = '') {
     window.dispatchEvent(new CustomEvent(STATUS_EVENT, {
@@ -1316,6 +1367,7 @@ export function mountVTubeStudioBridge() {
       setVTSExpression(file, false, 0.08);
     });
     activeExpressionFiles.clear();
+    releaseInjectedEyeOpen();
   }
 
   function deactivateOtherExpressions(nextFile) {
@@ -1327,6 +1379,7 @@ export function mountVTubeStudioBridge() {
       setVTSExpression(file, false, 0.06);
       activeExpressionFiles.delete(file);
     });
+    if (!activeExpressionOwnsEyeOpen()) releaseInjectedEyeOpen();
   }
 
   function activateVTSExpression(expression, durationMs = 2600) {
@@ -1349,11 +1402,13 @@ export function mountVTubeStudioBridge() {
         }, 70);
         expressionActivationTimers.set(file, activationTimer);
         activeExpressionFiles.add(file);
+        if (expressionOwnsEyeOpen(file)) releaseInjectedEyeOpen();
         const holdMs = clamp(Math.round(Number(durationMs) || 2600), 900, 9000);
         const timer = window.setTimeout(() => {
           setVTSExpression(file, false, 0.45);
           activeExpressionFiles.delete(file);
           expressionTimers.delete(file);
+          if (!activeExpressionOwnsEyeOpen()) releaseInjectedEyeOpen();
         }, holdMs);
         expressionTimers.set(file, timer);
       })
@@ -1362,8 +1417,11 @@ export function mountVTubeStudioBridge() {
 
   function queueInjection(values) {
     if (!settings.enabled || !Array.isArray(values) || !values.length) return;
+    const suppressEyeOpen = activeExpressionOwnsEyeOpen();
+    if (suppressEyeOpen) releaseInjectedEyeOpen();
     values.forEach((item) => {
       if (!item?.id || !Number.isFinite(Number(item.value))) return;
+      if (suppressEyeOpen && EYE_OPEN_INJECTION_IDS.has(item.id)) return;
       addWeighted(pendingInjection, item.id, Number(item.value), Number(item.weight ?? 1));
     });
     if (flushTimer) return;
@@ -1426,7 +1484,9 @@ export function mountVTubeStudioBridge() {
     if (elapsedMs >= behaviorPlan.durationMs) {
       behaviorPlan = null;
       characterState.setMode('listening', { now, holdMs: 1400, attention: 0.52 });
-      queueInjection(sampleVTSIdleFrame(now, characterState.sample(now)));
+      queueInjection(sampleVTSIdleFrame(now, characterState.sample(now), {
+        suppressEyeOpen: activeExpressionOwnsEyeOpen()
+      }));
       stopBehaviorFrame();
       return;
     }
@@ -1435,7 +1495,8 @@ export function mountVTubeStudioBridge() {
       elapsedMs,
       now,
       characterState.sample(now),
-      behaviorPlan.expression
+      behaviorPlan.expression,
+      { suppressEyeOpen: behaviorPlan.suppressEyeOpen || activeExpressionOwnsEyeOpen() }
     ));
     behaviorFrameId = window.requestAnimationFrame(tickBehavior);
   }
@@ -1445,7 +1506,11 @@ export function mountVTubeStudioBridge() {
       stopIdleFrame();
       return;
     }
-    if (!behaviorPlan) queueInjection(sampleVTSIdleFrame(now, characterState.sample(now)));
+    if (!behaviorPlan) {
+      queueInjection(sampleVTSIdleFrame(now, characterState.sample(now), {
+        suppressEyeOpen: activeExpressionOwnsEyeOpen()
+      }));
+    }
     idleFrameId = window.requestAnimationFrame(tickIdle);
   }
 
@@ -1468,7 +1533,8 @@ export function mountVTubeStudioBridge() {
       actions: enrichedActions,
       durationMs: planDurationMs,
       startedAt: performance.now(),
-      expression: options.expression || semanticExpressionFromEmotion(options.emotion)
+      expression: options.expression || semanticExpressionFromEmotion(options.emotion),
+      suppressEyeOpen: expressionOwnsEyeOpen(options.expression || options.emotion)
     };
     characterState.setMode('acting', {
       holdMs: planDurationMs + 420,
