@@ -30,7 +30,9 @@ export const YACHIYO_EXPRESSION_PRESETS = [
       vts('MouthSmile', 0.56, 0.42),
       vts('Brows', 0.54, 0.3),
       vts('BrowLeftY', 0.54, 0.3),
-      vts('BrowRightY', 0.54, 0.3)
+      vts('BrowRightY', 0.54, 0.3),
+      vts('ParamMouthThickness', 0.04, 0.16),
+      vts('ParamMouthStraight', 0.02, 0.14)
     ]
   },
   {
@@ -50,7 +52,11 @@ export const YACHIYO_EXPRESSION_PRESETS = [
       vts('MouthSmile', 0.82, 0.7),
       vts('Brows', 0.62, 0.46),
       vts('BrowLeftY', 0.62, 0.44),
-      vts('BrowRightY', 0.62, 0.44)
+      vts('BrowRightY', 0.62, 0.44),
+      vts('ParamMouthThickness', 0.18, 0.34),
+      vts('ParamMouthShape', 0.12, 0.24),
+      vts('ParamEyeLSquint', 0.16, 0.24),
+      vts('ParamEyeRSquint', 0.16, 0.24)
     ]
   },
   {
@@ -70,7 +76,10 @@ export const YACHIYO_EXPRESSION_PRESETS = [
       vts('MouthSmile', 0.76, 0.62),
       vts('Brows', 0.64, 0.42),
       vts('BrowLeftY', 0.64, 0.38),
-      vts('BrowRightY', 0.64, 0.38)
+      vts('BrowRightY', 0.64, 0.38),
+      vts('ParamMouthThickness', 0.14, 0.28),
+      vts('ParamEyeLSquint', 0.12, 0.2),
+      vts('ParamEyeRSquint', 0.12, 0.2)
     ]
   },
   {
@@ -93,7 +102,13 @@ export const YACHIYO_EXPRESSION_PRESETS = [
       vts('BrowLeftY', 0.66, 0.46),
       vts('BrowRightY', 0.66, 0.46),
       vts('EyeLeftY', -0.12, 0.34),
-      vts('EyeRightY', -0.12, 0.34)
+      vts('EyeRightY', -0.12, 0.34),
+      vts('ParamBrowLForm', 0.16, 0.22),
+      vts('ParamBrowRForm', 0.16, 0.22),
+      vts('ParamMouthThickness', 0.12, 0.26),
+      vts('ParamMouthShape', 0.18, 0.24),
+      vts('ParamEyeLSquint', 0.14, 0.22),
+      vts('ParamEyeRSquint', 0.14, 0.22)
     ]
   },
   {
@@ -115,7 +130,13 @@ export const YACHIYO_EXPRESSION_PRESETS = [
       vts('Brows', 0.6, 0.48),
       vts('BrowLeftY', 0.72, 0.55),
       vts('BrowRightY', 0.48, 0.55),
-      vts('MouthX', -0.24, 0.36)
+      vts('MouthX', -0.24, 0.36),
+      vts('ParamMouthX2', -0.22, 0.32),
+      vts('ParamMouthThickness', 0.16, 0.28),
+      vts('ParamBrowLAngle', 0.22, 0.28),
+      vts('ParamBrowRAngle', -0.14, 0.24),
+      vts('ParamEyeLSquint', 0.12, 0.2),
+      vts('ParamEyeRSquint', 0.08, 0.18)
     ]
   },
   {
@@ -138,7 +159,11 @@ export const YACHIYO_EXPRESSION_PRESETS = [
       vts('BrowRightY', 0.82, 0.72),
       vts('MouthSmile', 0.42, 0.35),
       vts('JawOpen', 0.42, 0.34),
-      vts('MouthFunnel', 0.5, 0.34)
+      vts('MouthFunnel', 0.5, 0.34),
+      vts('ParamMouthShape', 0.34, 0.28),
+      vts('ParamMouthThickness', -0.08, 0.18),
+      vts('ParamBrowLY2', 0.18, 0.24),
+      vts('ParamBrowRY2', 0.18, 0.24)
     ]
   },
   {
@@ -159,7 +184,14 @@ export const YACHIYO_EXPRESSION_PRESETS = [
       vts('MouthSmile', 0.28, 0.68),
       vts('Brows', 0.24, 0.72),
       vts('BrowLeftY', 0.22, 0.68),
-      vts('BrowRightY', 0.22, 0.68)
+      vts('BrowRightY', 0.22, 0.68),
+      vts('ParamMouthStraight', 0.44, 0.38),
+      vts('ParamBrowLAngle', -0.38, 0.38),
+      vts('ParamBrowRAngle', 0.38, 0.38),
+      vts('ParamBrowLForm', -0.2, 0.24),
+      vts('ParamBrowRForm', -0.2, 0.24),
+      vts('ParamEyeLSquint', 0.12, 0.18),
+      vts('ParamEyeRSquint', 0.12, 0.18)
     ]
   },
   {
@@ -181,7 +213,11 @@ export const YACHIYO_EXPRESSION_PRESETS = [
       vts('MouthShrug', 0.48, 0.56),
       vts('Brows', 0.38, 0.48),
       vts('BrowLeftY', 0.38, 0.46),
-      vts('BrowRightY', 0.38, 0.46)
+      vts('BrowRightY', 0.38, 0.46),
+      vts('ParamCheekPuff2', 0.78, 0.58),
+      vts('ParamMouthThickness', 0.22, 0.28),
+      vts('ParamMouthShape', 0.14, 0.2),
+      vts('ParamMouthStraight', 0.2, 0.22)
     ]
   },
   {
@@ -201,7 +237,11 @@ export const YACHIYO_EXPRESSION_PRESETS = [
     vts: [
       vts('TongueOut', 1, 0.86),
       vts('MouthSmile', 0.78, 0.62),
-      vts('MouthOpen', 0.22, 0.22)
+      vts('MouthOpen', 0.22, 0.22),
+      vts('ParamMouthX2', -0.18, 0.22),
+      vts('ParamMouthThickness', 0.12, 0.18),
+      vts('ParamEyeLSquint', 0.12, 0.16),
+      vts('ParamEyeRSquint', 0.08, 0.14)
     ]
   },
   {
@@ -223,7 +263,11 @@ export const YACHIYO_EXPRESSION_PRESETS = [
       vts('BrowLeftY', 0.44, 0.42),
       vts('BrowRightY', 0.44, 0.42),
       vts('MouthSmile', 0.38, 0.42),
-      vts('MouthFunnel', 0.28, 0.28)
+      vts('MouthFunnel', 0.28, 0.28),
+      vts('ParamMouthShape', 0.22, 0.22),
+      vts('ParamMouthStraight', 0.18, 0.18),
+      vts('ParamEyeLSquint', 0.18, 0.2),
+      vts('ParamEyeRSquint', 0.18, 0.2)
     ]
   },
   {
@@ -243,7 +287,11 @@ export const YACHIYO_EXPRESSION_PRESETS = [
       vts('MouthSmile', 0.3, 0.58),
       vts('Brows', 0.32, 0.58),
       vts('BrowLeftY', 0.3, 0.52),
-      vts('BrowRightY', 0.3, 0.52)
+      vts('BrowRightY', 0.3, 0.52),
+      vts('ParamMouthStraight', 0.32, 0.28),
+      vts('ParamMouthThickness', 0.08, 0.16),
+      vts('ParamBrowLForm', -0.12, 0.18),
+      vts('ParamBrowRForm', -0.12, 0.18)
     ]
   },
   {
@@ -264,7 +312,11 @@ export const YACHIYO_EXPRESSION_PRESETS = [
       vts('MouthSmile', 0.24, 0.62),
       vts('Brows', 0.24, 0.66),
       vts('BrowLeftY', 0.24, 0.6),
-      vts('BrowRightY', 0.24, 0.6)
+      vts('BrowRightY', 0.24, 0.6),
+      vts('ParamMouthStraight', 0.38, 0.34),
+      vts('ParamMouthThickness', 0.06, 0.16),
+      vts('ParamBrowLForm', -0.18, 0.22),
+      vts('ParamBrowRForm', -0.18, 0.22)
     ]
   },
   {
@@ -285,7 +337,11 @@ export const YACHIYO_EXPRESSION_PRESETS = [
       vts('MouthSmile', 0.2, 0.66),
       vts('Brows', 0.2, 0.72),
       vts('BrowLeftY', 0.2, 0.66),
-      vts('BrowRightY', 0.2, 0.66)
+      vts('BrowRightY', 0.2, 0.66),
+      vts('ParamMouthStraight', 0.46, 0.36),
+      vts('ParamMouthThickness', 0.04, 0.16),
+      vts('ParamBrowLForm', -0.22, 0.24),
+      vts('ParamBrowRForm', -0.22, 0.24)
     ]
   },
   {
@@ -306,7 +362,12 @@ export const YACHIYO_EXPRESSION_PRESETS = [
       vts('MouthSmile', 0.24, 0.68),
       vts('Brows', 0.2, 0.72),
       vts('BrowLeftY', 0.2, 0.66),
-      vts('BrowRightY', 0.2, 0.66)
+      vts('BrowRightY', 0.2, 0.66),
+      vts('ParamMouthStraight', 0.4, 0.34),
+      vts('ParamBrowLAngle', -0.34, 0.34),
+      vts('ParamBrowRAngle', 0.34, 0.34),
+      vts('ParamEyeLSquint', 0.14, 0.18),
+      vts('ParamEyeRSquint', 0.14, 0.18)
     ]
   }
 ];

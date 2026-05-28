@@ -7,7 +7,8 @@
   "scripts": {
     "dev": "vite --config live2d-studio/vite.config.js --host 127.0.0.1 --port 5174",
     "build": "vite build --config live2d-studio/vite.config.js",
-    "build:live2d-studio": "vite build --config live2d-studio/vite.config.js"
+    "build:live2d-studio": "vite build --config live2d-studio/vite.config.js",
+    "install:yachiyo-vts-parameters": "node tools/vtube-studio/install-yachiyo-model-parameters.mjs"
   },
   "dependencies": {
     "@vitejs/plugin-vue": "^6.0.6",

@@ -652,6 +652,27 @@ export function createLive2DCharacterStateMachine() {
     );
     const browBase = emotionProfile.brow + modeProfile.brow;
     const softBrow = clamp(lerp(browBase, 0.55, speechEnergy * 0.34), 0.18, 0.82);
+    const breath2 = clamp(0.48 + breathMotion * 0.22 + speechLift * 0.035 + state.arousal * 0.04, 0, 1);
+    const breath3 = clamp(0.44 + bodyFloat * 0.18 - speechNod * 0.025 + state.arousal * 0.035, 0, 1);
+    const eyeSquint = clamp(
+      speechEnergy * 0.08 + Math.max(mouthSmile - 0.62, 0) * 0.22 + (state.emotion === 'smug' ? 0.08 : 0),
+      0,
+      0.28
+    );
+    const sampleBodyX = (bodyDrift * 0.72 + speechCounterSway * 7.2) * bodyScale;
+    const sampleBodyY = (
+      isSpeaking
+        ? -forwardLean * 7.2 + breathMotion * 3.0 + bodyFloat * 3.2 + livelyFloat * 1.45 - speechNod * 7.4 + thinkingNod * 0.24
+        : -idleForwardLean * 7.2 + breathMotion * (3.0 * IDLE_ACTION_RATIO) + bodyFloat * (3.2 * IDLE_ACTION_RATIO) - speechNod * (7.4 * IDLE_ACTION_RATIO) + thinkingNod * 0.24
+    ) * bodyScale;
+    const sampleBodyZ = (
+      smoothNoise(motionSeconds + 1.8, 0.28, 0.51, 0.88) * 0.95 * speakingDriftScale +
+      speechCounterSway * 8.2 +
+      speechTilt * 9.4
+    ) * bodyScale;
+    const hairFront = clamp(-sampleBodyY * 0.48 - speechLift * 1.4 + breathMotion * 0.36, -18, 18);
+    const hairSide = clamp(-sampleBodyX * 0.34 - sampleBodyZ * 0.22 + bodyDrift * 1.1, -18, 18);
+    const hairBack = clamp(sampleBodyY * 0.34 + sampleBodyZ * 0.18 - bodyFloat * 0.42, -18, 18);
 
     return {
       mode: state.mode,
@@ -680,17 +701,15 @@ export function createLive2DCharacterStateMachine() {
       brows: softBrow,
       browLeftY: clamp(softBrow + smoothNoise(motionSeconds, 0.83, 1.41, 2.2) * 0.024, 0.18, 0.84),
       browRightY: clamp(softBrow + smoothNoise(motionSeconds + 0.6, 0.79, 1.33, 2.08) * 0.024, 0.18, 0.84),
-      bodyX: (bodyDrift * 0.72 + speechCounterSway * 7.2) * bodyScale,
-      bodyY: (
-        isSpeaking
-          ? -forwardLean * 7.2 + breathMotion * 3.0 + bodyFloat * 3.2 + livelyFloat * 1.45 - speechNod * 7.4 + thinkingNod * 0.24
-          : -idleForwardLean * 7.2 + breathMotion * (3.0 * IDLE_ACTION_RATIO) + bodyFloat * (3.2 * IDLE_ACTION_RATIO) - speechNod * (7.4 * IDLE_ACTION_RATIO) + thinkingNod * 0.24
-      ) * bodyScale,
-      bodyZ: (
-        smoothNoise(motionSeconds + 1.8, 0.28, 0.51, 0.88) * 0.95 * speakingDriftScale +
-        speechCounterSway * 8.2 +
-        speechTilt * 9.4
-      ) * bodyScale,
+      eyeSquint,
+      breath2,
+      breath3,
+      hairFront,
+      hairSide,
+      hairBack,
+      bodyX: sampleBodyX,
+      bodyY: sampleBodyY,
+      bodyZ: sampleBodyZ,
       bodyPosX: (bodyDrift * 0.022 + speechCounterSway * 0.06) * bodyScale,
       bodyPosY: (
         isSpeaking
