@@ -45,10 +45,12 @@ const VTS_EXPRESSION_ALIASES = {
   dizzy: ['dizzy', 'confused'],
   confused: ['dizzy', 'confused'],
   fire: ['fire', 'rage'],
-  namida: ['namida', 'sad', 'tear'],
-  sad: ['namida', 'sad', 'tear'],
-  tears: ['tears', 'cry', 'crying'],
-  crying: ['crying', 'tears', 'cry'],
+  namida: ['namida', 'sad', 'tear', '泪珠', '眼泪'],
+  sad: ['namida', 'sad', 'tear', '泪珠', '眼泪'],
+  tear: ['namida', 'sad', 'tear', '泪珠', '眼泪'],
+  tears: ['tears', 'cry', 'crying', '眼泪', '泪珠'],
+  crying: ['crying', 'tears', 'cry', '眼泪', '泪珠'],
+  cry: ['crying', 'tears', 'cry', '眼泪', '泪珠'],
   neutral: ['neutral', 'normal', 'default']
 };
 
@@ -120,7 +122,6 @@ const EYE_INJECTION_IDS = new Set([
   'EyeRightY'
 ]);
 
-const EYE_OPEN_INJECTION_IDS = new Set(['EyeOpenLeft', 'EyeOpenRight']);
 const EYE_OWNING_EXPRESSION_TOKENS = new Set([
   'angry',
   'annoyed',
@@ -140,6 +141,8 @@ const EYE_OWNING_EXPRESSION_TOKENS = new Set([
   'tears',
   'tongue',
   'tongue_out',
+  'tear',
+  'cry',
   '眯眯眼',
   '笑咪咪',
   '泪珠',
@@ -1201,8 +1204,8 @@ export function mountVTubeStudioBridge() {
     return [...activeExpressionFiles].some((file) => expressionOwnsEyeOpen(file));
   }
 
-  function releaseInjectedEyeOpen() {
-    EYE_OPEN_INJECTION_IDS.forEach((id) => {
+  function releaseInjectedEyes() {
+    EYE_INJECTION_IDS.forEach((id) => {
       pendingInjection.delete(id);
       smoothedInjection.delete(id);
     });
@@ -1481,20 +1484,21 @@ export function mountVTubeStudioBridge() {
       setVTSExpression(file, false, 0.08);
     });
     activeExpressionFiles.clear();
-    releaseInjectedEyeOpen();
+    releaseInjectedEyes();
     releaseInjectedMomentaryParameters();
   }
 
-  function deactivateOtherExpressions(nextFile) {
+  function deactivateOtherExpressions(nextFile, options = {}) {
     const nextKey = normalizeExpressionToken(nextFile);
+    const fadeTime = Number.isFinite(Number(options.fadeTime)) ? Number(options.fadeTime) : 0.06;
     [...new Set([...expressionFiles, ...activeExpressionFiles])].forEach((file) => {
       if (!file || normalizeExpressionToken(file) === nextKey) return;
       clearExpressionActivationTimer(file);
       clearExpressionTimer(file);
-      setVTSExpression(file, false, 0.06);
+      setVTSExpression(file, false, fadeTime);
       activeExpressionFiles.delete(file);
     });
-    if (!activeExpressionOwnsEyeOpen()) releaseInjectedEyeOpen();
+    if (!activeExpressionOwnsEyeOpen()) releaseInjectedEyes();
   }
 
   function activateVTSExpression(expression, durationMs = 2600) {
@@ -1509,16 +1513,17 @@ export function mountVTubeStudioBridge() {
       .then((file) => {
         if (!file) return;
         const momentaryExpression = expressionIsMomentary(expression) || expressionIsMomentary(file);
-        deactivateOtherExpressions(file);
+        const ownsEyes = expressionOwnsEyeOpen(expression) || expressionOwnsEyeOpen(file);
+        deactivateOtherExpressions(file, { fadeTime: ownsEyes ? 0.02 : 0.06 });
         clearExpressionActivationTimer(file);
         clearExpressionTimer(file);
         const activationTimer = window.setTimeout(() => {
           expressionActivationTimers.delete(file);
-          setVTSExpression(file, true, 0.18);
-        }, 70);
+          setVTSExpression(file, true, ownsEyes ? 0.12 : 0.18);
+        }, ownsEyes ? 120 : 70);
         expressionActivationTimers.set(file, activationTimer);
         activeExpressionFiles.add(file);
-        if (expressionOwnsEyeOpen(file)) releaseInjectedEyeOpen();
+        if (ownsEyes) releaseInjectedEyes();
         const holdMs = momentaryExpression
           ? clamp(Math.min(Math.round(Number(durationMs) || MOMENTARY_EXPRESSION_PULSE_MS), MOMENTARY_EXPRESSION_PULSE_MS), 420, MOMENTARY_EXPRESSION_PULSE_MS)
           : clamp(Math.round(Number(durationMs) || 2600), 900, 9000);
@@ -1526,7 +1531,7 @@ export function mountVTubeStudioBridge() {
           setVTSExpression(file, false, 0.45);
           activeExpressionFiles.delete(file);
           expressionTimers.delete(file);
-          if (!activeExpressionOwnsEyeOpen()) releaseInjectedEyeOpen();
+          if (!activeExpressionOwnsEyeOpen()) releaseInjectedEyes();
           if (momentaryExpression) releaseInjectedMomentaryParameters();
         }, holdMs);
         expressionTimers.set(file, timer);
@@ -1536,11 +1541,11 @@ export function mountVTubeStudioBridge() {
 
   function queueInjection(values) {
     if (!settings.enabled || !Array.isArray(values) || !values.length) return;
-    const suppressEyeOpen = activeExpressionOwnsEyeOpen();
-    if (suppressEyeOpen) releaseInjectedEyeOpen();
+    const suppressEyes = activeExpressionOwnsEyeOpen();
+    if (suppressEyes) releaseInjectedEyes();
     values.forEach((item) => {
       if (!item?.id || !Number.isFinite(Number(item.value))) return;
-      if (suppressEyeOpen && EYE_OPEN_INJECTION_IDS.has(item.id)) return;
+      if (suppressEyes && EYE_INJECTION_IDS.has(item.id)) return;
       addWeighted(pendingInjection, item.id, Number(item.value), Number(item.weight ?? 1));
     });
     if (flushTimer) return;

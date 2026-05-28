@@ -231,9 +231,9 @@ export const YACHIYO_EXPRESSION_PRESETS = [
     label: 'Tearful',
     emotion: 'sad',
     prompt: 'sad, lonely, moved, eyes welling up, or quietly hurt',
-    aliases: ['sad', 'sorrow', 'tearful', 'moved', 'lonely'],
+    aliases: ['sad', 'sorrow', 'tearful', 'moved', 'lonely', 'tear', '泪珠', '眼泪'],
     expression: 'namida',
-    files: ['namida', 'sad', 'tear', 'expression_namida'],
+    files: ['namida', 'sad', 'tear', '泪珠', '眼泪', 'expression_namida'],
     actions: [
       action('look_at_chat', 0.9),
       action('nod', 1.25, 0.1, { intensity: 0.54 }),
@@ -251,9 +251,9 @@ export const YACHIYO_EXPRESSION_PRESETS = [
     label: 'Tears',
     emotion: 'crying',
     prompt: 'crying, hurt, watery-eyed, or visibly upset',
-    aliases: ['cry', 'crying', 'weeping', 'sob', 'sobbing'],
+    aliases: ['cry', 'crying', 'weeping', 'sob', 'sobbing', '泪珠', '眼泪'],
     expression: 'tears',
-    files: ['tears', 'cry', 'crying', 'expression_tears'],
+    files: ['tears', 'cry', 'crying', '眼泪', '泪珠', 'expression_tears'],
     actions: [
       action('look_at_chat', 0.85),
       action('shiver', 1.1, 0.08, { intensity: 0.54 }),
@@ -272,9 +272,9 @@ export const YACHIYO_EXPRESSION_PRESETS = [
     label: 'Crying',
     emotion: 'crying',
     prompt: 'strong crying, emotional collapse, or dramatic tears',
-    aliases: ['hard_cry', 'big_cry', 'wail'],
+    aliases: ['hard_cry', 'big_cry', 'wail', '泪珠', '眼泪'],
     expression: 'crying',
-    files: ['crying', 'tears', 'expression_crying', 'expression_tears'],
+    files: ['crying', 'tears', '眼泪', '泪珠', 'expression_crying', 'expression_tears'],
     actions: [
       action('look_at_chat', 0.8),
       action('shiver', 1.2, 0.05, { intensity: 0.62 }),
@@ -369,12 +369,12 @@ const EXPRESSION_ACTION_VARIANTS = {
   namida: [
     [action('look_at_chat', 0.9), action('nod', 1.25, 0.1, { intensity: 0.54 }), action('breathe', 1.8, 0.18)],
     [action('breathe', 1.6), action('look_at_chat', 0.85, 0.12), action('nod', 1.2, 0.28, { intensity: 0.48 })],
-    [action('sway', 1.35, 0.06, { intensity: 0.42 }), action('blink', 0.34, 0.3), action('look_at_chat', 0.85, 0.42)]
+    [action('sway', 1.35, 0.06, { intensity: 0.42 }), action('breathe', 1.7, 0.24), action('look_at_chat', 0.85, 0.42)]
   ],
   tears: [
     [action('look_at_chat', 0.85), action('shiver', 1.1, 0.08, { intensity: 0.54 }), action('nod', 1.35, 0.18, { intensity: 0.5 }), action('breathe', 1.6, 0.36)],
     [action('breathe', 1.5), action('nod', 1.25, 0.1, { intensity: 0.46 }), action('shiver', 1.0, 0.34, { intensity: 0.5 })],
-    [action('look_at_chat', 0.8), action('blink', 0.34, 0.08), action('sway', 1.35, 0.24, { intensity: 0.42 }), action('nod', 1.15, 0.42, { intensity: 0.44 })]
+    [action('look_at_chat', 0.8), action('breathe', 1.5, 0.08), action('sway', 1.35, 0.24, { intensity: 0.42 }), action('nod', 1.15, 0.42, { intensity: 0.44 })]
   ],
   crying: [
     [action('look_at_chat', 0.8), action('shiver', 1.2, 0.05, { intensity: 0.62 }), action('shake_head', 1.1, 0.2, { intensity: 0.5 }), action('breathe', 1.5, 0.4)],

@@ -4,6 +4,12 @@ import { cleanLive2DReply } from './live2dText';
 const DEFAULT_GPT_SOVITS_GPT_WEIGHT = 'GPT_weights_v2ProPlus/yachiyo-v2pro-e15.ckpt';
 const DEFAULT_GPT_SOVITS_SOVITS_WEIGHT = 'SoVITS_weights_v2ProPlus/yachiyo-v2pro_e8_s456.pth';
 const MAX_TTS_PREFETCH = 4;
+const LLM_TRANSLATION_TIMEOUT_MS = 45000;
+const TTS_FETCH_TIMEOUT_MS = 90000;
+const AUDIO_STALL_TIMEOUT_MS = 12000;
+const AUDIO_PLAYBACK_GRACE_MS = 18000;
+const AUDIO_MIN_PLAYBACK_TIMEOUT_MS = 30000;
+const AUDIO_MAX_PLAYBACK_TIMEOUT_MS = 180000;
 const TTS_EMOTION_GUIDES = {
   happy: 'bright, smiling, lively',
   smile: 'warm, gentle, smiling',
@@ -21,6 +27,30 @@ const TTS_EMOTION_GUIDES = {
 };
 let gptSovitsWeightsSignature = '';
 let gptSovitsWeightsPromise = null;
+
+function timeoutError(message) {
+  const error = new Error(message);
+  error.name = 'TimeoutError';
+  return error;
+}
+
+async function fetchWithTimeout(resource, options = {}, timeoutMs = TTS_FETCH_TIMEOUT_MS, label = 'Request') {
+  const AbortControllerClass = globalThis.AbortController;
+  if (!AbortControllerClass) return fetch(resource, options);
+  const controller = new AbortControllerClass();
+  const timer = window.setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(resource, {
+      ...options,
+      signal: options.signal || controller.signal
+    });
+  } catch (error) {
+    if (error?.name === 'AbortError') throw timeoutError(`${label} timed out`);
+    throw error;
+  } finally {
+    window.clearTimeout(timer);
+  }
+}
 
 function defaultTtsUrl(provider) {
   return provider === 'gpt-sovits' ? 'http://localhost:9880/tts' : '';
@@ -117,6 +147,24 @@ function compactSpeechText(text) {
     .trim();
 }
 
+function estimateSpeechDurationMs(text) {
+  const length = compactSpeechText(text).length;
+  return clampNumber(length * 190 + 1400, 2600, AUDIO_MAX_PLAYBACK_TIMEOUT_MS - AUDIO_PLAYBACK_GRACE_MS);
+}
+
+function clampNumber(value, min, max) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return min;
+  return Math.min(Math.max(numeric, min), max);
+}
+
+function playbackTimeoutMs(audio, text) {
+  const durationMs = Number.isFinite(audio?.duration) && audio.duration > 0
+    ? audio.duration * 1000
+    : estimateSpeechDurationMs(text);
+  return clampNumber(durationMs + AUDIO_PLAYBACK_GRACE_MS, AUDIO_MIN_PLAYBACK_TIMEOUT_MS, AUDIO_MAX_PLAYBACK_TIMEOUT_MS);
+}
+
 function cleanTtsText(text) {
   return cleanLive2DReply(text)
     .replace(/[ \t]{2,}/g, ' ')
@@ -177,7 +225,7 @@ async function translateForJapaneseTts(text, options = {}) {
 
   const systemPrompt = japaneseTtsTranslatorPrompt(options);
   if (settings.useProxy) {
-    const response = await fetch('/api/chat', {
+    const response = await fetchWithTimeout('/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -188,7 +236,7 @@ async function translateForJapaneseTts(text, options = {}) {
         model: settings.model,
         systemPrompt
       })
-    });
+    }, LLM_TRANSLATION_TIMEOUT_MS, 'Japanese TTS translation');
     const result = await response.json().catch(() => ({}));
     if (!response.ok || !result.success) throw new Error(result.message || `日文翻译失败：LLM ${response.status}`);
     return cleanTtsText(result.data?.reply || '');
@@ -196,7 +244,7 @@ async function translateForJapaneseTts(text, options = {}) {
 
   const apiUrl = normalizeOpenAIUrl(settings.apiUrl);
   const model = settings.model || 'gpt-4o-mini';
-  const response = await fetch(apiUrl, {
+  const response = await fetchWithTimeout(apiUrl, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -219,7 +267,7 @@ async function translateForJapaneseTts(text, options = {}) {
           temperature: isKimiChatTarget(apiUrl, model) ? 1 : 0.2,
           max_tokens: 240
         })
-  });
+  }, LLM_TRANSLATION_TIMEOUT_MS, 'Japanese TTS translation');
   if (!response.ok) throw new Error(`日文翻译失败：LLM ${response.status}`);
   return cleanTtsText(pickReply(await response.json()));
 }
@@ -361,6 +409,11 @@ export function createLive2DSpeechPlayer({ onState } = {}) {
       audio.onplay = null;
       audio.onplaying = null;
       audio.onwaiting = null;
+      audio.onstalled = null;
+      audio.onabort = null;
+      audio.oncanplay = null;
+      audio.onloadedmetadata = null;
+      audio.ontimeupdate = null;
       audio.onpause = null;
       audio.onended = null;
       audio.onerror = null;
@@ -494,7 +547,7 @@ export function createLive2DSpeechPlayer({ onState } = {}) {
 
   async function createAnalysableAudioFromUrl(url) {
     try {
-      const response = await fetch(url);
+      const response = await fetchWithTimeout(url, {}, TTS_FETCH_TIMEOUT_MS, 'TTS audio fetch');
       if (!response.ok) throw new Error(`TTS ${response.status}`);
       return createAudioFromBlob(await response.blob());
     } catch (_) {
@@ -519,7 +572,7 @@ export function createLive2DSpeechPlayer({ onState } = {}) {
       return audio;
     }
 
-    const response = await fetch('/api/tts', {
+    const response = await fetchWithTimeout('/api/tts', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -529,7 +582,7 @@ export function createLive2DSpeechPlayer({ onState } = {}) {
         emotion: normalizeTtsEmotion(options.emotion),
         speechStyle: options.speechStyle || null
       })
-    });
+    }, TTS_FETCH_TIMEOUT_MS, 'TTS synthesis');
     if (!response.ok) {
       const payload = await response.json().catch(() => null);
       throw new Error(payload?.message || `TTS ${response.status}`);
@@ -589,45 +642,116 @@ export function createLive2DSpeechPlayer({ onState } = {}) {
       if (token !== queueToken) throw makeStopError();
       currentAudio = audio;
       audio.preload = 'auto';
-      let mouthStarted = false;
+      let playbackStarted = false;
+      let mouthLoopStarted = false;
       const startMouth = () => {
-        if (mouthStarted || currentAudio !== audio) return;
-        mouthStarted = true;
+        if (currentAudio !== audio || audio.ended) return;
         setState({ status: 'playing', error: '' });
         const mouthText = audio.dataset.speechText || speechText;
-        const durationMs = Number.isFinite(audio.duration) && audio.duration > 0
-          ? Math.round(audio.duration * 1000)
-          : 0;
-        try {
-          options.onStart?.({ audio, speechText, mouthText, durationMs });
-        } catch (_) {
-          // Keep speech playback alive even if a caller-side animation hook fails.
+        if (!playbackStarted) {
+          playbackStarted = true;
+          const durationMs = Number.isFinite(audio.duration) && audio.duration > 0
+            ? Math.round(audio.duration * 1000)
+            : 0;
+          try {
+            options.onStart?.({ audio, speechText, mouthText, durationMs });
+          } catch (_) {
+            // Keep speech playback alive even if a caller-side animation hook fails.
+          }
+          try {
+            onPlaybackStart?.();
+          } catch (_) {
+            // Queue preloading is best-effort and should not interrupt speech.
+          }
         }
-        try {
-          onPlaybackStart?.();
-        } catch (_) {
-          // Queue preloading is best-effort and should not interrupt speech.
-        }
+        if (mouthLoopStarted) return;
+        mouthLoopStarted = true;
         if (audio.dataset.mouthMode === 'envelope') startEnvelopeMouth(mouthText, audio);
         else startSyntheticMouth(mouthText, audio);
       };
-      audio.onplay = () => {
-        stopMouth();
-        setState({ status: 'loading', error: '' });
-      };
-      audio.onplaying = startMouth;
-      audio.onwaiting = () => {
-        stopMouth();
-        if (!audio.ended && currentAudio === audio) setState({ status: 'loading', error: '' });
-      };
-      audio.onpause = () => {
-        if (!audio.ended && currentAudio === audio) stopMouth();
-      };
       await new Promise((resolve, reject) => {
-        currentReject = reject;
-        audio.onended = resolve;
-        audio.onerror = () => reject(new Error('Audio playback failed'));
-        audio.play().catch(reject);
+        let settled = false;
+        let playbackTimer = 0;
+        let stallTimer = 0;
+
+        const cleanupWatchdogs = () => {
+          if (playbackTimer) window.clearTimeout(playbackTimer);
+          if (stallTimer) window.clearTimeout(stallTimer);
+          playbackTimer = 0;
+          stallTimer = 0;
+        };
+        const settle = (callback) => {
+          if (settled) return;
+          settled = true;
+          cleanupWatchdogs();
+          callback();
+        };
+        const fail = (error) => settle(() => reject(error));
+        const finish = () => settle(resolve);
+        const resetPlaybackWatchdog = () => {
+          if (settled) return;
+          if (playbackTimer) window.clearTimeout(playbackTimer);
+          playbackTimer = window.setTimeout(() => {
+            if (currentAudio === audio && !audio.ended) {
+              fail(timeoutError('Audio playback timed out'));
+            }
+          }, playbackTimeoutMs(audio, audio.dataset.speechText || speechText));
+        };
+        const armStallWatchdog = () => {
+          if (settled) return;
+          if (stallTimer) window.clearTimeout(stallTimer);
+          stallTimer = window.setTimeout(() => {
+            if (currentAudio === audio && !audio.ended) {
+              fail(timeoutError('Audio playback stalled'));
+            }
+          }, AUDIO_STALL_TIMEOUT_MS);
+        };
+
+        currentReject = fail;
+        resetPlaybackWatchdog();
+        audio.onplay = () => {
+          if (!playbackStarted) {
+            stopMouth();
+            mouthLoopStarted = false;
+            setState({ status: 'loading', error: '' });
+          }
+        };
+        audio.onplaying = () => {
+          startMouth();
+          armStallWatchdog();
+        };
+        audio.oncanplay = () => {
+          if (!playbackStarted && currentAudio === audio) setState({ status: 'loading', error: '' });
+        };
+        audio.onloadedmetadata = resetPlaybackWatchdog;
+        audio.ontimeupdate = armStallWatchdog;
+        audio.onwaiting = () => {
+          stopMouth();
+          mouthLoopStarted = false;
+          if (!audio.ended && currentAudio === audio) {
+            setState({ status: 'loading', error: '' });
+            if (playbackStarted) armStallWatchdog();
+          }
+        };
+        audio.onstalled = () => {
+          if (playbackStarted && !audio.ended && currentAudio === audio) armStallWatchdog();
+        };
+        audio.onpause = () => {
+          if (!audio.ended && currentAudio === audio) {
+            stopMouth();
+            mouthLoopStarted = false;
+          }
+        };
+        audio.onabort = () => fail(makeStopError());
+        audio.onended = finish;
+        audio.onerror = () => fail(new Error('Audio playback failed'));
+        audio.play()
+          .then(() => {
+            if (settled) return;
+            startMouth();
+            armStallWatchdog();
+          })
+          .catch(fail);
       });
       if (currentAudio === audio) clearCurrentAudio();
       return true;
