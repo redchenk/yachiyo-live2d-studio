@@ -229,7 +229,6 @@ function createReplySentenceEmitter(handlers = {}) {
   let speechBuffer = '';
   let seenDisplay = '';
   let displayBuffer = '';
-  const displayQueue = [];
   let emittedCount = 0;
 
   const emitSentence = (speechText, displayText = '') => {
@@ -262,7 +261,7 @@ function createReplySentenceEmitter(handlers = {}) {
     split.sentences
       .map(cleanReplyForSpeech)
       .filter(Boolean)
-      .forEach((sentence) => displayQueue.push(sentence));
+      .forEach((sentence) => emitSentence(sentence, sentence));
   };
 
   const pushSpeech = (reply, options = {}) => {
@@ -273,12 +272,11 @@ function createReplySentenceEmitter(handlers = {}) {
     }
     const split = splitCompletedSentences(speechBuffer, Boolean(options.flush));
     speechBuffer = split.rest;
-    split.sentences.forEach((sentence) => emitSentence(sentence, displayQueue.shift() || ''));
+    split.sentences.forEach((sentence) => emitSentence(sentence, ''));
   };
 
   const pushUnifiedReply = (reply, options = {}) => {
     pushDisplay(reply, options);
-    pushSpeech(reply, options);
   };
 
   return {
@@ -287,6 +285,7 @@ function createReplySentenceEmitter(handlers = {}) {
       const streamingSpeech = readStreamingSpeechProgress(rawText);
       if (streamingDisplay) {
         pushDisplay(streamingDisplay, { flush: options.flush });
+        return;
       }
       if (streamingSpeech) {
         pushSpeech(streamingSpeech, { flush: options.flush });
@@ -657,20 +656,17 @@ export function live2DControlSystemPrompt() {
 export function live2DStreamingControlSystemPrompt() {
   return [
     'You are controlling a Live2D character named Yachiyo.',
-    'This is a low-latency streaming turn. Start output with paired visible TEXT and Japanese VOICE lines immediately, then output control JSON at the end.',
+    'This is a low-latency streaming turn. Start output with visible Simplified Chinese TEXT lines immediately, then output control JSON at the end.',
     'Output format must be exactly:',
     'TEXT: first tiny Simplified Chinese visible reaction, 1-4 Chinese characters if possible, such as 嗯、 欸嘿、 对呀、 or 啊、.',
-    'VOICE: matching tiny Japanese spoken reaction, 2-6 characters if possible, such as うん、 えへへ、 そうだね、 or あっ、.',
     'TEXT: next short Simplified Chinese visible clause.',
-    'VOICE: matching short natural Japanese spoken clause.',
-    'CONTROL: {"reply":"same Simplified Chinese visible text without TEXT labels","voice_reply":"same Japanese spoken text without VOICE labels","emotion":"smug|happy|shy|surprised|angry|puff|tongue|dizzy|sad|crying|fire|neutral","intensity":0.72,"actions":[{"type":"look_at_chat","duration":1.2},{"type":"smirk","duration":2.0}],"speech_style":{"speed":1.05,"pitch":0.08,"pause":"playful"}}',
-    'Every spoken chunk must be a TEXT line followed immediately by its matching VOICE line.',
+    'TEXT: continue in very small comma-sized Simplified Chinese chunks so captions and TTS can start quickly.',
+    'CONTROL: {"reply":"same Simplified Chinese visible text without TEXT labels","emotion":"smug|happy|shy|surprised|angry|puff|tongue|dizzy|sad|crying|fire|neutral","intensity":0.72,"actions":[{"type":"look_at_chat","duration":1.2},{"type":"smirk","duration":2.0}],"speech_style":{"speed":1.05,"pitch":0.08,"pause":"playful"}}',
     'TEXT is for captions and chat log. TEXT must be Simplified Chinese, never Japanese.',
-    'VOICE is for TTS only. VOICE must be natural Japanese, never shown to the user.',
-    'Do not wait to decide actions before writing the first TEXT/VOICE pair.',
-    'Emit the first TEXT/VOICE pair before planning the full answer. Do not wait for CONTROL before speaking.',
-    'Keep each TEXT/VOICE pair short: one comma-delimited clause or about 5-8 CJK characters per pair is ideal.',
-    'VOICE lines must contain only natural Japanese dialogue. Never put stage directions, parenthesized action hints, asterisk actions, action labels, pose descriptions, or JSON in VOICE.',
+    'Do not output VOICE lines. The TTS layer will translate TEXT to Japanese by itself.',
+    'Do not wait to decide actions before writing the first TEXT line.',
+    'Emit the first TEXT before planning the full answer. Do not wait for CONTROL before speaking.',
+    'Keep each TEXT line short: one comma-delimited clause or about 5-8 Chinese characters per TEXT line is ideal.',
     'TEXT lines must contain only visible dialogue. Never put stage directions, parenthesized action hints, asterisk actions, action labels, pose descriptions, or JSON in TEXT.',
     'CONTROL must be one JSON object after the CONTROL label. The reply field must exactly match the visible TEXT text.',
     'Choose 2-5 semantic actions that match the spoken meaning and mood.',

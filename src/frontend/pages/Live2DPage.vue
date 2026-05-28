@@ -499,7 +499,7 @@ function buildLiveDirectorPrompt(audienceLines, options = {}) {
     'Use emotion plus actions instead of raw Live2D parameters. Let the behavior controller map actions to VTube Studio tracking curves.',
     'Never show action cues in the spoken reply or caption: no parentheses, no asterisk actions, no Action/Pose labels, and no body descriptions in reply. Put movement only in the actions array.',
     options.streaming
-      ? 'Streaming mode: follow the system format exactly, with paired TEXT and VOICE lines first and CONTROL JSON last. TEXT is Simplified Chinese for captions; VOICE is Japanese for TTS.'
+      ? 'Streaming mode: follow the system format exactly, with short Simplified Chinese TEXT lines first and CONTROL JSON last. Do not output VOICE; TTS handles Japanese translation.'
       : 'Return the required JSON object only.'
   ].join('\n');
 }
