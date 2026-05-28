@@ -15,6 +15,53 @@ import {
 import { readJson, writeJson } from './roomStorage';
 
 const HISTORY_KEY = 'live2dLLMControlHistory';
+const SENTENCE_END_PATTERN = /[。！？!?…\n]/u;
+const SENTENCE_TRAILING_PATTERN = /[\s"'”’）)\]】》」』]+/u;
+const SPEECH_STYLE_BY_EMOTION = {
+  happy: { speed: 1.08, pitch: 0.08, pause: 'bright' },
+  smile: { speed: 1.06, pitch: 0.07, pause: 'warm' },
+  smug: { speed: 1.04, pitch: 0.05, pause: 'teasing' },
+  shy: { speed: 0.96, pitch: 0.07, pause: 'soft' },
+  surprised: { speed: 1.12, pitch: 0.11, pause: 'startled' },
+  angry: { speed: 1.08, pitch: -0.02, pause: 'firm' },
+  puff: { speed: 1.02, pitch: 0.03, pause: 'pouting' },
+  tongue: { speed: 1.07, pitch: 0.08, pause: 'playful' },
+  dizzy: { speed: 0.92, pitch: -0.02, pause: 'confused' },
+  sad: { speed: 0.9, pitch: -0.06, pause: 'tender' },
+  crying: { speed: 0.88, pitch: -0.08, pause: 'tearful' },
+  fire: { speed: 1.12, pitch: 0.02, pause: 'energetic' },
+  neutral: { speed: 1, pitch: 0, pause: 'natural' }
+};
+
+const SENTENCE_EMOTION_RULES = [
+  { emotion: 'fire', pattern: /(燃|爆发|爆發|热血|熱血|认真|認真|furious|rage|fired up|serious)/iu },
+  { emotion: 'angry', pattern: /(生气|生氣|愤怒|憤怒|烦|煩|恼火|惱火|angry|annoyed|irritated|mad|scold)/iu },
+  { emotion: 'surprised', pattern: /(惊讶|驚訝|震惊|震驚|吓|嚇|哇|wow|surpris|shock|startled|really\?)/iu },
+  { emotion: 'puff', pattern: /(鼓脸|鼓臉|撅嘴|不服|哼|pout|puff|sulk|cheek puff)/iu },
+  { emotion: 'tongue', pattern: /(吐舌|调皮|調皮|捣蛋|搗蛋|恶作剧|惡作劇|tongue|blep|cheeky|mischief|teasing)/iu },
+  { emotion: 'dizzy', pattern: /(晕|暈|困惑|慌|糊涂|糊塗|dizzy|confused|dazed|overwhelmed|panic)/iu },
+  { emotion: 'crying', pattern: /(大哭|哭泣|流泪|流淚|痛哭|crying|tears|sob|weeping|泣く|泣いて)/iu },
+  { emotion: 'sad', pattern: /(难过|難過|悲伤|悲傷|伤心|傷心|寂寞|眼泪|眼淚|sad|sorrow|lonely|悲しい)/iu },
+  { emotion: 'smug', pattern: /(得意|坏笑|壞笑|小坏|小壞|smug|smirk|sly|confident)/iu },
+  { emotion: 'shy', pattern: /(害羞|脸红|臉紅|不好意思|照れ|shy|blush|embarrassed|bashful|flustered)/iu },
+  { emotion: 'happy', pattern: /(开心|開心|高兴|高興|愉快|微笑|笑|喜欢|喜歡|happy|smile|joy|cheerful|嬉しい|優しい)/iu }
+];
+
+const SENTENCE_ACTIONS_BY_EMOTION = {
+  happy: [{ type: 'smile', duration: 1.2 }, { type: 'bounce', duration: 1.1, delay: 0.1 }, { type: 'nod', duration: 1.15, delay: 0.22 }],
+  smile: [{ type: 'smile', duration: 1.25 }, { type: 'sway', duration: 1.25, delay: 0.12 }, { type: 'look_at_chat', duration: 0.9, delay: 0.28 }],
+  smug: [{ type: 'smirk', duration: 1.25 }, { type: 'lean_in', duration: 1.2, delay: 0.12 }, { type: 'head_tilt', side: 'random', duration: 1.1, delay: 0.22 }],
+  shy: [{ type: 'smile', duration: 1.1 }, { type: 'blink', duration: 0.34, delay: 0.1 }, { type: 'sway', duration: 1.25, delay: 0.24 }],
+  surprised: [{ type: 'surprised', duration: 0.95 }, { type: 'lean_in', duration: 1.1, delay: 0.08 }, { type: 'bounce', duration: 1, delay: 0.22 }],
+  angry: [{ type: 'lean_in', duration: 1.2 }, { type: 'emphasis', duration: 0.95, delay: 0.12 }, { type: 'shake_head', duration: 1.05, delay: 0.28 }],
+  puff: [{ type: 'shake_head', duration: 0.95 }, { type: 'sway', duration: 1.2, delay: 0.12 }, { type: 'look_at_chat', duration: 0.9, delay: 0.26 }],
+  tongue: [{ type: 'smirk', duration: 1.1 }, { type: 'wink', side: 'random', duration: 0.52, delay: 0.12 }, { type: 'lean_in', duration: 1.05, delay: 0.24 }],
+  dizzy: [{ type: 'shake_head', duration: 1.05 }, { type: 'sway', duration: 1.25, delay: 0.12 }, { type: 'blink', duration: 0.34, delay: 0.5 }],
+  sad: [{ type: 'breathe', duration: 1.4 }, { type: 'nod', duration: 1.15, delay: 0.16 }, { type: 'look_at_chat', duration: 0.9, delay: 0.34 }],
+  crying: [{ type: 'shiver', duration: 1.05 }, { type: 'breathe', duration: 1.25, delay: 0.2 }, { type: 'nod', duration: 1.1, delay: 0.36 }],
+  fire: [{ type: 'lean_in', duration: 1.15 }, { type: 'emphasis', duration: 0.95, delay: 0.12 }, { type: 'bounce', duration: 0.95, delay: 0.28 }],
+  neutral: [{ type: 'look_at_chat', duration: 0.95 }, { type: 'breathe', duration: 1.35, delay: 0.1 }]
+};
 
 function pickReply(data) {
   if (data?.output_text) return String(data.output_text || '').trim();
@@ -46,6 +93,210 @@ function extractJsonObject(text) {
   return start >= 0 && end > start ? value.slice(start, end + 1).trim() : value;
 }
 
+function escapeRegExp(text) {
+  return String(text || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function decodeJsonEscape(char, tail) {
+  if (char === 'n') return ['\n', 0];
+  if (char === 'r') return ['\r', 0];
+  if (char === 't') return ['\t', 0];
+  if (char === 'b') return ['\b', 0];
+  if (char === 'f') return ['\f', 0];
+  if (char === 'u') {
+    const hex = tail.slice(0, 4);
+    if (/^[0-9a-f]{4}$/i.test(hex)) return [String.fromCharCode(parseInt(hex, 16)), 4];
+    return ['', -1];
+  }
+  return [char, 0];
+}
+
+function readJsonStringFieldProgress(text, fieldName) {
+  const value = String(text || '').replace(/<think>[\s\S]*?<\/think>/gi, '');
+  const marker = new RegExp(`"${escapeRegExp(fieldName)}"\\s*:\\s*"`, 'i').exec(value);
+  if (!marker) return { value: '', complete: false, found: false };
+
+  let result = '';
+  let index = marker.index + marker[0].length;
+  while (index < value.length) {
+    const char = value[index];
+    if (char === '"') return { value: result, complete: true, found: true };
+    if (char === '\\') {
+      const next = value[index + 1];
+      if (!next) break;
+      const [decoded, consumed] = decodeJsonEscape(next, value.slice(index + 2));
+      if (consumed < 0) break;
+      result += decoded;
+      index += 2 + consumed;
+      continue;
+    }
+    result += char;
+    index += 1;
+  }
+  return { value: result, complete: false, found: true };
+}
+
+function readReplyFieldProgress(text) {
+  for (const fieldName of ['reply', 'text', 'message']) {
+    const field = readJsonStringFieldProgress(text, fieldName);
+    if (field.found) return field;
+  }
+  return { value: '', complete: false, found: false };
+}
+
+function findSentenceCutIndex(text) {
+  for (let index = 0; index < text.length; index += 1) {
+    if (!SENTENCE_END_PATTERN.test(text[index])) continue;
+    let endIndex = index + 1;
+    while (endIndex < text.length && SENTENCE_TRAILING_PATTERN.test(text[endIndex])) {
+      endIndex += 1;
+    }
+    return endIndex;
+  }
+  return -1;
+}
+
+function splitCompletedSentences(buffer, flush = false) {
+  const sentences = [];
+  let rest = String(buffer || '');
+  while (rest) {
+    const cutIndex = findSentenceCutIndex(rest);
+    if (cutIndex < 0) break;
+    const sentence = rest.slice(0, cutIndex).trim();
+    if (sentence) sentences.push(sentence);
+    rest = rest.slice(cutIndex);
+  }
+  if (flush && rest.trim()) {
+    sentences.push(rest.trim());
+    rest = '';
+  }
+  return { sentences, rest };
+}
+
+function createReplySentenceEmitter(handlers = {}) {
+  let seenReply = '';
+  let sentenceBuffer = '';
+  let emittedCount = 0;
+
+  const emitSentence = (text) => {
+    const sentence = cleanReplyForSpeech(text);
+    if (!sentence) return;
+    const analysis = analyzeLive2DSentenceEmotion(sentence);
+    emittedCount += 1;
+    handlers.onSentence?.({
+      index: emittedCount,
+      text: sentence,
+      emotion: analysis.emotion,
+      speechStyle: analysis.speechStyle,
+      live2d: buildSentenceLive2DIntent(sentence, analysis.emotion, analysis.speechStyle)
+    });
+  };
+
+  const pushReply = (reply, options = {}) => {
+    const current = String(reply || '');
+    if (current.length > seenReply.length) {
+      sentenceBuffer += current.slice(seenReply.length);
+      seenReply = current;
+    }
+    const split = splitCompletedSentences(sentenceBuffer, Boolean(options.flush));
+    sentenceBuffer = split.rest;
+    split.sentences.forEach(emitSentence);
+  };
+
+  return {
+    pushRaw(rawText, options = {}) {
+      const field = readReplyFieldProgress(rawText);
+      if (!field.found) return;
+      pushReply(field.value, { flush: options.flush || field.complete });
+    },
+    flushReply(reply) {
+      pushReply(reply, { flush: true });
+    },
+    get emittedCount() {
+      return emittedCount;
+    }
+  };
+}
+
+function parseSsePacket(packet) {
+  const lines = String(packet || '').split(/\r?\n/);
+  let event = 'message';
+  const dataLines = [];
+  for (const line of lines) {
+    if (line.startsWith('event:')) {
+      event = line.slice(6).trim() || 'message';
+    } else if (line.startsWith('data:')) {
+      dataLines.push(line.slice(5).trimStart());
+    }
+  }
+  return { event, data: dataLines.join('\n') };
+}
+
+function pickStreamDelta(data) {
+  if (!data || typeof data !== 'object') return '';
+  if (typeof data.delta === 'string') return data.delta;
+  if (typeof data.text === 'string' && /delta/i.test(String(data.type || ''))) return data.text;
+  if (typeof data.output_text_delta === 'string') return data.output_text_delta;
+  if (Array.isArray(data.choices)) {
+    return data.choices
+      .map((choice) => choice?.delta?.content || choice?.delta?.text || choice?.text || choice?.message?.content || '')
+      .join('');
+  }
+  return pickReply(data);
+}
+
+async function readStreamingTextResponse(response, handlers = {}) {
+  const contentType = response.headers?.get?.('content-type') || '';
+  if (!/event-stream|stream/i.test(contentType)) {
+    const data = await response.json().catch(() => null);
+    const text = pickReply(data);
+    if (text) handlers.onText?.(text, text, data);
+    return text;
+  }
+
+  if (!response.body?.getReader) {
+    const data = await response.json().catch(() => null);
+    return pickReply(data);
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let packetBuffer = '';
+  let rawText = '';
+
+  const handlePacket = (packet) => {
+    const { event, data } = parseSsePacket(packet);
+    if (!data || data === '[DONE]') return;
+    let payload = null;
+    try {
+      payload = JSON.parse(data);
+    } catch (_) {
+      rawText += data;
+      handlers.onText?.(data, rawText);
+      return;
+    }
+    if (event === 'error' || payload?.success === false) {
+      throw new Error(payload?.message || payload?.error?.message || 'LLM stream failed');
+    }
+    const delta = pickStreamDelta(payload);
+    if (!delta) return;
+    rawText += delta;
+    handlers.onText?.(delta, rawText, payload);
+  };
+
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    packetBuffer += decoder.decode(value, { stream: true });
+    const packets = packetBuffer.split(/\r?\n\r?\n/);
+    packetBuffer = packets.pop() || '';
+    for (const packet of packets) handlePacket(packet);
+  }
+  packetBuffer += decoder.decode();
+  if (packetBuffer.trim()) handlePacket(packetBuffer);
+  return rawText;
+}
+
 function cleanReply(text) {
   return String(text || '')
     .replace(/<think>[\s\S]*?<\/think>/gi, '')
@@ -56,6 +307,49 @@ function cleanReply(text) {
 
 function cleanReplyForSpeech(text) {
   return cleanLive2DReply(text);
+}
+
+function normalizeEmotion(value, fallback = 'neutral') {
+  const token = String(value || '').trim().toLowerCase().replace(/[\s-]+/g, '_');
+  if (token === 'smile') return 'happy';
+  if (token === 'tears' || token === 'namida') return token === 'namida' ? 'sad' : 'crying';
+  return SPEECH_STYLE_BY_EMOTION[token] ? token : fallback;
+}
+
+function speechStyleForEmotion(emotion, overrides = null) {
+  return {
+    ...(SPEECH_STYLE_BY_EMOTION[normalizeEmotion(emotion)] || SPEECH_STYLE_BY_EMOTION.neutral),
+    ...(overrides && typeof overrides === 'object' ? overrides : {})
+  };
+}
+
+export function analyzeLive2DSentenceEmotion(text, fallbackEmotion = 'neutral') {
+  const value = String(text || '').trim();
+  const rule = SENTENCE_EMOTION_RULES.find((item) => item.pattern.test(value));
+  const inferred = inferLive2DIntentFromText(value);
+  const emotion = normalizeEmotion(rule?.emotion || inferred?.emotion || inferred?.expression, normalizeEmotion(fallbackEmotion));
+  return {
+    emotion,
+    speechStyle: speechStyleForEmotion(emotion)
+  };
+}
+
+function sentenceActionsForEmotion(emotion) {
+  const actions = SENTENCE_ACTIONS_BY_EMOTION[normalizeEmotion(emotion)] || SENTENCE_ACTIONS_BY_EMOTION.neutral;
+  return actions.map((action) => ({ ...action }));
+}
+
+function buildSentenceLive2DIntent(text, emotion, speechStyle = null) {
+  const analyzedEmotion = normalizeEmotion(emotion);
+  const behaviorIntent = compileBehaviorIntent({
+    reply: text,
+    emotion: analyzedEmotion,
+    intensity: analyzedEmotion === 'neutral' ? 0.58 : 0.72,
+    actions: sentenceActionsForEmotion(analyzedEmotion),
+    speech_style: speechStyle || speechStyleForEmotion(analyzedEmotion)
+  });
+  const inferredIntent = inferLive2DIntentFromText(text);
+  return mergeBehaviorAndExplicitIntent(behaviorIntent, inferredIntent) || behaviorIntent || inferredIntent;
 }
 
 function hasBodyPose(intent) {
@@ -230,6 +524,27 @@ function buildDirectRequestBody(settings, systemPrompt, history, message) {
   };
 }
 
+function buildStreamingDirectRequestBody(settings, systemPrompt, history, message) {
+  return {
+    ...buildDirectRequestBody(settings, systemPrompt, history, message),
+    stream: true
+  };
+}
+
+function finishLive2DControlRequest(message, history, rawReply, sentenceEmitter = null) {
+  const parsed = parseLive2DControlPayload(rawReply);
+  if (sentenceEmitter && sentenceEmitter.emittedCount < 1) {
+    sentenceEmitter.flushReply(parsed.reply);
+  }
+  const nextHistory = [
+    ...history,
+    { role: 'user', content: String(message || '') },
+    { role: 'assistant', content: parsed.reply }
+  ].slice(-8);
+  writeJson(HISTORY_KEY, nextHistory);
+  return parsed;
+}
+
 export function live2DControlSystemPrompt() {
   return [
     'You are controlling a Live2D character named Yachiyo.',
@@ -300,12 +615,71 @@ export async function requestLive2DControl(message) {
     rawReply = pickReply(await response.json());
   }
 
-  const parsed = parseLive2DControlPayload(rawReply);
-  const nextHistory = [
-    ...history,
-    { role: 'user', content: String(message || '') },
-    { role: 'assistant', content: parsed.reply }
-  ].slice(-8);
-  writeJson(HISTORY_KEY, nextHistory);
+  return finishLive2DControlRequest(message, history, rawReply);
+}
+
+export async function requestLive2DControlStream(message, handlers = {}) {
+  const settings = readJson('roomLLMSettings', {});
+  if (!settings.apiKey || !settings.apiUrl) {
+    throw new Error('Missing LLM settings. Configure LLM in Studio Settings first.');
+  }
+
+  const history = readLive2DLLMHistory();
+  const systemPrompt = [settings.systemPrompt, live2DControlSystemPrompt()].filter(Boolean).join('\n\n');
+  const sentenceEmitter = createReplySentenceEmitter(handlers);
+  let rawReply = '';
+
+  if (settings.useProxy) {
+    const response = await fetch('/api/chat/stream', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        message,
+        conversation: history,
+        apiKey: settings.apiKey,
+        apiUrl: settings.apiUrl,
+        model: settings.model,
+        systemPrompt
+      })
+    });
+    if (!response.ok) {
+      if (response.status === 404 || response.status === 405) {
+        const fallback = await requestLive2DControl(message);
+        sentenceEmitter.flushReply(fallback.reply);
+        handlers.onDone?.(fallback);
+        return fallback;
+      }
+      const result = await response.json().catch(() => ({}));
+      throw new Error(result.message || `LLM ${response.status}`);
+    }
+    rawReply = await readStreamingTextResponse(response, {
+      onText: (delta, accumulated) => {
+        sentenceEmitter.pushRaw(accumulated);
+        handlers.onDelta?.({ delta, raw: accumulated });
+      }
+    });
+  } else {
+    const apiUrl = normalizeOpenAIUrl(settings.apiUrl);
+    const response = await fetch(apiUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${settings.apiKey}`,
+        ...openRouterHeaders(apiUrl)
+      },
+      body: JSON.stringify(buildStreamingDirectRequestBody({ ...settings, apiUrl }, systemPrompt, history, message))
+    });
+    if (!response.ok) throw new Error(`LLM ${response.status}`);
+    rawReply = await readStreamingTextResponse(response, {
+      onText: (delta, accumulated) => {
+        sentenceEmitter.pushRaw(accumulated);
+        handlers.onDelta?.({ delta, raw: accumulated });
+      }
+    });
+  }
+
+  sentenceEmitter.pushRaw(rawReply, { flush: true });
+  const parsed = finishLive2DControlRequest(message, history, rawReply, sentenceEmitter);
+  handlers.onDone?.(parsed);
   return parsed;
 }

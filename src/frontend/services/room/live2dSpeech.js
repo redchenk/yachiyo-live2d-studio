@@ -3,6 +3,24 @@ import { cleanLive2DReply } from './live2dText';
 
 const DEFAULT_GPT_SOVITS_GPT_WEIGHT = 'GPT_weights_v2ProPlus/yachiyo-v2pro-e15.ckpt';
 const DEFAULT_GPT_SOVITS_SOVITS_WEIGHT = 'SoVITS_weights_v2ProPlus/yachiyo-v2pro_e8_s456.pth';
+const MAX_TTS_PREFETCH = 3;
+const TTS_EMOTION_GUIDES = {
+  happy: 'bright, smiling, lively',
+  smile: 'warm, gentle, smiling',
+  smug: 'playful, teasing, confident',
+  shy: 'soft, bashful, slightly embarrassed',
+  surprised: 'quick, amazed, curious',
+  angry: 'firm, cute-annoyed, energetic',
+  puff: 'pouting, cute-annoyed, stubborn',
+  tongue: 'playful, cheeky, teasing',
+  dizzy: 'confused, wobbly, uncertain',
+  sad: 'quiet, tender, a little sad',
+  crying: 'tearful, fragile, emotional',
+  fire: 'energetic, determined, intense',
+  neutral: 'natural, conversational'
+};
+let gptSovitsWeightsSignature = '';
+let gptSovitsWeightsPromise = null;
 
 function defaultTtsUrl(provider) {
   return provider === 'gpt-sovits' ? 'http://localhost:9880/tts' : '';
@@ -106,7 +124,7 @@ function cleanTtsText(text) {
     .trim();
 }
 
-function japaneseTtsTranslatorPrompt() {
+function legacyJapaneseTtsTranslatorPrompt() {
   return [
     '你是给 TTS 使用的日文翻译器。',
     '把用户提供的文本翻译成自然、适合朗读的日文。',
@@ -117,7 +135,38 @@ function japaneseTtsTranslatorPrompt() {
   ].join('\n');
 }
 
-async function translateForJapaneseTts(text) {
+function normalizeTtsEmotion(value) {
+  const token = String(value || '').trim().toLowerCase().replace(/[\s-]+/g, '_');
+  if (token === 'namida') return 'sad';
+  if (token === 'tears') return 'crying';
+  if (token === 'smile') return 'happy';
+  return TTS_EMOTION_GUIDES[token] ? token : 'neutral';
+}
+
+function ttsEmotionGuide(options = {}) {
+  const emotion = normalizeTtsEmotion(options.emotion);
+  const style = options.speechStyle && typeof options.speechStyle === 'object' ? options.speechStyle : {};
+  return [
+    `Emotion: ${emotion}.`,
+    `Delivery: ${TTS_EMOTION_GUIDES[emotion] || TTS_EMOTION_GUIDES.neutral}.`,
+    style.pause ? `Timing: ${String(style.pause).trim()}.` : '',
+    Number.isFinite(Number(style.speed)) ? `Relative speed: ${Number(style.speed).toFixed(2)}.` : '',
+    Number.isFinite(Number(style.pitch)) ? `Relative pitch: ${Number(style.pitch).toFixed(2)}.` : ''
+  ].filter(Boolean).join(' ');
+}
+
+function japaneseTtsTranslatorPrompt(options = {}) {
+  return [
+    'You are a Japanese line adapter for TTS.',
+    'Translate the user-provided spoken line into natural Japanese that is easy to read aloud.',
+    'Output only the Japanese spoken line. Do not use Markdown or explanations.',
+    'Remove all parenthesized action hints, asterisk actions, stage directions, emotion labels, pose descriptions, and asides.',
+    'Keep names, VTuber flavor, and the intended emotional delivery.',
+    ttsEmotionGuide(options)
+  ].join('\n');
+}
+
+async function translateForJapaneseTts(text, options = {}) {
   const source = cleanTtsText(text);
   if (!source) return '';
   const settings = readRoomLLMSettings();
@@ -125,7 +174,7 @@ async function translateForJapaneseTts(text) {
     throw new Error('请先在 Studio Settings 里配置 LLM，用于把 GPT-SoVITS 文本翻译成日文后再播放。');
   }
 
-  const systemPrompt = japaneseTtsTranslatorPrompt();
+  const systemPrompt = japaneseTtsTranslatorPrompt(options);
   if (settings.useProxy) {
     const response = await fetch('/api/chat', {
       method: 'POST',
@@ -203,13 +252,38 @@ function requestLocalGptSovitsControl(url, timeout = 70000) {
   });
 }
 
+function gptSovitsWeightSignature(settings) {
+  const url = normalizeLocalGptSovitsUrl(settings.apiUrl || defaultTtsUrl(settings.provider));
+  return [
+    url.origin,
+    settings.gptWeightPath || DEFAULT_GPT_SOVITS_GPT_WEIGHT,
+    settings.sovitsWeightPath || DEFAULT_GPT_SOVITS_SOVITS_WEIGHT
+  ].join('|');
+}
+
 async function ensureGptSovitsWeights(settings) {
-  await requestLocalGptSovitsControl(buildGptSovitsControlUrl(settings, '/set_gpt_weights', {
-    weights_path: settings.gptWeightPath || DEFAULT_GPT_SOVITS_GPT_WEIGHT
-  }));
-  await requestLocalGptSovitsControl(buildGptSovitsControlUrl(settings, '/set_sovits_weights', {
-    weights_path: settings.sovitsWeightPath || DEFAULT_GPT_SOVITS_SOVITS_WEIGHT
-  }));
+  const signature = gptSovitsWeightSignature(settings);
+  if (gptSovitsWeightsSignature === signature && gptSovitsWeightsPromise) {
+    await gptSovitsWeightsPromise;
+    return;
+  }
+
+  gptSovitsWeightsSignature = signature;
+  gptSovitsWeightsPromise = (async () => {
+    await requestLocalGptSovitsControl(buildGptSovitsControlUrl(settings, '/set_gpt_weights', {
+      weights_path: settings.gptWeightPath || DEFAULT_GPT_SOVITS_GPT_WEIGHT
+    }));
+    await requestLocalGptSovitsControl(buildGptSovitsControlUrl(settings, '/set_sovits_weights', {
+      weights_path: settings.sovitsWeightPath || DEFAULT_GPT_SOVITS_SOVITS_WEIGHT
+    }));
+  })().catch((error) => {
+    if (gptSovitsWeightsSignature === signature) {
+      gptSovitsWeightsSignature = '';
+      gptSovitsWeightsPromise = null;
+    }
+    throw error;
+  });
+  await gptSovitsWeightsPromise;
 }
 
 function buildGptSovitsAudioUrl(text, settings) {
@@ -242,9 +316,12 @@ function stopAnimationFrame(id) {
 
 export function createLive2DSpeechPlayer({ onState } = {}) {
   let currentAudio = null;
-  let objectUrl = '';
   let frameId = 0;
   let audioContext = null;
+  let currentReject = null;
+  let queueToken = 0;
+  let queueRunning = false;
+  const speechQueue = [];
   const audioEnvelopes = new WeakMap();
 
   function setState(patch) {
@@ -257,20 +334,54 @@ export function createLive2DSpeechPlayer({ onState } = {}) {
     dispatchMouth(0);
   }
 
-  function stop() {
+  function makeStopError() {
+    const error = new Error('Speech stopped');
+    error.name = 'AbortError';
+    return error;
+  }
+
+  function isStopError(error) {
+    return error?.name === 'AbortError';
+  }
+
+  function releaseAudio(audio) {
+    const url = audio?.dataset?.objectUrl || '';
+    if (url) {
+      URL.revokeObjectURL(url);
+      audio.dataset.objectUrl = '';
+    }
+  }
+
+  function clearCurrentAudio() {
     stopMouth();
     if (currentAudio) {
+      const audio = currentAudio;
       currentAudio.pause();
-      currentAudio.onplay = null;
-      currentAudio.onplaying = null;
-      currentAudio.onwaiting = null;
-      currentAudio.onpause = null;
-      currentAudio.onended = null;
-      currentAudio.onerror = null;
+      audio.onplay = null;
+      audio.onplaying = null;
+      audio.onwaiting = null;
+      audio.onpause = null;
+      audio.onended = null;
+      audio.onerror = null;
       currentAudio = null;
+      releaseAudio(audio);
     }
-    if (objectUrl) URL.revokeObjectURL(objectUrl);
-    objectUrl = '';
+    currentReject = null;
+  }
+
+  function rejectQueued(error = makeStopError()) {
+    while (speechQueue.length) {
+      const item = speechQueue.shift();
+      if (item.audio) releaseAudio(item.audio);
+      item.reject(error);
+    }
+  }
+
+  function stop() {
+    queueToken += 1;
+    rejectQueued();
+    if (currentReject) currentReject(makeStopError());
+    clearCurrentAudio();
     setState({ status: 'idle', error: '' });
   }
 
@@ -352,8 +463,9 @@ export function createLive2DSpeechPlayer({ onState } = {}) {
   }
 
   async function createAudioFromBlob(blob) {
-    objectUrl = URL.createObjectURL(blob);
-    const audio = new Audio(objectUrl);
+    const url = URL.createObjectURL(blob);
+    const audio = new Audio(url);
+    audio.dataset.objectUrl = url;
     const envelope = await buildMouthEnvelope(blob);
     if (envelope?.values?.length) {
       audioEnvelopes.set(audio, envelope);
@@ -376,10 +488,10 @@ export function createLive2DSpeechPlayer({ onState } = {}) {
     }
   }
 
-  async function makeAudio(text, settings) {
+  async function makeAudio(text, settings, options = {}) {
     const directLocalGptSovits = settings.provider === 'gpt-sovits' && !settings.useProxy;
     if (directLocalGptSovits) {
-      const ttsText = await translateForJapaneseTts(text);
+      const ttsText = await translateForJapaneseTts(text, options);
       if (!ttsText) throw new Error('日文翻译结果为空，已取消语音播放。');
       await ensureGptSovitsWeights(settings);
       const audio = await createAnalysableAudioFromUrl(buildGptSovitsAudioUrl(ttsText, {
@@ -394,7 +506,13 @@ export function createLive2DSpeechPlayer({ onState } = {}) {
     const response = await fetch('/api/tts', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...settings, text, textLang: settings.textLang || 'auto' })
+      body: JSON.stringify({
+        ...settings,
+        text,
+        textLang: settings.textLang || 'auto',
+        emotion: normalizeTtsEmotion(options.emotion),
+        speechStyle: options.speechStyle || null
+      })
     });
     if (!response.ok) {
       const payload = await response.json().catch(() => null);
@@ -403,18 +521,56 @@ export function createLive2DSpeechPlayer({ onState } = {}) {
     return createAudioFromBlob(await response.blob());
   }
 
-  async function play(text, options = {}) {
+  function prepareQueueItem(item, token, options = {}) {
+    if (item.audioPromise) return item.audioPromise;
+    const settings = readRoomTTSSettings();
+    if (!settings.enabled) {
+      item.audioPromise = Promise.resolve(null);
+      return item.audioPromise;
+    }
+    if (options.notifyLoading) {
+      setState({ status: 'loading', error: '' });
+    }
+    item.audioPromise = makeAudio(item.text, settings, item.options)
+      .then((audio) => {
+        if (token !== queueToken) {
+          releaseAudio(audio);
+          throw makeStopError();
+        }
+        item.audio = audio;
+        return audio;
+      });
+    return item.audioPromise;
+  }
+
+  function preloadQueuedAudio(token) {
+    if (token !== queueToken) return;
+    const preparedCount = speechQueue.filter((item) => item.audioPromise).length;
+    const budget = Math.max(0, MAX_TTS_PREFETCH - preparedCount);
+    if (!budget) return;
+    speechQueue
+      .filter((item) => !item.audioPromise)
+      .slice(0, budget)
+      .forEach((item) => {
+        prepareQueueItem(item, token).catch(() => {});
+      });
+  }
+
+  async function playInternal(text, options = {}, token = queueToken, preparedAudioPromise = null, onPlaybackStart = null) {
     const speechText = cleanTtsText(text);
-    if (!speechText) return;
+    if (!speechText) return false;
     const settings = readRoomTTSSettings();
     if (!settings.enabled) {
       setState({ status: 'disabled', error: '' });
-      return;
+      return false;
     }
-    stop();
     setState({ status: 'loading', error: '' });
     try {
-      const audio = await makeAudio(speechText, settings);
+      const audio = preparedAudioPromise
+        ? await preparedAudioPromise
+        : await makeAudio(speechText, settings, options);
+      if (!audio) return false;
+      if (token !== queueToken) throw makeStopError();
       currentAudio = audio;
       audio.preload = 'auto';
       let mouthStarted = false;
@@ -430,6 +586,11 @@ export function createLive2DSpeechPlayer({ onState } = {}) {
           options.onStart?.({ audio, speechText, mouthText, durationMs });
         } catch (_) {
           // Keep speech playback alive even if a caller-side animation hook fails.
+        }
+        try {
+          onPlaybackStart?.();
+        } catch (_) {
+          // Queue preloading is best-effort and should not interrupt speech.
         }
         if (audio.dataset.mouthMode === 'envelope') startEnvelopeMouth(mouthText, audio);
         else startSyntheticMouth(mouthText, audio);
@@ -447,16 +608,73 @@ export function createLive2DSpeechPlayer({ onState } = {}) {
         if (!audio.ended && currentAudio === audio) stopMouth();
       };
       await new Promise((resolve, reject) => {
+        currentReject = reject;
         audio.onended = resolve;
         audio.onerror = () => reject(new Error('Audio playback failed'));
         audio.play().catch(reject);
       });
-      if (currentAudio === audio) stop();
+      if (currentAudio === audio) clearCurrentAudio();
+      return true;
     } catch (error) {
-      stop();
+      clearCurrentAudio();
+      if (isStopError(error)) return false;
       setState({ status: 'error', error: error.message || 'TTS failed' });
       throw error;
     }
+  }
+
+  async function play(text, options = {}) {
+    const speechText = cleanTtsText(text);
+    if (!speechText) return;
+    stop();
+    queueToken += 1;
+    await playInternal(speechText, options, queueToken);
+    setState({ status: 'idle', error: '' });
+  }
+
+  async function runQueue(token) {
+    if (queueRunning) return;
+    queueRunning = true;
+    try {
+      while (speechQueue.length && token === queueToken) {
+        const item = speechQueue.shift();
+        try {
+          const audioPromise = prepareQueueItem(item, token, { notifyLoading: true });
+          const played = await playInternal(item.text, item.options, token, audioPromise, () => preloadQueuedAudio(token));
+          if (played === false) item.reject(makeStopError());
+          else item.resolve();
+        } catch (error) {
+          item.reject(error);
+        }
+      }
+    } finally {
+      queueRunning = false;
+      if (token === queueToken && !currentAudio && speechQueue.length < 1) {
+        setState({ status: 'idle', error: '' });
+      }
+      if (speechQueue.length) {
+        runQueue(queueToken);
+      }
+    }
+  }
+
+  function enqueue(text, options = {}) {
+    const speechText = cleanTtsText(text);
+    if (!speechText) return Promise.resolve();
+    const settings = readRoomTTSSettings();
+    if (!settings.enabled) {
+      setState({ status: 'disabled', error: '' });
+      return Promise.resolve();
+    }
+    return new Promise((resolve, reject) => {
+      speechQueue.push({ text: speechText, options, resolve, reject });
+      preloadQueuedAudio(queueToken);
+      runQueue(queueToken);
+    });
+  }
+
+  function clearQueue() {
+    rejectQueued();
   }
 
   function destroy() {
@@ -467,5 +685,5 @@ export function createLive2DSpeechPlayer({ onState } = {}) {
     }
   }
 
-  return { play, stop, destroy };
+  return { play, enqueue, playQueued: enqueue, clearQueue, stop, destroy };
 }

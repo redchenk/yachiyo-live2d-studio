@@ -366,6 +366,12 @@ internal sealed class LocalStudioServer : IDisposable
                 return;
             }
 
+            if (method == "POST" && string.Equals(path, "/api/chat/stream", StringComparison.OrdinalIgnoreCase))
+            {
+                WriteChatStreamResponse(stream, request.Body);
+                return;
+            }
+
             if (method == "POST" && string.Equals(path, "/api/tts", StringComparison.OrdinalIgnoreCase))
             {
                 WriteApiResponse(stream, DesktopApiProxy.Tts(request.Body));
@@ -575,6 +581,17 @@ internal sealed class LocalStudioServer : IDisposable
         WriteBytes(stream, body);
     }
 
+    private static void WriteChatStreamResponse(NetworkStream stream, byte[] body)
+    {
+        var headers = new StringBuilder();
+        headers.Append("HTTP/1.1 200 OK\r\n");
+        headers.Append("Content-Type: text/event-stream; charset=utf-8\r\n");
+        headers.Append("Cache-Control: no-store\r\n");
+        headers.Append("Connection: close\r\n\r\n");
+        WriteBytes(stream, Encoding.ASCII.GetBytes(headers.ToString()));
+        DesktopApiProxy.ChatStream(body, bytes => WriteBytes(stream, bytes));
+    }
+
     private static void WritePlainResponse(NetworkStream stream, int statusCode, string statusText, string contentType, string body, bool headOnly)
     {
         var payload = Encoding.UTF8.GetBytes(body ?? string.Empty);
@@ -640,7 +657,18 @@ internal sealed class LocalStudioServer : IDisposable
     private static string GetCacheControl(string filePath)
     {
         var extension = Path.GetExtension(filePath).ToLowerInvariant();
-        return extension == ".html" ? "no-store" : "public, max-age=31536000, immutable";
+        switch (extension)
+        {
+            case ".html":
+            case ".js":
+            case ".json":
+            case ".moc3":
+            case ".png":
+            case ".webp":
+                return "no-store";
+            default:
+                return "public, max-age=3600";
+        }
     }
 }
 
@@ -710,6 +738,47 @@ internal static class DesktopApiProxy
         }
     }
 
+    public static void ChatStream(byte[] body, Action<byte[]> write)
+    {
+        try
+        {
+            var input = ParseObject(body);
+            var message = GetString(input, "message");
+            var apiKey = GetString(input, "apiKey");
+            var apiUrl = NormalizeChatUrl(GetString(input, "apiUrl"), GetString(input, "model"));
+            var model = GetString(input, "model");
+            var systemPrompt = GetString(input, "systemPrompt");
+
+            if (string.IsNullOrWhiteSpace(message))
+            {
+                WriteSseEvent(write, "error", Json.Serialize(new Dictionary<string, object> { { "message", "Message is required." } }));
+                return;
+            }
+            if (string.IsNullOrWhiteSpace(apiKey) || string.IsNullOrWhiteSpace(apiUrl))
+            {
+                WriteSseEvent(write, "error", Json.Serialize(new Dictionary<string, object> { { "message", "LLM API URL and API Key are required." } }));
+                return;
+            }
+            ValidateRemoteOrLoopbackUrl(apiUrl);
+
+            var payload = BuildChatPayload(input, apiUrl, model, systemPrompt, message);
+            payload["stream"] = true;
+            PostJsonStream(apiUrl, payload, ChatHeaders(apiUrl, apiKey), write);
+        }
+        catch (WebException ex)
+        {
+            WriteSseEvent(write, "error", Json.Serialize(new Dictionary<string, object>
+            {
+                { "message", ReadWebException(ex) },
+                { "status", GetStatusCode(ex, 502) }
+            }));
+        }
+        catch (Exception ex)
+        {
+            WriteSseEvent(write, "error", Json.Serialize(new Dictionary<string, object> { { "message", ex.Message } }));
+        }
+    }
+
     public static StudioApiResponse Tts(byte[] body)
     {
         try
@@ -771,6 +840,23 @@ internal static class DesktopApiProxy
     {
         object value;
         return data != null && data.TryGetValue(key, out value) ? value as Dictionary<string, object> : null;
+    }
+
+    private static double GetDouble(Dictionary<string, object> data, string key, double fallback, double min, double max)
+    {
+        object value;
+        if (data == null || !data.TryGetValue(key, out value) || value == null)
+        {
+            return fallback;
+        }
+        double numeric;
+        if (!double.TryParse(Convert.ToString(value), out numeric))
+        {
+            return fallback;
+        }
+        if (numeric < min) return min;
+        if (numeric > max) return max;
+        return numeric;
     }
 
     private static string NormalizeChatUrl(string apiUrl, string model)
@@ -859,26 +945,44 @@ internal static class DesktopApiProxy
         return "en";
     }
 
-    private static string TtsReadInstruction(string text, string textLang)
+    private static string TtsEmotionInstruction(Dictionary<string, object> input)
+    {
+        var emotion = GetString(input, "emotion");
+        var speechStyle = GetObject(input, "speechStyle");
+        var pause = GetString(speechStyle, "pause");
+        var parts = new List<string>();
+        if (!string.IsNullOrWhiteSpace(emotion))
+        {
+            parts.Add("Use a " + emotion + " emotional delivery.");
+        }
+        if (!string.IsNullOrWhiteSpace(pause))
+        {
+            parts.Add("Timing style: " + pause + ".");
+        }
+        return parts.Count == 0 ? string.Empty : " " + string.Join(" ", parts);
+    }
+
+    private static string TtsReadInstruction(string text, string textLang, Dictionary<string, object> input)
     {
         var lang = NormalizeGptSovitsLang(textLang, "auto");
         if (lang == "auto")
         {
             lang = DetectTextLang(text);
         }
+        var emotion = TtsEmotionInstruction(input);
         if (lang == "ja")
         {
-            return "Read only the following Japanese text in a soft, natural voice. Do not read explanations, translations, action cues, or stage directions.";
+            return "Read only the following Japanese text in a soft, natural voice. Do not read explanations, translations, action cues, or stage directions." + emotion;
         }
         if (lang == "ko")
         {
-            return "Read only the following Korean text in a soft, natural voice. Do not read explanations, translations, action cues, or stage directions.";
+            return "Read only the following Korean text in a soft, natural voice. Do not read explanations, translations, action cues, or stage directions." + emotion;
         }
         if (lang == "zh" || lang == "yue")
         {
-            return "Read only the following Chinese text in a soft, natural voice. Do not read explanations, translations, action cues, or stage directions.";
+            return "Read only the following Chinese text in a soft, natural voice. Do not read explanations, translations, action cues, or stage directions." + emotion;
         }
-        return "Read only the following English text in a soft, natural voice. Do not read explanations, translations, action cues, or stage directions.";
+        return "Read only the following English text in a soft, natural voice. Do not read explanations, translations, action cues, or stage directions." + emotion;
     }
 
     private static Dictionary<string, string> ChatHeaders(string apiUrl, string apiKey)
@@ -1028,7 +1132,7 @@ internal static class DesktopApiProxy
             { "model", model },
             { "messages", new object[]
                 {
-                    new Dictionary<string, object> { { "role", "user" }, { "content", TtsReadInstruction(text, GetString(input, "textLang")) } },
+                    new Dictionary<string, object> { { "role", "user" }, { "content", TtsReadInstruction(text, GetString(input, "textLang"), input) } },
                     new Dictionary<string, object> { { "role", "assistant" }, { "content", text } }
                 }
             },
@@ -1080,13 +1184,15 @@ internal static class DesktopApiProxy
             return JsonError(400, "TTS text and API Key are required.");
         }
 
+        var speechStyle = GetObject(input, "speechStyle");
+        var speed = GetDouble(speechStyle, "speed", 1.0, 0.75, 1.25);
         var payload = new Dictionary<string, object>
         {
             { "model", GetString(input, "model") == string.Empty ? "tts-1" : GetString(input, "model") },
             { "input", text },
             { "voice", GetString(input, "voice") == string.Empty ? "alloy" : GetString(input, "voice") },
             { "response_format", "mp3" },
-            { "speed", 1.0 }
+            { "speed", speed }
         };
 
         var provider = PostBytes(apiUrl, Json.Serialize(payload), new Dictionary<string, string> { { "Authorization", "Bearer " + apiKey } });
@@ -1231,6 +1337,65 @@ internal static class DesktopApiProxy
     private static string PostJson(string url, Dictionary<string, object> payload, Dictionary<string, string> headers)
     {
         return Encoding.UTF8.GetString(PostBytes(url, Json.Serialize(payload), headers).Body);
+    }
+
+    private static void PostJsonStream(string url, Dictionary<string, object> payload, Dictionary<string, string> headers, Action<byte[]> write)
+    {
+        var body = Json.Serialize(payload);
+        var bytes = Encoding.UTF8.GetBytes(body ?? string.Empty);
+        var request = (HttpWebRequest)WebRequest.Create(url);
+        request.Method = "POST";
+        request.ContentType = "application/json; charset=utf-8";
+        request.Accept = "text/event-stream, application/json, */*";
+        request.Timeout = 120000;
+        request.ReadWriteTimeout = 120000;
+        AddHeaders(request, headers);
+        using (var requestStream = request.GetRequestStream())
+        {
+            requestStream.Write(bytes, 0, bytes.Length);
+        }
+
+        using (var response = (HttpWebResponse)request.GetResponse())
+        using (var stream = response.GetResponseStream())
+        {
+            var contentType = response.ContentType ?? string.Empty;
+            if (contentType.IndexOf("event-stream", StringComparison.OrdinalIgnoreCase) < 0 &&
+                contentType.IndexOf("stream", StringComparison.OrdinalIgnoreCase) < 0)
+            {
+                using (var reader = new StreamReader(stream ?? Stream.Null, Encoding.UTF8))
+                {
+                    WriteSseEvent(write, "message", reader.ReadToEnd());
+                }
+                return;
+            }
+
+            var buffer = new byte[8192];
+            while (true)
+            {
+                var read = stream == null ? 0 : stream.Read(buffer, 0, buffer.Length);
+                if (read <= 0) break;
+                var chunk = new byte[read];
+                Buffer.BlockCopy(buffer, 0, chunk, 0, read);
+                write(chunk);
+            }
+        }
+    }
+
+    private static void WriteSseEvent(Action<byte[]> write, string eventName, string data)
+    {
+        var builder = new StringBuilder();
+        if (!string.IsNullOrWhiteSpace(eventName) && eventName != "message")
+        {
+            builder.Append("event: ").Append(eventName).Append("\n");
+        }
+        var value = data ?? string.Empty;
+        var lines = value.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n');
+        foreach (var line in lines)
+        {
+            builder.Append("data: ").Append(line).Append("\n");
+        }
+        builder.Append("\n");
+        write(Encoding.UTF8.GetBytes(builder.ToString()));
     }
 
     private static ProviderBytes PostBytes(string url, string body, Dictionary<string, string> headers)

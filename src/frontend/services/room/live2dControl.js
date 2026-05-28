@@ -493,9 +493,18 @@ function normalizeLive2DStep(input, manifest = roomLive2DManifest) {
   const rawExpression = input.expression || input.expressionId || input.face || input.mood || input.emotion || '';
   const expression = normalizeLive2DExpression(rawExpression, manifest) || normalizeLive2DEmotion(input.emotion || input.mood, manifest);
   const intensity = clamp01(input.intensity, 0.65);
+  const durationMs = normalizeDuration(input.durationMs || input.duration);
+  const rawBodyPose = normalizeLive2DBodyPose(input.bodyPose || input.pose || input.posture || input.motion || input.action, manifest);
   let behaviorActions = normalizeBehaviorActions(input.behaviorActions || input.actions, {
     intensity
   });
+  if (rawBodyPose && !behaviorActions.length) {
+    behaviorActions = normalizeBehaviorActions([{
+      type: rawBodyPose,
+      intensity,
+      durationMs
+    }], { intensity });
+  }
   const presetActions = semanticExpressionBehaviorActions(expression || input.emotion || input.mood, {
     existingActions: behaviorActions,
     intensity,
@@ -505,9 +514,8 @@ function normalizeLive2DStep(input, manifest = roomLive2DManifest) {
     behaviorActions = normalizeBehaviorActions([...behaviorActions, ...presetActions], { intensity });
   }
   const motion = normalizeLive2DMotion(input.motion || input.action, manifest);
-  const bodyPose = normalizeLive2DBodyPose(input.bodyPose || input.pose || input.posture || input.motion || input.action, manifest);
+  const bodyPose = behaviorActions.length ? '' : rawBodyPose;
   const expressionMix = normalizeExpressionMix(input.expressionMix, expression, manifest);
-  const durationMs = normalizeDuration(input.durationMs || input.duration);
   const explicitParameters = normalizeLive2DParameterTargets(input.parameters || input.parameterTargets || input.params, manifest);
   const parameters = mergeParameterTargets(
     explicitParameters,

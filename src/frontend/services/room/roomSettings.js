@@ -37,7 +37,7 @@ export const DEFAULT_ROOM_TTS_SETTINGS = {
 
 export const DEFAULT_ROOM_MODEL_SETTINGS = {
   lowQualityModel: false,
-  renderDpr: 2.5
+  renderDpr: 3
 };
 
 export const DEFAULT_ROOM_VTS_SETTINGS = {

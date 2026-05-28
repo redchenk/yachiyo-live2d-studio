@@ -4,7 +4,8 @@ import TsIcon from '../components/TsIcon.vue';
 import { useLive2D } from '../composables/room/useLive2D';
 import {
   clearLive2DLLMHistory,
-  requestLive2DControl
+  requestLive2DControl,
+  requestLive2DControlStream
 } from '../services/room/live2dLlmControl';
 import { dispatchRoomLive2D } from '../services/room/live2dControl';
 import { createLive2DSpeechPlayer } from '../services/room/live2dSpeech';
@@ -135,6 +136,46 @@ function pushLog(role, text, meta = {}) {
     ...showLog.value,
     {
       id: uid(role),
+      role,
+      text: value,
+      meta,
+      createdAt: Date.now()
+    }
+  ].slice(-10);
+}
+
+function shouldJoinWithSpace(left, right) {
+  return /[A-Za-z0-9]$/.test(String(left || '').trim()) && /^[A-Za-z0-9]/.test(String(right || '').trim());
+}
+
+function joinSpeechText(left, right) {
+  const previous = visibleYachiyoText(left);
+  const next = visibleYachiyoText(right);
+  if (!previous) return next;
+  if (!next) return previous;
+  return `${previous}${shouldJoinWithSpace(previous, next) ? ' ' : ''}${next}`;
+}
+
+function upsertLogLine(id, role, text, meta = {}) {
+  const value = role === 'yachiyo'
+    ? visibleYachiyoText(text)
+    : String(text || '').trim();
+  if (!value) return;
+  const index = showLog.value.findIndex((item) => item.id === id);
+  if (index >= 0) {
+    const nextLog = [...showLog.value];
+    nextLog[index] = {
+      ...nextLog[index],
+      text: value,
+      meta: { ...(nextLog[index].meta || {}), ...meta }
+    };
+    showLog.value = nextLog.slice(-10);
+    return;
+  }
+  showLog.value = [
+    ...showLog.value,
+    {
+      id,
       role,
       text: value,
       meta,
@@ -319,6 +360,104 @@ async function performLLMAct(message, source = 'manual', options = {}) {
   }
 }
 
+async function performStreamingLiveTurn(message) {
+  const value = String(message || '').trim();
+  if (!value || llmState.value.loading || !speechPlayer) return null;
+  const logId = uid('yachiyo-stream');
+  const playbackPromises = [];
+  let streamedReply = '';
+  let finalResult = null;
+
+  dispatchCharacterState('thinking', { holdMs: 2400, attention: 0.82, arousal: 0.5 });
+  llmState.value = {
+    ...llmState.value,
+    loading: true,
+    error: ''
+  };
+
+  try {
+    finalResult = await requestLive2DControlStream(value, {
+      onSentence: (sentence) => {
+        const visibleSentence = visibleYachiyoText(sentence.text);
+        if (!visibleSentence) return;
+        streamedReply = joinSpeechText(streamedReply, visibleSentence);
+        upsertLogLine(logId, 'yachiyo', streamedReply, {
+          live2d: sentence.live2d,
+          emotion: sentence.emotion,
+          streaming: true
+        });
+        llmState.value = {
+          loading: true,
+          error: '',
+          reply: streamedReply,
+          raw: finalResult?.raw || null,
+          live2d: sentence.live2d
+        };
+        liveDirector.status = 'speaking';
+        playbackPromises.push(speechPlayer.enqueue(visibleSentence, {
+          emotion: sentence.emotion,
+          speechStyle: sentence.speechStyle,
+          onStart: ({ durationMs }) => {
+            if (sentence.live2d) dispatchRoomLive2D(alignLive2DToSpeech(sentence.live2d, durationMs));
+            dispatchCharacterState('speaking', {
+              holdMs: Math.max(durationMs || 0, 1200),
+              emotion: sentence.emotion,
+              emotionHoldMs: Math.max(durationMs || 0, 1800),
+              attention: 0.88,
+              arousal: sentence.emotion === 'sad' || sentence.emotion === 'crying' ? 0.5 : 0.72
+            });
+          }
+        }).catch((error) => {
+          if (error?.name === 'AbortError') return;
+          speechState.value = { status: 'error', error: error.message || 'TTS failed' };
+        }));
+      }
+    });
+
+    const visibleReply = visibleYachiyoText(finalResult.reply) || streamedReply || 'OK.';
+    if (!streamedReply && visibleReply) {
+      upsertLogLine(logId, 'yachiyo', visibleReply, {
+        live2d: finalResult.live2d,
+        streaming: false
+      });
+      playbackPromises.push(speechPlayer.enqueue(visibleReply, {
+        emotion: finalResult.live2d?.emotion || finalResult.live2d?.expression || 'neutral',
+        speechStyle: finalResult.live2d?.speechStyle || null,
+        onStart: ({ durationMs }) => {
+          if (finalResult.live2d) dispatchRoomLive2D(alignLive2DToSpeech(finalResult.live2d, durationMs));
+        }
+      }).catch((error) => {
+        if (error?.name === 'AbortError') return;
+        speechState.value = { status: 'error', error: error.message || 'TTS failed' };
+      }));
+    } else {
+      upsertLogLine(logId, 'yachiyo', visibleReply, {
+        live2d: finalResult.live2d,
+        streaming: true
+      });
+    }
+
+    llmState.value = {
+      loading: false,
+      error: '',
+      reply: visibleReply,
+      raw: finalResult.raw,
+      live2d: finalResult.live2d
+    };
+    liveDirector.turn += 1;
+    await Promise.allSettled(playbackPromises);
+    dispatchCharacterState('listening', { holdMs: 1000, attention: 0.62 });
+    return { ...finalResult, reply: visibleReply };
+  } catch (error) {
+    llmState.value = {
+      ...llmState.value,
+      loading: false,
+      error: error.message || 'LLM control failed'
+    };
+    throw error;
+  }
+}
+
 async function runLLMControl() {
   const message = prompt.value.trim();
   if (!message || llmState.value.loading) return;
@@ -375,20 +514,16 @@ async function runLiveTurn() {
   const audienceLines = audienceQueue.value.splice(0, 3);
   try {
     const shouldSpeak = Boolean(liveDirector.autoVoice && speechPlayer);
-    const result = await performLLMAct(buildLiveDirectorPrompt(audienceLines), 'live', {
-      dispatchLive2D: !shouldSpeak
+    if (shouldSpeak) {
+      liveDirector.status = 'thinking';
+      await performStreamingLiveTurn(buildLiveDirectorPrompt(audienceLines));
+      liveDirector.status = 'idle';
+      return;
+    }
+    await performLLMAct(buildLiveDirectorPrompt(audienceLines), 'live', {
+      dispatchLive2D: true
     });
     liveDirector.turn += 1;
-    if (result?.reply && shouldSpeak) {
-      liveDirector.status = 'speaking';
-      await speechPlayer.play(result.reply, {
-        onStart: ({ durationMs }) => {
-          if (result.live2d) dispatchRoomLive2D(alignLive2DToSpeech(result.live2d, durationMs));
-        }
-      }).catch((error) => {
-        speechState.value = { status: 'error', error: error.message || 'TTS failed' };
-      });
-    }
     liveDirector.status = 'idle';
   } catch (error) {
     liveDirector.error = error.message || 'Live director failed';

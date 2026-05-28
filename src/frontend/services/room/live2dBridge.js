@@ -4,6 +4,7 @@ const CORE_SCRIPT = '/lib/live2dcubismcore-v5.min.js';
 const ROOM_SCRIPT = '/lib/bundled/live2d-room-neuro-live.iife.js';
 const LIVE2D_READY_EVENT = 'tsukuyomi:live2d-ready';
 const LIVE2D_READY_TIMEOUT = 20000;
+const LIVE2D_ASSET_VERSION = Date.now().toString(36);
 
 let loadingPromise = null;
 let initialized = false;
@@ -39,6 +40,12 @@ function loadScript(src) {
   });
 }
 
+function live2DAssetUrl(path) {
+  const url = assetUrl(path);
+  const separator = url.includes('?') ? '&' : '?';
+  return `${url}${separator}v=${LIVE2D_ASSET_VERSION}`;
+}
+
 export function isMobileLive2DDevice() {
   const ua = navigator.userAgent || '';
   return /Android|iPhone|iPad|iPod/i.test(ua) || (/Macintosh/i.test(ua) && navigator.maxTouchPoints > 1);
@@ -66,8 +73,8 @@ function clampLive2DRenderDpr(value, fallback, max = 3) {
 }
 
 export function live2DPerformanceMode() {
-  if (readRoomModelSettings().lowQualityModel) return 'lite';
   if (!isMobileLive2DDevice()) return 'standard';
+  if (readRoomModelSettings().lowQualityModel) return 'lite';
   if (isConstrainedMobileLive2DDevice()) return 'lite';
   return 'low';
 }
@@ -75,6 +82,7 @@ export function live2DPerformanceMode() {
 export function live2DRenderDpr(mode = live2DPerformanceMode()) {
   const settings = readRoomModelSettings();
   const maxDpr = mode === 'standard' && !isMobileLive2DDevice() ? 3 : 1.5;
+  if (mode === 'standard' && !isMobileLive2DDevice()) return 3;
   if (settings.renderDpr !== undefined && settings.renderDpr !== null && settings.renderDpr !== '') {
     return clampLive2DRenderDpr(settings.renderDpr, mode === 'standard' ? 2.5 : 1, maxDpr);
   }
@@ -86,6 +94,7 @@ function applyLive2DGlobalSettings() {
   const mode = live2DPerformanceMode();
   window.TSUKUYOMI_LIVE2D_PERFORMANCE = mode;
   window.TSUKUYOMI_LIVE2D_DPR = live2DRenderDpr(mode);
+  window.TSUKUYOMI_LIVE2D_ASSET_VERSION = LIVE2D_ASSET_VERSION;
   return mode;
 }
 
@@ -100,9 +109,9 @@ export function preloadLive2DResources() {
   const modelJson = live2DModelJson(mode);
   if (mode !== 'standard') {
     [
-      { href: assetUrl(CORE_SCRIPT), as: 'script' },
+      { href: live2DAssetUrl(CORE_SCRIPT), as: 'script' },
       {
-        href: assetUrl(modelJson),
+        href: live2DAssetUrl(modelJson),
         as: 'fetch',
         type: 'application/json'
       }
@@ -120,14 +129,14 @@ export function preloadLive2DResources() {
     return;
   }
   [
-    { href: assetUrl(CORE_SCRIPT), as: 'script' },
-    { href: assetUrl(ROOM_SCRIPT), as: 'script' },
+    { href: live2DAssetUrl(CORE_SCRIPT), as: 'script' },
+    { href: live2DAssetUrl(ROOM_SCRIPT), as: 'script' },
       {
-        href: assetUrl(modelJson),
+        href: live2DAssetUrl(modelJson),
         as: 'fetch',
         type: 'application/json'
     },
-    { href: assetUrl('/models/tsukimi-yachiyo/tsukimi-yachiyo.moc3'), as: 'fetch', type: 'application/octet-stream' }
+    { href: live2DAssetUrl('/models/tsukimi-yachiyo/tsukimi-yachiyo.moc3'), as: 'fetch', type: 'application/octet-stream' }
   ].forEach((resource) => {
     if (document.head.querySelector(`link[data-room-preload="${resource.href}"]`)) return;
     const link = document.createElement('link');
@@ -145,7 +154,7 @@ export async function ensureLive2DScripts() {
   applyLive2DGlobalSettings();
   if (!loadingPromise) {
     window.TSUKUYOMI_EXTERNAL_LIVE2D = true;
-    loadingPromise = loadScript(assetUrl(CORE_SCRIPT)).then(() => loadScript(assetUrl(ROOM_SCRIPT)));
+    loadingPromise = loadScript(live2DAssetUrl(CORE_SCRIPT)).then(() => loadScript(live2DAssetUrl(ROOM_SCRIPT)));
   }
   return loadingPromise;
 }

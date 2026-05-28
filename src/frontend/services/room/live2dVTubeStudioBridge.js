@@ -1701,6 +1701,7 @@ export function mountVTubeStudioBridge() {
   }
 
   function onFaceCapture(event) {
+    if (event.detail?.source === 'cubism-behavior') return;
     if (!settings.injectFace && !settings.injectBody) return;
     if (behaviorPlan) return;
     if (characterState.getState().mode === 'speaking') return;
