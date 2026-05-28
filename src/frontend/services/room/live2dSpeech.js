@@ -56,6 +56,10 @@ function defaultTtsUrl(provider) {
   return provider === 'gpt-sovits' ? 'http://localhost:9880/tts' : '';
 }
 
+function isDirectLocalGptSovits(settings = {}) {
+  return settings.provider === 'gpt-sovits' && !settings.useProxy;
+}
+
 function normalizeLocalGptSovitsUrl(url) {
   const parsed = new URL(url || defaultTtsUrl('gpt-sovits'));
   if (window.location.protocol === 'https:' && parsed.protocol === 'http:' && parsed.hostname === '127.0.0.1') {
@@ -558,7 +562,7 @@ export function createLive2DSpeechPlayer({ onState } = {}) {
   }
 
   async function makeAudio(text, settings, options = {}) {
-    const directLocalGptSovits = settings.provider === 'gpt-sovits' && !settings.useProxy;
+    const directLocalGptSovits = isDirectLocalGptSovits(settings);
     if (directLocalGptSovits) {
       const ttsText = await translateForJapaneseTts(text, options);
       if (!ttsText) throw new Error('日文翻译结果为空，已取消语音播放。');
@@ -612,10 +616,15 @@ export function createLive2DSpeechPlayer({ onState } = {}) {
     return item.audioPromise;
   }
 
-  function preloadQueuedAudio(token) {
+  function preloadQueuedAudio(token, options = {}) {
     if (token !== queueToken) return;
+    const settings = readRoomTTSSettings();
+    const directLocalGptSovits = isDirectLocalGptSovits(settings);
+    const playbackActive = currentAudio && !currentAudio.paused && !currentAudio.ended;
+    if (directLocalGptSovits && !options.afterPlaybackStart && !playbackActive) return;
     const preparedCount = speechQueue.filter((item) => item.audioPromise).length;
-    const budget = Math.max(0, MAX_TTS_PREFETCH - preparedCount);
+    const maxPrefetch = directLocalGptSovits ? 1 : MAX_TTS_PREFETCH;
+    const budget = Math.max(0, maxPrefetch - preparedCount);
     if (!budget) return;
     speechQueue
       .filter((item) => !item.audioPromise)
@@ -780,7 +789,9 @@ export function createLive2DSpeechPlayer({ onState } = {}) {
         const item = speechQueue.shift();
         try {
           const audioPromise = prepareQueueItem(item, token, { notifyLoading: true });
-          const played = await playInternal(item.text, item.options, token, audioPromise, () => preloadQueuedAudio(token));
+          const played = await playInternal(item.text, item.options, token, audioPromise, () => preloadQueuedAudio(token, {
+            afterPlaybackStart: true
+          }));
           if (played === false) item.reject(makeStopError());
           else item.resolve();
         } catch (error) {
@@ -827,7 +838,7 @@ export function createLive2DSpeechPlayer({ onState } = {}) {
 
   function warmup() {
     const settings = readRoomTTSSettings();
-    if (settings.enabled && settings.provider === 'gpt-sovits' && !settings.useProxy) {
+    if (settings.enabled && isDirectLocalGptSovits(settings)) {
       ensureGptSovitsWeights(settings).catch(() => {});
     }
   }
