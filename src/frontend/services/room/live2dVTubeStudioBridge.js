@@ -1015,6 +1015,7 @@ export function mountVTubeStudioBridge() {
   const pendingRequests = new Map();
   const pendingInjection = new Map();
   const smoothedInjection = new Map();
+  const expressionActivationTimers = new Map();
   const expressionTimers = new Map();
   const activeExpressionFiles = new Set();
   let flushTimer = 0;
@@ -1207,6 +1208,12 @@ export function mountVTubeStudioBridge() {
     expressionTimers.delete(file);
   }
 
+  function clearExpressionActivationTimer(file) {
+    const timer = expressionActivationTimers.get(file);
+    if (timer) window.clearTimeout(timer);
+    expressionActivationTimers.delete(file);
+  }
+
   function setVTSExpression(file, active, fadeTime = 0.35) {
     if (!file) return;
     connect()
@@ -1219,11 +1226,23 @@ export function mountVTubeStudioBridge() {
   }
 
   function deactivateActiveExpressions() {
-    activeExpressionFiles.forEach((file) => {
+    [...new Set([...expressionFiles, ...activeExpressionFiles])].forEach((file) => {
+      clearExpressionActivationTimer(file);
       clearExpressionTimer(file);
-      setVTSExpression(file, false, 0.35);
+      setVTSExpression(file, false, 0.08);
     });
     activeExpressionFiles.clear();
+  }
+
+  function deactivateOtherExpressions(nextFile) {
+    const nextKey = normalizeExpressionToken(nextFile);
+    [...new Set([...expressionFiles, ...activeExpressionFiles])].forEach((file) => {
+      if (!file || normalizeExpressionToken(file) === nextKey) return;
+      clearExpressionActivationTimer(file);
+      clearExpressionTimer(file);
+      setVTSExpression(file, false, 0.06);
+      activeExpressionFiles.delete(file);
+    });
   }
 
   function activateVTSExpression(expression, durationMs = 2600) {
@@ -1231,19 +1250,20 @@ export function mountVTubeStudioBridge() {
     if (!candidates.length) return;
     if (candidates.includes('neutral')) {
       deactivateActiveExpressions();
+      loadExpressionFiles().then(() => deactivateActiveExpressions()).catch(() => {});
       return;
     }
     resolveExpressionFile(expression)
       .then((file) => {
         if (!file) return;
-        activeExpressionFiles.forEach((activeFile) => {
-          if (activeFile === file) return;
-          clearExpressionTimer(activeFile);
-          setVTSExpression(activeFile, false, 0.3);
-          activeExpressionFiles.delete(activeFile);
-        });
+        deactivateOtherExpressions(file);
+        clearExpressionActivationTimer(file);
         clearExpressionTimer(file);
-        setVTSExpression(file, true, 0.35);
+        const activationTimer = window.setTimeout(() => {
+          expressionActivationTimers.delete(file);
+          setVTSExpression(file, true, 0.18);
+        }, 70);
+        expressionActivationTimers.set(file, activationTimer);
         activeExpressionFiles.add(file);
         const holdMs = clamp(Math.round(Number(durationMs) || 2600), 900, 9000);
         const timer = window.setTimeout(() => {
@@ -1464,6 +1484,8 @@ export function mountVTubeStudioBridge() {
     window.removeEventListener(CHARACTER_STATE_EVENT, onCharacterState);
     window.removeEventListener(SETTINGS_EVENT, reloadSettings);
     window.clearTimeout(flushTimer);
+    expressionActivationTimers.forEach((timer) => window.clearTimeout(timer));
+    expressionActivationTimers.clear();
     expressionTimers.forEach((timer) => window.clearTimeout(timer));
     expressionTimers.clear();
     activeExpressionFiles.clear();

@@ -50,9 +50,7 @@ export const YACHIYO_EXPRESSION_PRESETS = [
       vts('MouthSmile', 0.82, 0.7),
       vts('Brows', 0.62, 0.46),
       vts('BrowLeftY', 0.62, 0.44),
-      vts('BrowRightY', 0.62, 0.44),
-      vts('EyeOpenLeft', 0.84, 0.26),
-      vts('EyeOpenRight', 0.84, 0.26)
+      vts('BrowRightY', 0.62, 0.44)
     ]
   },
   {
@@ -72,9 +70,7 @@ export const YACHIYO_EXPRESSION_PRESETS = [
       vts('MouthSmile', 0.76, 0.62),
       vts('Brows', 0.64, 0.42),
       vts('BrowLeftY', 0.64, 0.38),
-      vts('BrowRightY', 0.64, 0.38),
-      vts('EyeOpenLeft', 0.82, 0.22),
-      vts('EyeOpenRight', 0.82, 0.22)
+      vts('BrowRightY', 0.64, 0.38)
     ]
   },
   {
@@ -96,8 +92,6 @@ export const YACHIYO_EXPRESSION_PRESETS = [
       vts('Brows', 0.66, 0.5),
       vts('BrowLeftY', 0.66, 0.46),
       vts('BrowRightY', 0.66, 0.46),
-      vts('EyeOpenLeft', 0.78, 0.28),
-      vts('EyeOpenRight', 0.78, 0.28),
       vts('EyeLeftY', -0.12, 0.34),
       vts('EyeRightY', -0.12, 0.34)
     ]
@@ -121,9 +115,7 @@ export const YACHIYO_EXPRESSION_PRESETS = [
       vts('Brows', 0.6, 0.48),
       vts('BrowLeftY', 0.72, 0.55),
       vts('BrowRightY', 0.48, 0.55),
-      vts('MouthX', -0.24, 0.36),
-      vts('EyeOpenLeft', 0.8, 0.22),
-      vts('EyeOpenRight', 0.88, 0.22)
+      vts('MouthX', -0.24, 0.36)
     ]
   },
   {
@@ -141,8 +133,6 @@ export const YACHIYO_EXPRESSION_PRESETS = [
       action('bounce', 1.0, 0.18, { intensity: 0.62 })
     ],
     vts: [
-      vts('EyeOpenLeft', 1, 0.72),
-      vts('EyeOpenRight', 1, 0.72),
       vts('Brows', 0.82, 0.72),
       vts('BrowLeftY', 0.82, 0.72),
       vts('BrowRightY', 0.82, 0.72),
@@ -169,9 +159,7 @@ export const YACHIYO_EXPRESSION_PRESETS = [
       vts('MouthSmile', 0.28, 0.68),
       vts('Brows', 0.24, 0.72),
       vts('BrowLeftY', 0.22, 0.68),
-      vts('BrowRightY', 0.22, 0.68),
-      vts('EyeOpenLeft', 0.76, 0.28),
-      vts('EyeOpenRight', 0.76, 0.28)
+      vts('BrowRightY', 0.22, 0.68)
     ]
   },
   {
@@ -213,9 +201,7 @@ export const YACHIYO_EXPRESSION_PRESETS = [
     vts: [
       vts('TongueOut', 1, 0.86),
       vts('MouthSmile', 0.78, 0.62),
-      vts('MouthOpen', 0.22, 0.22),
-      vts('EyeOpenLeft', 0.82, 0.24),
-      vts('EyeOpenRight', 0.82, 0.24)
+      vts('MouthOpen', 0.22, 0.22)
     ]
   },
   {
@@ -233,8 +219,6 @@ export const YACHIYO_EXPRESSION_PRESETS = [
       action('blink', 0.34, 0.9)
     ],
     vts: [
-      vts('EyeOpenLeft', 0.62, 0.54),
-      vts('EyeOpenRight', 0.62, 0.54),
       vts('Brows', 0.44, 0.46),
       vts('BrowLeftY', 0.44, 0.42),
       vts('BrowRightY', 0.44, 0.42),
@@ -259,9 +243,7 @@ export const YACHIYO_EXPRESSION_PRESETS = [
       vts('MouthSmile', 0.3, 0.58),
       vts('Brows', 0.32, 0.58),
       vts('BrowLeftY', 0.3, 0.52),
-      vts('BrowRightY', 0.3, 0.52),
-      vts('EyeOpenLeft', 0.76, 0.28),
-      vts('EyeOpenRight', 0.76, 0.28)
+      vts('BrowRightY', 0.3, 0.52)
     ]
   },
   {
@@ -282,9 +264,7 @@ export const YACHIYO_EXPRESSION_PRESETS = [
       vts('MouthSmile', 0.24, 0.62),
       vts('Brows', 0.24, 0.66),
       vts('BrowLeftY', 0.24, 0.6),
-      vts('BrowRightY', 0.24, 0.6),
-      vts('EyeOpenLeft', 0.68, 0.32),
-      vts('EyeOpenRight', 0.68, 0.32)
+      vts('BrowRightY', 0.24, 0.6)
     ]
   },
   {
@@ -305,9 +285,7 @@ export const YACHIYO_EXPRESSION_PRESETS = [
       vts('MouthSmile', 0.2, 0.66),
       vts('Brows', 0.2, 0.72),
       vts('BrowLeftY', 0.2, 0.66),
-      vts('BrowRightY', 0.2, 0.66),
-      vts('EyeOpenLeft', 0.64, 0.34),
-      vts('EyeOpenRight', 0.64, 0.34)
+      vts('BrowRightY', 0.2, 0.66)
     ]
   },
   {
@@ -328,9 +306,7 @@ export const YACHIYO_EXPRESSION_PRESETS = [
       vts('MouthSmile', 0.24, 0.68),
       vts('Brows', 0.2, 0.72),
       vts('BrowLeftY', 0.2, 0.66),
-      vts('BrowRightY', 0.2, 0.66),
-      vts('EyeOpenLeft', 0.74, 0.36),
-      vts('EyeOpenRight', 0.74, 0.36)
+      vts('BrowRightY', 0.2, 0.66)
     ]
   }
 ];
