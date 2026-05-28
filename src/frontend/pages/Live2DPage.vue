@@ -379,23 +379,26 @@ async function performStreamingLiveTurn(message) {
   try {
     finalResult = await requestLive2DControlStream(value, {
       onSentence: (sentence) => {
-        const visibleSentence = visibleYachiyoText(sentence.text);
-        if (!visibleSentence) return;
-        streamedReply = joinSpeechText(streamedReply, visibleSentence);
-        upsertLogLine(logId, 'yachiyo', streamedReply, {
-          live2d: sentence.live2d,
-          emotion: sentence.emotion,
-          streaming: true
-        });
+        const visibleSentence = visibleYachiyoText(sentence.displayText);
+        const speechSentence = visibleYachiyoText(sentence.speechText || sentence.text);
+        if (!visibleSentence && !speechSentence) return;
+        if (visibleSentence) {
+          streamedReply = joinSpeechText(streamedReply, visibleSentence);
+          upsertLogLine(logId, 'yachiyo', streamedReply, {
+            live2d: sentence.live2d,
+            emotion: sentence.emotion,
+            streaming: true
+          });
+        }
         llmState.value = {
           loading: true,
           error: '',
-          reply: streamedReply,
+          reply: streamedReply || llmState.value.reply,
           raw: finalResult?.raw || null,
           live2d: sentence.live2d
         };
         liveDirector.status = 'speaking';
-        playbackPromises.push(speechPlayer.enqueue(visibleSentence, {
+        playbackPromises.push(speechPlayer.enqueue(speechSentence || visibleSentence, {
           emotion: sentence.emotion,
           speechStyle: sentence.speechStyle,
           onStart: ({ durationMs }) => {
@@ -496,7 +499,7 @@ function buildLiveDirectorPrompt(audienceLines, options = {}) {
     'Use emotion plus actions instead of raw Live2D parameters. Let the behavior controller map actions to VTube Studio tracking curves.',
     'Never show action cues in the spoken reply or caption: no parentheses, no asterisk actions, no Action/Pose labels, and no body descriptions in reply. Put movement only in the actions array.',
     options.streaming
-      ? 'Streaming mode: follow the system format exactly, with VOICE lines first and CONTROL JSON last.'
+      ? 'Streaming mode: follow the system format exactly, with paired TEXT and VOICE lines first and CONTROL JSON last. TEXT is Simplified Chinese for captions; VOICE is Japanese for TTS.'
       : 'Return the required JSON object only.'
   ].join('\n');
 }

@@ -145,15 +145,25 @@ function readReplyFieldProgress(text) {
   return { value: '', complete: false, found: false };
 }
 
-function readStreamingSpeechProgress(text) {
+function readStreamingLabelProgress(text, labels = []) {
   const value = String(text || '').replace(/<think>[\s\S]*?<\/think>/gi, '');
-  const beforeControl = value.split(/\n\s*(?:CONTROL|JSON|LIVE2D_CONTROL)\s*[:：]/i)[0] || '';
+  const beforeControl = value.split(/\n\s*(?:CONTROL|JSON|LIVE2D_CONTROL)\s*[:\uff1a]/i)[0] || '';
+  const labelPattern = labels.map(escapeRegExp).join('|');
+  const linePattern = new RegExp(`^\\s*(?:${labelPattern})\\s*[:\\uff1a]\\s*(.*)$`, 'i');
   const pieces = [];
   beforeControl.split(/\r?\n/).forEach((line) => {
-    const match = line.match(/^\s*(?:SAY|SPEECH|VOICE|LINE)\s*[:：]\s*(.*)$/i);
+    const match = line.match(linePattern);
     if (match) pieces.push(match[1]);
   });
   return pieces.join('\n').trim();
+}
+
+function readStreamingSpeechProgress(text) {
+  return readStreamingLabelProgress(text, ['VOICE', 'SAY', 'SPEECH', 'LINE']);
+}
+
+function readStreamingDisplayProgress(text) {
+  return readStreamingLabelProgress(text, ['TEXT', 'DISPLAY', 'CAPTION', 'SUBTITLE']);
 }
 
 function speakableUnitLength(text) {
@@ -215,48 +225,79 @@ function splitCompletedSentences(buffer, flush = false) {
 }
 
 function createReplySentenceEmitter(handlers = {}) {
-  let seenReply = '';
-  let sentenceBuffer = '';
+  let seenSpeech = '';
+  let speechBuffer = '';
+  let seenDisplay = '';
+  let displayBuffer = '';
+  const displayQueue = [];
   let emittedCount = 0;
 
-  const emitSentence = (text) => {
-    const sentence = cleanReplyForSpeech(text);
-    if (!sentence || speakableUnitLength(sentence) < 2) return;
-    const analysis = analyzeLive2DSentenceEmotion(sentence);
+  const emitSentence = (speechText, displayText = '') => {
+    const speechSentence = cleanReplyForSpeech(speechText);
+    const displaySentence = cleanReplyForSpeech(displayText);
+    if (!speechSentence && !displaySentence) return;
+    if (speakableUnitLength(speechSentence || displaySentence) < 2) return;
+    const analysisText = displaySentence || speechSentence;
+    const analysis = analyzeLive2DSentenceEmotion(analysisText);
     emittedCount += 1;
     handlers.onSentence?.({
       index: emittedCount,
-      text: sentence,
+      text: displaySentence || speechSentence,
+      displayText: displaySentence,
+      speechText: speechSentence || displaySentence,
       emotion: analysis.emotion,
       speechStyle: analysis.speechStyle,
-      live2d: buildSentenceLive2DIntent(sentence, analysis.emotion, analysis.speechStyle)
+      live2d: buildSentenceLive2DIntent(analysisText, analysis.emotion, analysis.speechStyle)
     });
   };
 
-  const pushReply = (reply, options = {}) => {
+  const pushDisplay = (reply, options = {}) => {
     const current = String(reply || '');
-    if (current.length > seenReply.length) {
-      sentenceBuffer += current.slice(seenReply.length);
-      seenReply = current;
+    if (current.length > seenDisplay.length) {
+      displayBuffer += current.slice(seenDisplay.length);
+      seenDisplay = current;
     }
-    const split = splitCompletedSentences(sentenceBuffer, Boolean(options.flush));
-    sentenceBuffer = split.rest;
-    split.sentences.forEach(emitSentence);
+    const split = splitCompletedSentences(displayBuffer, Boolean(options.flush));
+    displayBuffer = split.rest;
+    split.sentences
+      .map(cleanReplyForSpeech)
+      .filter(Boolean)
+      .forEach((sentence) => displayQueue.push(sentence));
+  };
+
+  const pushSpeech = (reply, options = {}) => {
+    const current = String(reply || '');
+    if (current.length > seenSpeech.length) {
+      speechBuffer += current.slice(seenSpeech.length);
+      seenSpeech = current;
+    }
+    const split = splitCompletedSentences(speechBuffer, Boolean(options.flush));
+    speechBuffer = split.rest;
+    split.sentences.forEach((sentence) => emitSentence(sentence, displayQueue.shift() || ''));
+  };
+
+  const pushUnifiedReply = (reply, options = {}) => {
+    pushDisplay(reply, options);
+    pushSpeech(reply, options);
   };
 
   return {
     pushRaw(rawText, options = {}) {
+      const streamingDisplay = readStreamingDisplayProgress(rawText);
       const streamingSpeech = readStreamingSpeechProgress(rawText);
+      if (streamingDisplay) {
+        pushDisplay(streamingDisplay, { flush: options.flush });
+      }
       if (streamingSpeech) {
-        pushReply(streamingSpeech, { flush: options.flush });
+        pushSpeech(streamingSpeech, { flush: options.flush });
         return;
       }
       const field = readReplyFieldProgress(rawText);
       if (!field.found) return;
-      pushReply(field.value, { flush: options.flush || field.complete });
+      pushUnifiedReply(field.value, { flush: options.flush || field.complete });
     },
     flushReply(reply) {
-      pushReply(reply, { flush: true });
+      pushUnifiedReply(reply, { flush: true });
     },
     get emittedCount() {
       return emittedCount;
@@ -506,8 +547,9 @@ export function parseLive2DControlPayload(rawText) {
     };
   } catch (_) {
     const stageText = extractLive2DStageDirections(rawText);
+    const streamingDisplay = readStreamingDisplayProgress(rawText);
     const streamingSpeech = readStreamingSpeechProgress(rawText);
-    const reply = cleanReplyForSpeech(streamingSpeech || rawText) || 'OK.';
+    const reply = cleanReplyForSpeech(streamingDisplay || streamingSpeech || rawText) || 'OK.';
     const behaviorLive2D = compileBehaviorIntent({ reply, text: [stageText, reply].filter(Boolean).join('\n') });
     const inferredLive2D = inferLive2DIntentFromText([stageText, reply].filter(Boolean).join('\n'));
     return {
@@ -615,17 +657,22 @@ export function live2DControlSystemPrompt() {
 export function live2DStreamingControlSystemPrompt() {
   return [
     'You are controlling a Live2D character named Yachiyo.',
-    'This is a low-latency streaming turn. Start output with Japanese spoken VOICE lines immediately, then output control JSON at the end.',
+    'This is a low-latency streaming turn. Start output with paired visible TEXT and Japanese VOICE lines immediately, then output control JSON at the end.',
     'Output format must be exactly:',
-    'VOICE: first tiny Japanese reaction, 2-6 characters if possible, such as うん、 えへへ、 そうだね、 or あっ、.',
-    'VOICE: next short natural Japanese spoken clause, ending as soon as a comma or sentence punctuation is natural.',
-    'VOICE: continue in very small comma-sized Japanese chunks so TTS can start quickly.',
-    'CONTROL: {"reply":"same Japanese spoken text without VOICE labels","emotion":"smug|happy|shy|surprised|angry|puff|tongue|dizzy|sad|crying|fire|neutral","intensity":0.72,"actions":[{"type":"look_at_chat","duration":1.2},{"type":"smirk","duration":2.0}],"speech_style":{"speed":1.05,"pitch":0.08,"pause":"playful"}}',
-    'The VOICE lines must come before CONTROL. Do not wait to decide actions before writing the VOICE lines.',
-    'Emit the first VOICE before planning the full answer. Do not wait for CONTROL before speaking.',
-    'Keep each VOICE line short: one comma-delimited Japanese clause or about 5-8 Japanese characters per VOICE line is ideal.',
+    'TEXT: first tiny Simplified Chinese visible reaction, 1-4 Chinese characters if possible, such as 嗯、 欸嘿、 对呀、 or 啊、.',
+    'VOICE: matching tiny Japanese spoken reaction, 2-6 characters if possible, such as うん、 えへへ、 そうだね、 or あっ、.',
+    'TEXT: next short Simplified Chinese visible clause.',
+    'VOICE: matching short natural Japanese spoken clause.',
+    'CONTROL: {"reply":"same Simplified Chinese visible text without TEXT labels","voice_reply":"same Japanese spoken text without VOICE labels","emotion":"smug|happy|shy|surprised|angry|puff|tongue|dizzy|sad|crying|fire|neutral","intensity":0.72,"actions":[{"type":"look_at_chat","duration":1.2},{"type":"smirk","duration":2.0}],"speech_style":{"speed":1.05,"pitch":0.08,"pause":"playful"}}',
+    'Every spoken chunk must be a TEXT line followed immediately by its matching VOICE line.',
+    'TEXT is for captions and chat log. TEXT must be Simplified Chinese, never Japanese.',
+    'VOICE is for TTS only. VOICE must be natural Japanese, never shown to the user.',
+    'Do not wait to decide actions before writing the first TEXT/VOICE pair.',
+    'Emit the first TEXT/VOICE pair before planning the full answer. Do not wait for CONTROL before speaking.',
+    'Keep each TEXT/VOICE pair short: one comma-delimited clause or about 5-8 CJK characters per pair is ideal.',
     'VOICE lines must contain only natural Japanese dialogue. Never put stage directions, parenthesized action hints, asterisk actions, action labels, pose descriptions, or JSON in VOICE.',
-    'CONTROL must be one JSON object after the CONTROL label. The reply field must exactly match the spoken VOICE text.',
+    'TEXT lines must contain only visible dialogue. Never put stage directions, parenthesized action hints, asterisk actions, action labels, pose descriptions, or JSON in TEXT.',
+    'CONTROL must be one JSON object after the CONTROL label. The reply field must exactly match the visible TEXT text.',
     'Choose 2-5 semantic actions that match the spoken meaning and mood.',
     'Use only semantic emotion ids and semantic actions. Do not output raw Live2D parameters, VTube Studio parameter ids, expression file names, live2d.parameters, parameterTargets, or pose descriptions.',
     `Good action combos: ${behaviorActionComboPrompt()}.`,
