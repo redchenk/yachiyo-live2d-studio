@@ -3,6 +3,7 @@ import { computed, onUnmounted, reactive, ref } from 'vue';
 import TsIcon from '@frontend/components/TsIcon.vue';
 import {
   DEFAULT_ROOM_LLM_SETTINGS,
+  DEFAULT_ROOM_MEMORY_SETTINGS,
   DEFAULT_ROOM_MODEL_SETTINGS,
   DEFAULT_ROOM_TTS_SETTINGS,
   DEFAULT_ROOM_VTS_SETTINGS,
@@ -10,14 +11,17 @@ import {
   DEFAULT_MIMO_TTS_MODEL,
   DEFAULT_MIMO_TTS_VOICE,
   normalizeRoomLLMSettings,
+  normalizeRoomMemorySettings,
   normalizeRoomModelSettings,
   normalizeRoomTTSSettings,
   normalizeRoomVTubeStudioSettings,
   readRoomLLMSettings,
+  readRoomMemorySettings,
   readRoomModelSettings,
   readRoomTTSSettings,
   readRoomVTubeStudioSettings,
   writeRoomLLMSettings,
+  writeRoomMemorySettings,
   writeRoomModelSettings,
   writeRoomTTSSettings,
   writeRoomVTubeStudioSettings
@@ -29,7 +33,8 @@ const tabs = [
   { id: 'llm', label: 'LLM' },
   { id: 'tts', label: 'TTS' },
   { id: 'model', label: 'Model' },
-  { id: 'vts', label: 'VTS' }
+  { id: 'vts', label: 'VTS' },
+  { id: 'memory', label: 'Memory' }
 ];
 
 const providerOptions = [
@@ -57,12 +62,25 @@ const languageOptions = [
   { value: 'yue', label: 'yue' }
 ];
 
+const writeModeOptions = [
+  { value: 'off', label: 'off' },
+  { value: 'inbox-only', label: 'inbox-only' },
+  { value: 'auto-approved', label: 'auto-approved' }
+];
+
+const retrievalModeOptions = [
+  { value: 'off', label: 'off' },
+  { value: 'tags', label: 'tags' },
+  { value: 'index', label: 'index' }
+];
+
 const activeTab = ref('llm');
 const status = ref('');
 const llm = reactive(readRoomLLMSettings());
 const tts = reactive(readRoomTTSSettings());
 const model = reactive(readRoomModelSettings());
 const vts = reactive(readRoomVTubeStudioSettings());
+const memory = reactive(readRoomMemorySettings());
 
 let statusTimer = 0;
 
@@ -87,6 +105,7 @@ function reloadSettings() {
   Object.assign(tts, readRoomTTSSettings());
   Object.assign(model, readRoomModelSettings());
   Object.assign(vts, readRoomVTubeStudioSettings());
+  Object.assign(memory, readRoomMemorySettings());
   setStatus('Reloaded');
 }
 
@@ -97,8 +116,10 @@ function resetCurrentTab() {
     Object.assign(tts, normalizeRoomTTSSettings(DEFAULT_ROOM_TTS_SETTINGS));
   } else if (activeTab.value === 'model') {
     Object.assign(model, normalizeRoomModelSettings(DEFAULT_ROOM_MODEL_SETTINGS));
-  } else {
+  } else if (activeTab.value === 'vts') {
     Object.assign(vts, normalizeRoomVTubeStudioSettings(DEFAULT_ROOM_VTS_SETTINGS));
+  } else {
+    Object.assign(memory, normalizeRoomMemorySettings(DEFAULT_ROOM_MEMORY_SETTINGS));
   }
   setStatus('Defaults loaded');
 }
@@ -153,13 +174,15 @@ function saveSettings() {
   });
   const savedModel = writeRoomModelSettings(model);
   const savedVTS = writeRoomVTubeStudioSettings(vts);
+  const savedMemory = writeRoomMemorySettings(memory);
 
   Object.assign(llm, savedLLM);
   Object.assign(tts, savedTTS);
   Object.assign(model, savedModel);
   Object.assign(vts, savedVTS);
+  Object.assign(memory, savedMemory);
   window.dispatchEvent(new CustomEvent('tsukuyomi:studio-settings-saved', {
-    detail: { llm: savedLLM, tts: savedTTS, model: savedModel, vts: savedVTS }
+    detail: { llm: savedLLM, tts: savedTTS, model: savedModel, vts: savedVTS, memory: savedMemory }
   }));
   setStatus('Saved');
 }
@@ -287,7 +310,7 @@ onUnmounted(() => {
         </label>
       </section>
 
-      <section v-else class="studio-settings-section">
+      <section v-else-if="activeTab === 'vts'" class="studio-settings-section">
         <label class="studio-check-row">
           <input v-model="vts.enabled" type="checkbox">
           <span>Use VTube Studio as output</span>
@@ -315,6 +338,41 @@ onUnmounted(() => {
         <label class="studio-check-row">
           <input v-model="vts.injectMouth" type="checkbox">
           <span>Mouth sync</span>
+        </label>
+      </section>
+
+      <section v-else class="studio-settings-section">
+        <label class="studio-check-row">
+          <input v-model="memory.enabled" type="checkbox">
+          <span>Enable Obsidian memory</span>
+        </label>
+        <label>
+          <span>Vault Path</span>
+          <input v-model="memory.vaultPath" type="text" spellcheck="false" placeholder="D:\Obsidian\YachiyoMemoryVault">
+        </label>
+        <label>
+          <span>Retrieval</span>
+          <select v-model="memory.retrievalMode">
+            <option v-for="option in retrievalModeOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
+          </select>
+        </label>
+        <label>
+          <span>Write Mode</span>
+          <select v-model="memory.writeMode">
+            <option v-for="option in writeModeOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
+          </select>
+        </label>
+        <label>
+          <span>Max Notes</span>
+          <input v-model.number="memory.maxNotesPerTurn" type="number" min="1" max="8">
+        </label>
+        <label class="studio-check-row">
+          <input v-model="memory.allowViewerMemory" type="checkbox">
+          <span>Viewer memory</span>
+        </label>
+        <label class="studio-check-row">
+          <input v-model="memory.allowSessionMemory" type="checkbox">
+          <span>Session memory</span>
         </label>
       </section>
 

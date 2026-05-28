@@ -378,6 +378,18 @@ internal sealed class LocalStudioServer : IDisposable
                 return;
             }
 
+            if (method == "POST" && string.Equals(path, "/api/memory/search", StringComparison.OrdinalIgnoreCase))
+            {
+                WriteApiResponse(stream, DesktopApiProxy.MemorySearch(request.Body));
+                return;
+            }
+
+            if (method == "POST" && string.Equals(path, "/api/memory/write", StringComparison.OrdinalIgnoreCase))
+            {
+                WriteApiResponse(stream, DesktopApiProxy.MemoryWrite(request.Body));
+                return;
+            }
+
             if (method != "GET" && method != "HEAD")
             {
                 WritePlainResponse(stream, 405, "Method Not Allowed", "text/plain; charset=utf-8", "Method Not Allowed", false);
@@ -691,6 +703,10 @@ internal sealed class StudioApiResponse
 internal static class DesktopApiProxy
 {
     private static readonly JavaScriptSerializer Json = new JavaScriptSerializer { MaxJsonLength = int.MaxValue };
+    private const int MaxMemoryNoteBytes = 256 * 1024;
+    private const int MaxMemoryWriteChars = 2000;
+    private const int MaxMemorySearchFiles = 800;
+    private const string MemoryIndexRelativePath = ".yachiyo-index/memory-index.json";
 
     public static StudioApiResponse Chat(byte[] body)
     {
@@ -812,6 +828,103 @@ internal static class DesktopApiProxy
         }
     }
 
+    public static StudioApiResponse MemorySearch(byte[] body)
+    {
+        try
+        {
+            var input = ParseObject(body);
+            var vaultPath = ValidateMemoryVaultPath(GetString(input, "vaultPath"));
+            var query = GetObject(input, "query") ?? new Dictionary<string, object>();
+            var queryText = GetString(query, "text");
+            var queryTags = ToLowerSet(GetArray(query, "tags"));
+            var queryKeywords = ToLowerSet(GetArray(query, "keywords"));
+            foreach (var keyword in ExtractSearchTerms(queryText))
+            {
+                if (!queryKeywords.Contains(keyword)) queryKeywords.Add(keyword);
+            }
+            var preferredTypes = ToLowerSet(GetArray(query, "preferredTypes"));
+            var retrievalMode = SanitizeMemoryToken(GetString(query, "retrievalMode"), "tags");
+            var maxNotes = (int)Math.Round(GetDouble(query, "maxNotes", 3, 1, 8));
+            if (retrievalMode == "off")
+            {
+                return JsonOk(new Dictionary<string, object>
+                {
+                    { "success", true },
+                    { "notes", new List<object>() }
+                });
+            }
+            var notes = SearchMemoryNotes(vaultPath, queryText, queryTags, queryKeywords, preferredTypes, maxNotes, retrievalMode);
+            return JsonOk(new Dictionary<string, object>
+            {
+                { "success", true },
+                { "notes", notes }
+            });
+        }
+        catch (Exception ex)
+        {
+            return JsonError(400, ex.Message);
+        }
+    }
+
+    public static StudioApiResponse MemoryWrite(byte[] body)
+    {
+        try
+        {
+            var input = ParseObject(body);
+            var vaultPath = ValidateMemoryVaultPath(GetString(input, "vaultPath"));
+            var mode = GetString(input, "mode").ToLowerInvariant();
+            if (mode == "off")
+            {
+                return JsonOk(new Dictionary<string, object> { { "success", false }, { "message", "Memory write is off." } });
+            }
+            var memory = GetObject(input, "memory");
+            if (memory == null)
+            {
+                return JsonError(400, "Memory payload is required.");
+            }
+            var text = LimitText(GetString(memory, "text"), MaxMemoryWriteChars);
+            var title = SanitizeMemoryTitle(GetString(memory, "title"));
+            var type = SanitizeMemoryToken(GetString(memory, "type"), "session");
+            var scope = SanitizeMemoryToken(GetString(memory, "scope"), "session");
+            if (string.IsNullOrWhiteSpace(text) || string.IsNullOrWhiteSpace(title))
+            {
+                return JsonError(400, "Memory title and text are required.");
+            }
+            if (LooksUnsafeMemoryText(title + "\n" + text))
+            {
+                return JsonError(400, "Memory payload looks sensitive and was rejected.");
+            }
+
+            var inboxDir = SafeCombineMemoryPath(vaultPath, Path.Combine("00_Inbox", "pending-memory.md"), true);
+            Directory.CreateDirectory(Path.GetDirectoryName(inboxDir));
+            var tags = JoinTags(GetArray(memory, "tags"));
+            var now = DateTimeOffset.Now.ToString("yyyy-MM-ddTHH:mm:sszzz");
+            var builder = new StringBuilder();
+            builder.AppendLine();
+            builder.Append("## ").AppendLine(now);
+            builder.AppendLine();
+            builder.Append("- scope: ").AppendLine(scope);
+            builder.Append("- type: ").AppendLine(type);
+            builder.Append("- title: ").AppendLine(title);
+            builder.Append("- importance: ").AppendLine(GetDouble(memory, "importance", 0.45, 0, 1).ToString("0.##"));
+            builder.Append("- confidence: ").AppendLine(GetDouble(memory, "confidence", 0.65, 0, 1).ToString("0.##"));
+            builder.Append("- tags: ").AppendLine(tags);
+            builder.AppendLine();
+            builder.AppendLine(text);
+            File.AppendAllText(inboxDir, builder.ToString(), Encoding.UTF8);
+            InvalidateMemoryIndex(vaultPath);
+            return JsonOk(new Dictionary<string, object>
+            {
+                { "success", true },
+                { "path", "00_Inbox/pending-memory.md" }
+            });
+        }
+        catch (Exception ex)
+        {
+            return JsonError(400, ex.Message);
+        }
+    }
+
     private static Dictionary<string, object> ParseObject(byte[] body)
     {
         var text = Encoding.UTF8.GetString(body ?? new byte[0]);
@@ -833,7 +946,19 @@ internal static class DesktopApiProxy
     private static object[] GetArray(Dictionary<string, object> data, string key)
     {
         object value;
-        return data != null && data.TryGetValue(key, out value) ? value as object[] : null;
+        if (data == null || !data.TryGetValue(key, out value) || value == null) return null;
+        var array = value as object[];
+        if (array != null) return array;
+        var text = value as string;
+        if (text != null) return text.Split(new[] { ',', ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries);
+        var enumerable = value as System.Collections.IEnumerable;
+        if (enumerable == null) return null;
+        var result = new List<object>();
+        foreach (var item in enumerable)
+        {
+            result.Add(item);
+        }
+        return result.ToArray();
     }
 
     private static Dictionary<string, object> GetObject(Dictionary<string, object> data, string key)
@@ -857,6 +982,455 @@ internal static class DesktopApiProxy
         if (numeric < min) return min;
         if (numeric > max) return max;
         return numeric;
+    }
+
+    private static string ValidateMemoryVaultPath(string vaultPath)
+    {
+        if (string.IsNullOrWhiteSpace(vaultPath))
+        {
+            throw new InvalidOperationException("Obsidian vault path is required.");
+        }
+        var fullPath = Path.GetFullPath(Environment.ExpandEnvironmentVariables(vaultPath.Trim()));
+        if (!Directory.Exists(fullPath))
+        {
+            throw new InvalidOperationException("Obsidian vault path does not exist.");
+        }
+        return fullPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+    }
+
+    private static string SafeCombineMemoryPath(string vaultPath, string relativePath, bool forWrite)
+    {
+        var safeRelative = (relativePath ?? string.Empty).Replace('/', Path.DirectorySeparatorChar).TrimStart(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var fullPath = Path.GetFullPath(Path.Combine(vaultPath, safeRelative));
+        var root = vaultPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        if (!fullPath.StartsWith(root, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException("Invalid memory path.");
+        }
+        var normalized = fullPath.ToLowerInvariant();
+        if (normalized.IndexOf(Path.DirectorySeparatorChar + ".obsidian" + Path.DirectorySeparatorChar + "plugins" + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) >= 0)
+        {
+            throw new InvalidOperationException("Writing Obsidian plugins is not allowed.");
+        }
+        if (forWrite)
+        {
+            var extension = Path.GetExtension(fullPath).ToLowerInvariant();
+            if (extension != ".md" && extension != ".json")
+            {
+                throw new InvalidOperationException("Memory writes only allow .md and .json files.");
+            }
+        }
+        return fullPath;
+    }
+
+    private static List<string> ToLowerSet(object[] values)
+    {
+        var result = new List<string>();
+        if (values == null) return result;
+        foreach (var value in values)
+        {
+            var text = Convert.ToString(value ?? string.Empty).Trim().TrimStart('#').ToLowerInvariant();
+            if (text.Length < 1 || result.Contains(text)) continue;
+            result.Add(text);
+        }
+        return result;
+    }
+
+    private static List<string> ExtractSearchTerms(string text)
+    {
+        var result = new List<string>();
+        var value = (text ?? string.Empty).ToLowerInvariant();
+        foreach (System.Text.RegularExpressions.Match match in System.Text.RegularExpressions.Regex.Matches(value, @"[\u3400-\u9fff]{2,}|[a-z0-9][a-z0-9_-]{2,}", System.Text.RegularExpressions.RegexOptions.IgnoreCase))
+        {
+            var token = match.Value.Trim();
+            if (token.Length > 0 && !result.Contains(token)) result.Add(token);
+            if (result.Count >= 12) break;
+        }
+        return result;
+    }
+
+    private static string LimitText(string text, int maxLength)
+    {
+        var value = (text ?? string.Empty).Trim();
+        return value.Length <= maxLength ? value : value.Substring(0, maxLength);
+    }
+
+    private static string SanitizeMemoryToken(string text, string fallback)
+    {
+        var value = System.Text.RegularExpressions.Regex.Replace((text ?? string.Empty).Trim().ToLowerInvariant(), @"[^a-z0-9_-]+", "_").Trim('_');
+        return string.IsNullOrWhiteSpace(value) ? fallback : value.Substring(0, Math.Min(value.Length, 40));
+    }
+
+    private static string SanitizeMemoryTitle(string text)
+    {
+        var value = System.Text.RegularExpressions.Regex.Replace((text ?? string.Empty).Trim(), @"[\r\n\\/:*?""<>|]+", " ");
+        value = System.Text.RegularExpressions.Regex.Replace(value, @"\s+", " ").Trim();
+        return value.Length <= 90 ? value : value.Substring(0, 90);
+    }
+
+    private static string JoinTags(object[] values)
+    {
+        var tags = ToLowerSet(values);
+        return string.Join(", ", tags.ToArray());
+    }
+
+    private static bool LooksUnsafeMemoryText(string text)
+    {
+        return RegexContains(text, @"api[_ -]?key|token|password|passwd|secret|bearer\s+[a-z0-9._-]+|sk-[a-z0-9]{16,}|身份证|证件号|真实地址|住址|电话|手机号");
+    }
+
+    private static void InvalidateMemoryIndex(string vaultPath)
+    {
+        try
+        {
+            var indexPath = SafeCombineMemoryPath(vaultPath, MemoryIndexRelativePath, true);
+            if (File.Exists(indexPath)) File.Delete(indexPath);
+        }
+        catch
+        {
+            // Index invalidation is a cache concern and must not block memory writes.
+        }
+    }
+
+    private static List<object> SearchMemoryNotes(string vaultPath, string queryText, List<string> queryTags, List<string> queryKeywords, List<string> preferredTypes, int maxNotes, string retrievalMode)
+    {
+        if (string.Equals(retrievalMode, "index", StringComparison.OrdinalIgnoreCase))
+        {
+            return SearchIndexedMemoryNotes(vaultPath, queryText, queryTags, queryKeywords, preferredTypes, maxNotes);
+        }
+        return SearchScannedMemoryNotes(vaultPath, queryText, queryTags, queryKeywords, preferredTypes, maxNotes);
+    }
+
+    private static List<object> SearchScoredMemoryNotes(List<Dictionary<string, object>> notes, string queryText, List<string> queryTags, List<string> queryKeywords, List<string> preferredTypes, int maxNotes)
+    {
+        var scored = new List<Dictionary<string, object>>();
+        foreach (var note in notes)
+        {
+            var score = ScoreMemoryNote(note, queryText, queryTags, queryKeywords, preferredTypes);
+            if (score <= 0.01) continue;
+            note["score"] = score;
+            scored.Add(note);
+        }
+
+        scored.Sort((left, right) => Convert.ToDouble(right["score"]).CompareTo(Convert.ToDouble(left["score"])));
+        var result = new List<object>();
+        for (var i = 0; i < scored.Count && i < maxNotes; i++)
+        {
+            scored[i].Remove("score");
+            result.Add(scored[i]);
+        }
+        return result;
+    }
+
+    private static List<object> SearchScannedMemoryNotes(string vaultPath, string queryText, List<string> queryTags, List<string> queryKeywords, List<string> preferredTypes, int maxNotes)
+    {
+        var notes = new List<Dictionary<string, object>>();
+        var files = Directory.GetFiles(vaultPath, "*.md", SearchOption.AllDirectories);
+        var scanned = 0;
+        foreach (var file in files)
+        {
+            if (scanned >= MaxMemorySearchFiles) break;
+            if (IsIgnoredMemoryPath(file)) continue;
+            var info = new FileInfo(file);
+            if (!info.Exists || info.Length > MaxMemoryNoteBytes) continue;
+            scanned += 1;
+            var text = File.ReadAllText(file, Encoding.UTF8);
+            var note = ParseMemoryNote(vaultPath, file, text);
+            notes.Add(note);
+        }
+
+        return SearchScoredMemoryNotes(notes, queryText, queryTags, queryKeywords, preferredTypes, maxNotes);
+    }
+
+    private static List<object> SearchIndexedMemoryNotes(string vaultPath, string queryText, List<string> queryTags, List<string> queryKeywords, List<string> preferredTypes, int maxNotes)
+    {
+        var notes = LoadOrBuildMemoryIndex(vaultPath);
+        return SearchScoredMemoryNotes(notes, queryText, queryTags, queryKeywords, preferredTypes, maxNotes);
+    }
+
+    private static bool IsIgnoredMemoryPath(string path)
+    {
+        var lower = path.ToLowerInvariant();
+        return lower.IndexOf(Path.DirectorySeparatorChar + ".obsidian" + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) >= 0 ||
+               lower.IndexOf(Path.DirectorySeparatorChar + ".trash" + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) >= 0 ||
+               lower.IndexOf(Path.DirectorySeparatorChar + ".yachiyo-index" + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) >= 0;
+    }
+
+    private static List<Dictionary<string, object>> LoadOrBuildMemoryIndex(string vaultPath)
+    {
+        var indexPath = SafeCombineMemoryPath(vaultPath, MemoryIndexRelativePath, true);
+        if (IsMemoryIndexFresh(vaultPath, indexPath))
+        {
+            var existing = TryReadMemoryIndex(vaultPath, indexPath);
+            if (existing != null) return existing;
+        }
+
+        var built = BuildMemoryIndex(vaultPath);
+        TryWriteMemoryIndex(indexPath, built);
+        return built;
+    }
+
+    private static bool IsMemoryIndexFresh(string vaultPath, string indexPath)
+    {
+        if (!File.Exists(indexPath)) return false;
+        var indexTime = File.GetLastWriteTimeUtc(indexPath);
+        foreach (var file in Directory.GetFiles(vaultPath, "*.md", SearchOption.AllDirectories))
+        {
+            if (IsIgnoredMemoryPath(file)) continue;
+            if (File.GetLastWriteTimeUtc(file) > indexTime) return false;
+        }
+        return true;
+    }
+
+    private static List<Dictionary<string, object>> TryReadMemoryIndex(string vaultPath, string indexPath)
+    {
+        try
+        {
+            var raw = Json.DeserializeObject(File.ReadAllText(indexPath, Encoding.UTF8)) as object[];
+            if (raw == null) return null;
+            var notes = new List<Dictionary<string, object>>();
+            foreach (var item in raw)
+            {
+                var source = item as Dictionary<string, object>;
+                if (source == null) continue;
+                var note = NormalizeMemoryIndexNote(source);
+                var path = GetString(note, "path");
+                if (string.IsNullOrWhiteSpace(path)) continue;
+                if (!File.Exists(SafeCombineMemoryPath(vaultPath, path, false))) continue;
+                notes.Add(note);
+                if (notes.Count >= MaxMemorySearchFiles) break;
+            }
+            return notes;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static List<Dictionary<string, object>> BuildMemoryIndex(string vaultPath)
+    {
+        var notes = new List<Dictionary<string, object>>();
+        var files = Directory.GetFiles(vaultPath, "*.md", SearchOption.AllDirectories);
+        var scanned = 0;
+        foreach (var file in files)
+        {
+            if (scanned >= MaxMemorySearchFiles) break;
+            if (IsIgnoredMemoryPath(file)) continue;
+            var info = new FileInfo(file);
+            if (!info.Exists || info.Length > MaxMemoryNoteBytes) continue;
+            scanned += 1;
+            var text = File.ReadAllText(file, Encoding.UTF8);
+            notes.Add(ParseMemoryNote(vaultPath, file, text));
+        }
+        return notes;
+    }
+
+    private static void TryWriteMemoryIndex(string indexPath, List<Dictionary<string, object>> notes)
+    {
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(indexPath));
+            var payload = new List<object>();
+            foreach (var note in notes)
+            {
+                payload.Add(NormalizeMemoryIndexNote(note));
+            }
+            File.WriteAllText(indexPath, Json.Serialize(payload), Encoding.UTF8);
+        }
+        catch
+        {
+            // The app can always fall back to direct markdown scanning.
+        }
+    }
+
+    private static Dictionary<string, object> NormalizeMemoryIndexNote(Dictionary<string, object> note)
+    {
+        return new Dictionary<string, object>
+        {
+            { "path", GetString(note, "path") },
+            { "title", GetString(note, "title") },
+            { "type", GetString(note, "type") },
+            { "scope", GetString(note, "scope") },
+            { "tags", ToLowerSet(GetArray(note, "tags")) },
+            { "importance", GetDouble(note, "importance", 0.45, 0, 1) },
+            { "confidence", GetDouble(note, "confidence", 0.65, 0, 1) },
+            { "updated", GetString(note, "updated") },
+            { "summary", LimitText(GetString(note, "summary"), 360) },
+            { "content", LimitText(GetString(note, "content"), 1200) }
+        };
+    }
+
+    private static Dictionary<string, object> ParseMemoryNote(string vaultPath, string filePath, string markdown)
+    {
+        var text = (markdown ?? string.Empty).Replace("\r\n", "\n").Replace('\r', '\n');
+        var frontmatter = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
+        var content = text;
+        if (text.StartsWith("---\n", StringComparison.Ordinal))
+        {
+            var end = text.IndexOf("\n---\n", 4, StringComparison.Ordinal);
+            if (end > 0)
+            {
+                frontmatter = ParseYamlFrontmatter(text.Substring(4, end - 4));
+                content = text.Substring(end + 5);
+            }
+        }
+        var relativePath = filePath.Substring(vaultPath.Length).TrimStart(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar).Replace(Path.DirectorySeparatorChar, '/');
+        var tags = GetFrontmatterTags(frontmatter);
+        var title = ExtractMarkdownTitle(content);
+        if (string.IsNullOrWhiteSpace(title)) title = Path.GetFileNameWithoutExtension(filePath);
+        var summary = GetFrontmatterString(frontmatter, "summary");
+        if (string.IsNullOrWhiteSpace(summary)) summary = BuildMemorySummary(content);
+        return new Dictionary<string, object>
+        {
+            { "path", relativePath },
+            { "title", title },
+            { "type", GetFrontmatterString(frontmatter, "type") },
+            { "scope", GetFrontmatterString(frontmatter, "scope") },
+            { "tags", tags },
+            { "importance", GetFrontmatterDouble(frontmatter, "importance", 0.45) },
+            { "confidence", GetFrontmatterDouble(frontmatter, "confidence", 0.65) },
+            { "updated", GetFrontmatterString(frontmatter, "updated") },
+            { "summary", LimitText(summary, 360) },
+            { "content", LimitText(StripMarkdown(content), 1200) }
+        };
+    }
+
+    private static Dictionary<string, object> ParseYamlFrontmatter(string yaml)
+    {
+        var data = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
+        var currentListKey = string.Empty;
+        foreach (var rawLine in (yaml ?? string.Empty).Split('\n'))
+        {
+            var line = rawLine.TrimEnd();
+            if (string.IsNullOrWhiteSpace(line) || line.TrimStart().StartsWith("#", StringComparison.Ordinal)) continue;
+            var trimmed = line.Trim();
+            if (!string.IsNullOrEmpty(currentListKey) && trimmed.StartsWith("-", StringComparison.Ordinal))
+            {
+                var list = data[currentListKey] as List<string>;
+                if (list != null) list.Add(trimmed.Substring(1).Trim().Trim('"', '\''));
+                continue;
+            }
+            currentListKey = string.Empty;
+            var separator = trimmed.IndexOf(':');
+            if (separator <= 0) continue;
+            var key = trimmed.Substring(0, separator).Trim();
+            var value = trimmed.Substring(separator + 1).Trim();
+            if (value.Length == 0)
+            {
+                data[key] = new List<string>();
+                currentListKey = key;
+            }
+            else
+            {
+                data[key] = value.Trim('"', '\'');
+            }
+        }
+        return data;
+    }
+
+    private static List<string> GetFrontmatterTags(Dictionary<string, object> frontmatter)
+    {
+        object value;
+        if (frontmatter.TryGetValue("tags", out value))
+        {
+            var list = value as List<string>;
+            if (list != null)
+            {
+                var result = new List<string>();
+                foreach (var tag in list)
+                {
+                    var normalized = (tag ?? string.Empty).Trim().TrimStart('#').ToLowerInvariant();
+                    if (normalized.Length > 0 && !result.Contains(normalized)) result.Add(normalized);
+                }
+                return result;
+            }
+            return ToLowerSet(Convert.ToString(value ?? string.Empty).Split(new[] { ',', ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries));
+        }
+        return new List<string>();
+    }
+
+    private static string GetFrontmatterString(Dictionary<string, object> frontmatter, string key)
+    {
+        object value;
+        return frontmatter.TryGetValue(key, out value) && value != null ? Convert.ToString(value).Trim() : string.Empty;
+    }
+
+    private static double GetFrontmatterDouble(Dictionary<string, object> frontmatter, string key, double fallback)
+    {
+        object value;
+        if (!frontmatter.TryGetValue(key, out value) || value == null) return fallback;
+        double numeric;
+        return double.TryParse(Convert.ToString(value), out numeric) ? Math.Min(Math.Max(numeric, 0), 1) : fallback;
+    }
+
+    private static string ExtractMarkdownTitle(string markdown)
+    {
+        foreach (var line in (markdown ?? string.Empty).Split('\n'))
+        {
+            var trimmed = line.Trim();
+            if (trimmed.StartsWith("# ", StringComparison.Ordinal)) return trimmed.Substring(2).Trim();
+        }
+        return string.Empty;
+    }
+
+    private static string StripMarkdown(string markdown)
+    {
+        var value = System.Text.RegularExpressions.Regex.Replace(markdown ?? string.Empty, @"```[\s\S]*?```", " ");
+        value = System.Text.RegularExpressions.Regex.Replace(value, @"^#+\s*", "", System.Text.RegularExpressions.RegexOptions.Multiline);
+        value = System.Text.RegularExpressions.Regex.Replace(value, @"\[\[|\]\]|\*\*|__|`", "");
+        value = System.Text.RegularExpressions.Regex.Replace(value, @"\s+", " ");
+        return value.Trim();
+    }
+
+    private static string BuildMemorySummary(string markdown)
+    {
+        var text = StripMarkdown(markdown);
+        return LimitText(text, 320);
+    }
+
+    private static double ScoreMemoryNote(Dictionary<string, object> note, string queryText, List<string> queryTags, List<string> queryKeywords, List<string> preferredTypes)
+    {
+        var score = 0.0;
+        var type = Convert.ToString(note["type"] ?? string.Empty).ToLowerInvariant();
+        var title = Convert.ToString(note["title"] ?? string.Empty).ToLowerInvariant();
+        var content = (Convert.ToString(note["summary"] ?? string.Empty) + " " + Convert.ToString(note["content"] ?? string.Empty)).ToLowerInvariant();
+        var tags = note["tags"] as List<string> ?? new List<string>();
+        var matched = queryTags.Count == 0 && queryKeywords.Count == 0 && string.IsNullOrWhiteSpace(queryText);
+        foreach (var tag in queryTags)
+        {
+            if (tags.Contains(tag))
+            {
+                score += 3.0;
+                matched = true;
+            }
+        }
+        foreach (var preferredType in preferredTypes)
+        {
+            if (type == preferredType) score += 2.0;
+        }
+        foreach (var keyword in queryKeywords)
+        {
+            if (title.IndexOf(keyword, StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                score += 2.2;
+                matched = true;
+            }
+            if (content.IndexOf(keyword, StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                score += 1.4;
+                matched = true;
+            }
+        }
+        if (!string.IsNullOrWhiteSpace(queryText) && content.IndexOf(queryText.ToLowerInvariant(), StringComparison.OrdinalIgnoreCase) >= 0)
+        {
+            score += 2.0;
+            matched = true;
+        }
+        if (!matched) return 0.0;
+        score += Convert.ToDouble(note["importance"]) * 2.0;
+        score += Convert.ToDouble(note["confidence"]) * 0.8;
+        return score;
     }
 
     private static string NormalizeChatUrl(string apiUrl, string model)

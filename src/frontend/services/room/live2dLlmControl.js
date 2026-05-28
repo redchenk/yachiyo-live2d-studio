@@ -12,6 +12,11 @@ import {
   cleanLive2DReply,
   extractLive2DStageDirections
 } from './live2dText';
+import {
+  buildLive2DMemoryPrompt,
+  sanitizeMemoryWrites,
+  writePendingLive2DMemories
+} from './live2dMemory';
 import { readJson, writeJson } from './roomStorage';
 
 const HISTORY_KEY = 'live2dLLMControlHistory';
@@ -522,6 +527,10 @@ function mergeBehaviorAndExplicitIntent(behaviorIntent, explicitIntent) {
   });
 }
 
+function normalizeMemoryWritesFromPayload(data) {
+  return sanitizeMemoryWrites(data?.memory_writes || data?.memoryWrites || []);
+}
+
 export function parseLive2DControlPayload(rawText) {
   const jsonText = extractJsonObject(rawText);
   try {
@@ -539,6 +548,7 @@ export function parseLive2DControlPayload(rawText) {
     return {
       reply: reply || 'OK.',
       live2d,
+      memoryWrites: normalizeMemoryWritesFromPayload(data),
       raw: data
     };
   } catch (_) {
@@ -550,6 +560,7 @@ export function parseLive2DControlPayload(rawText) {
     return {
       reply,
       live2d: mergeBehaviorAndExplicitIntent(behaviorLive2D, inferredLive2D),
+      memoryWrites: [],
       raw: rawText
     };
   }
@@ -704,6 +715,9 @@ function finishLive2DControlRequest(message, history, rawReply, sentenceEmitter 
   if (sentenceEmitter && sentenceEmitter.emittedCount < 1) {
     sentenceEmitter.flushReply(parsed.reply);
   }
+  if (parsed.memoryWrites?.length) {
+    writePendingLive2DMemories(parsed.memoryWrites).catch(() => {});
+  }
   const nextHistory = [
     ...history,
     { role: 'user', content: String(message || '') },
@@ -719,7 +733,7 @@ export function live2DControlSystemPrompt() {
     'Yachiyo is being tested as an autonomous AI VTuber streamer: keep her present, reactive, playful, and concise.',
     'Return exactly one JSON object. Do not use Markdown. Do not add prose outside JSON.',
     'JSON schema:',
-    '{"reply":"short visible reply","emotion":"smug|happy|shy|surprised|angry|puff|tongue|dizzy|sad|crying|fire|neutral","intensity":0.72,"actions":[{"type":"look_at_chat","duration":1.2},{"type":"smirk","duration":2.0},{"type":"head_tilt","side":"right","duration":1.5}],"speech_style":{"speed":1.05,"pitch":0.08,"pause":"playful"}}',
+    '{"reply":"short visible reply","emotion":"smug|happy|shy|surprised|angry|puff|tongue|dizzy|sad|crying|fire|neutral","intensity":0.72,"actions":[{"type":"look_at_chat","duration":1.2},{"type":"smirk","duration":2.0},{"type":"head_tilt","side":"right","duration":1.5}],"speech_style":{"speed":1.05,"pitch":0.08,"pause":"playful"},"memory_writes":[]}',
     'The reply field must contain only natural dialogue. Never put stage directions, parenthesized action hints, asterisk actions, action labels, or pose descriptions in reply.',
     'The actions field is required and must contain at least 2 semantic actions. If the moment is calm, use look_at_chat + breathe.',
     'Actions must match the reply meaning and mood. Vary action combos between turns; do not repeat the same body action unless the dialogue specifically calls for it.',
@@ -727,6 +741,8 @@ export function live2DControlSystemPrompt() {
     `Choose 2-5 actions per live-stream turn. Good combos: ${behaviorActionComboPrompt()}.`,
     'Use intensity 0.45-0.85 for normal talking, 0.85-1.0 for punchlines or surprise.',
     'Use duration in seconds. Overlapping actions are allowed by repeating similar delay values; omit delay for a natural staggered performance.',
+    'Only when a durable, low-risk memory is clearly confirmed, include memory_writes items with scope, type, title, text, importance, confidence, and tags. Otherwise use an empty array.',
+    'Never propose secrets, API keys, sensitive personal data, raw chat dumps, guesses about a user, or negative personality labels as memory.',
     semanticExpressionPromptCatalog(),
     semanticActionPromptCatalog(),
     'The execution layer maps semantic emotions to expression presets, VTube Studio expressions, and fine motion overlays.'
@@ -741,7 +757,7 @@ export function live2DStreamingControlSystemPrompt() {
     'VOICE: first short Japanese phrase, 7-14 kana/characters if possible, such as うん、聞いてるよ、 or えへへ、いいね、.',
     'VOICE: next short natural Japanese spoken clause, ending as soon as a comma or sentence punctuation is natural.',
     'VOICE: continue in compact comma-sized Japanese chunks so TTS can start quickly.',
-    'CONTROL: {"reply":"same Japanese spoken text without VOICE labels","emotion":"smug|happy|shy|surprised|angry|puff|tongue|dizzy|sad|crying|fire|neutral","intensity":0.72,"actions":[{"type":"look_at_chat","duration":1.2},{"type":"smirk","duration":2.0}],"speech_style":{"speed":1.05,"pitch":0.08,"pause":"playful"}}',
+    'CONTROL: {"reply":"same Japanese spoken text without VOICE labels","emotion":"smug|happy|shy|surprised|angry|puff|tongue|dizzy|sad|crying|fire|neutral","intensity":0.72,"actions":[{"type":"look_at_chat","duration":1.2},{"type":"smirk","duration":2.0}],"speech_style":{"speed":1.05,"pitch":0.08,"pause":"playful"},"memory_writes":[]}',
     'The VOICE lines must come before CONTROL. Do not wait to decide actions before writing the VOICE lines.',
     'Emit the first VOICE before planning the full answer. Do not wait for CONTROL before speaking.',
     'Avoid standalone ultra-short VOICE lines like only うん、 あっ、 えへへ、. Attach a few spoken words so each chunk is stable for TTS.',
@@ -752,6 +768,8 @@ export function live2DStreamingControlSystemPrompt() {
     'Use only semantic emotion ids and semantic actions. Do not output raw Live2D parameters, VTube Studio parameter ids, expression file names, live2d.parameters, parameterTargets, or pose descriptions.',
     `Good action combos: ${behaviorActionComboPrompt()}.`,
     'Use intensity 0.45-0.85 for normal talking, 0.85-1.0 for punchlines or surprise.',
+    'Only when a durable, low-risk memory is clearly confirmed, include memory_writes items with scope, type, title, text, importance, confidence, and tags. Otherwise use an empty array.',
+    'Never propose secrets, API keys, sensitive personal data, raw chat dumps, guesses about a user, or negative personality labels as memory.',
     semanticExpressionPromptCatalog(),
     semanticActionPromptCatalog(),
     'The execution layer maps semantic emotions to expression presets, VTube Studio expressions, and fine motion overlays.'
@@ -774,7 +792,8 @@ export async function requestLive2DControl(message) {
   }
 
   const history = readLive2DLLMHistory();
-  const systemPrompt = [settings.systemPrompt, live2DControlSystemPrompt()].filter(Boolean).join('\n\n');
+  const memoryPrompt = await buildLive2DMemoryPrompt(message);
+  const systemPrompt = [settings.systemPrompt, memoryPrompt, live2DControlSystemPrompt()].filter(Boolean).join('\n\n');
   let rawReply = '';
 
   if (settings.useProxy) {
@@ -818,7 +837,8 @@ export async function requestLive2DControlStream(message, handlers = {}) {
   }
 
   const history = readLive2DLLMHistory();
-  const systemPrompt = [settings.systemPrompt, live2DStreamingControlSystemPrompt()].filter(Boolean).join('\n\n');
+  const memoryPrompt = await buildLive2DMemoryPrompt(message);
+  const systemPrompt = [settings.systemPrompt, memoryPrompt, live2DStreamingControlSystemPrompt()].filter(Boolean).join('\n\n');
   const sentenceEmitter = createReplySentenceEmitter(handlers);
   let rawReply = '';
 

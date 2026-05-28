@@ -4,6 +4,7 @@ export const ROOM_LLM_SETTINGS_KEY = 'roomLLMSettings';
 export const ROOM_TTS_SETTINGS_KEY = 'roomTTSSettings';
 export const ROOM_MODEL_SETTINGS_KEY = 'roomModelSettings';
 export const ROOM_VTS_SETTINGS_KEY = 'roomVTubeStudioSettings';
+export const ROOM_MEMORY_SETTINGS_KEY = 'roomMemorySettings';
 
 export const DEFAULT_GPT_SOVITS_GPT_WEIGHT = 'GPT_weights_v2ProPlus/yachiyo-v2pro-e15.ckpt';
 export const DEFAULT_GPT_SOVITS_SOVITS_WEIGHT = 'SoVITS_weights_v2ProPlus/yachiyo-v2pro_e8_s456.pth';
@@ -48,6 +49,17 @@ export const DEFAULT_ROOM_VTS_SETTINGS = {
   injectFace: true,
   injectBody: true,
   injectMouth: true
+};
+
+export const DEFAULT_ROOM_MEMORY_SETTINGS = {
+  enabled: false,
+  provider: 'obsidian',
+  vaultPath: '',
+  writeMode: 'inbox-only',
+  retrievalMode: 'tags',
+  maxNotesPerTurn: 3,
+  allowViewerMemory: true,
+  allowSessionMemory: true
 };
 
 function clone(value) {
@@ -142,6 +154,26 @@ export function normalizeRoomVTubeStudioSettings(settings = {}) {
   };
 }
 
+export function normalizeRoomMemorySettings(settings = {}) {
+  const merged = { ...DEFAULT_ROOM_MEMORY_SETTINGS, ...(settings || {}) };
+  const writeMode = ['off', 'inbox-only', 'auto-approved'].includes(asText(merged.writeMode))
+    ? asText(merged.writeMode)
+    : DEFAULT_ROOM_MEMORY_SETTINGS.writeMode;
+  const retrievalMode = ['off', 'tags', 'index'].includes(asText(merged.retrievalMode))
+    ? asText(merged.retrievalMode)
+    : DEFAULT_ROOM_MEMORY_SETTINGS.retrievalMode;
+  return {
+    enabled: asBoolean(merged.enabled),
+    provider: asText(merged.provider) || DEFAULT_ROOM_MEMORY_SETTINGS.provider,
+    vaultPath: String(merged.vaultPath || '').trim(),
+    writeMode,
+    retrievalMode,
+    maxNotesPerTurn: asNumber(merged.maxNotesPerTurn, DEFAULT_ROOM_MEMORY_SETTINGS.maxNotesPerTurn, 1, 8),
+    allowViewerMemory: asBoolean(merged.allowViewerMemory),
+    allowSessionMemory: asBoolean(merged.allowSessionMemory)
+  };
+}
+
 export function readRoomLLMSettings() {
   return normalizeRoomLLMSettings(readJson(ROOM_LLM_SETTINGS_KEY, clone(DEFAULT_ROOM_LLM_SETTINGS)));
 }
@@ -156,6 +188,10 @@ export function readRoomModelSettings() {
 
 export function readRoomVTubeStudioSettings() {
   return normalizeRoomVTubeStudioSettings(readJson(ROOM_VTS_SETTINGS_KEY, clone(DEFAULT_ROOM_VTS_SETTINGS)));
+}
+
+export function readRoomMemorySettings() {
+  return normalizeRoomMemorySettings(readJson(ROOM_MEMORY_SETTINGS_KEY, clone(DEFAULT_ROOM_MEMORY_SETTINGS)));
 }
 
 export function writeRoomLLMSettings(settings) {
@@ -182,11 +218,18 @@ export function writeRoomVTubeStudioSettings(settings) {
   return normalized;
 }
 
+export function writeRoomMemorySettings(settings) {
+  const normalized = normalizeRoomMemorySettings(settings);
+  writeJson(ROOM_MEMORY_SETTINGS_KEY, normalized);
+  return normalized;
+}
+
 export function readRoomStudioSettings() {
   return {
     llm: readRoomLLMSettings(),
     tts: readRoomTTSSettings(),
     model: readRoomModelSettings(),
-    vts: readRoomVTubeStudioSettings()
+    vts: readRoomVTubeStudioSettings(),
+    memory: readRoomMemorySettings()
   };
 }
