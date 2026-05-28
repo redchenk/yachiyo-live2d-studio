@@ -14,6 +14,7 @@ import {
 } from './live2dText';
 import {
   buildLive2DMemoryPrompt,
+  recordLive2DSessionMemoryTurn,
   sanitizeMemoryWrites,
   writePendingLive2DMemories
 } from './live2dMemory';
@@ -718,6 +719,12 @@ function finishLive2DControlRequest(message, history, rawReply, sentenceEmitter 
   if (parsed.memoryWrites?.length) {
     writePendingLive2DMemories(parsed.memoryWrites).catch(() => {});
   }
+  recordLive2DSessionMemoryTurn({
+    source: 'llm-control',
+    input: message,
+    reply: parsed.reply,
+    emotion: parsed.live2d?.emotion || parsed.live2d?.expression || parsed.raw?.emotion || 'neutral'
+  });
   const nextHistory = [
     ...history,
     { role: 'user', content: String(message || '') },
