@@ -26,6 +26,10 @@ import {
   writeRoomTTSSettings,
   writeRoomVTubeStudioSettings
 } from '@frontend/services/room/roomSettings';
+import {
+  initializeLive2DMemoryVault,
+  rebuildLive2DMemoryIndex
+} from '@frontend/services/room/live2dMemory';
 
 defineEmits(['close']);
 
@@ -76,6 +80,7 @@ const retrievalModeOptions = [
 
 const activeTab = ref('llm');
 const status = ref('');
+const memoryBusy = ref('');
 const llm = reactive(readRoomLLMSettings());
 const tts = reactive(readRoomTTSSettings());
 const model = reactive(readRoomModelSettings());
@@ -185,6 +190,26 @@ function saveSettings() {
     detail: { llm: savedLLM, tts: savedTTS, model: savedModel, vts: savedVTS, memory: savedMemory }
   }));
   setStatus('Saved');
+}
+
+async function runMemoryTool(action, label) {
+  if (memoryBusy.value) return;
+  memoryBusy.value = action;
+  try {
+    const savedMemory = writeRoomMemorySettings(memory);
+    Object.assign(memory, savedMemory);
+    const result = action === 'init'
+      ? await initializeLive2DMemoryVault(savedMemory)
+      : await rebuildLive2DMemoryIndex(savedMemory);
+    const detail = action === 'init'
+      ? `${result.created || 0} created, ${result.indexed || 0} indexed`
+      : `${result.indexed || 0} indexed`;
+    setStatus(`${label}: ${detail}`);
+  } catch (error) {
+    setStatus(error?.message || `${label} failed`);
+  } finally {
+    memoryBusy.value = '';
+  }
 }
 
 onUnmounted(() => {
@@ -374,6 +399,24 @@ onUnmounted(() => {
           <input v-model="memory.allowSessionMemory" type="checkbox">
           <span>Session memory</span>
         </label>
+        <div class="studio-memory-actions studio-wide-field">
+          <button
+            class="studio-secondary-btn"
+            type="button"
+            :disabled="Boolean(memoryBusy)"
+            @click="runMemoryTool('init', 'Vault initialized')"
+          >
+            Initialize Vault
+          </button>
+          <button
+            class="studio-secondary-btn"
+            type="button"
+            :disabled="Boolean(memoryBusy)"
+            @click="runMemoryTool('reindex', 'Index rebuilt')"
+          >
+            Rebuild Index
+          </button>
+        </div>
       </section>
 
       <footer class="studio-settings-actions">

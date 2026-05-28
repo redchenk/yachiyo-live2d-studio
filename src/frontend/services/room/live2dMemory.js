@@ -203,3 +203,35 @@ export async function writePendingLive2DMemories(memoryWrites = []) {
   }
   return results;
 }
+
+function configuredMemorySettings(overrides = {}) {
+  const settings = {
+    ...readRoomMemorySettings(),
+    ...(overrides || {})
+  };
+  if (settings.provider !== 'obsidian') throw new Error('Only Obsidian memory is supported.');
+  if (!settings.vaultPath) throw new Error('Obsidian vault path is required.');
+  return settings;
+}
+
+async function postMemoryTool(path, settingsOverrides = {}) {
+  const settings = configuredMemorySettings(settingsOverrides);
+  const response = await fetch(path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ vaultPath: settings.vaultPath })
+  });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok || !result.success) {
+    throw new Error(result.message || `Memory tool failed: ${response.status}`);
+  }
+  return result;
+}
+
+export function initializeLive2DMemoryVault(settingsOverrides = {}) {
+  return postMemoryTool('/api/memory/init', settingsOverrides);
+}
+
+export function rebuildLive2DMemoryIndex(settingsOverrides = {}) {
+  return postMemoryTool('/api/memory/reindex', settingsOverrides);
+}

@@ -200,6 +200,12 @@
   box-shadow: 0 0 0 3px rgba(158, 232, 255, 0.1);
 }
 
+.studio-memory-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.55rem;
+}
+
 .studio-settings-actions {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto auto auto;
@@ -272,6 +278,10 @@
   }
 
   .studio-settings-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .studio-memory-actions {
     grid-template-columns: 1fr;
   }
 

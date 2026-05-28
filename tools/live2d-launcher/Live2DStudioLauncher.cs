@@ -390,6 +390,18 @@ internal sealed class LocalStudioServer : IDisposable
                 return;
             }
 
+            if (method == "POST" && string.Equals(path, "/api/memory/init", StringComparison.OrdinalIgnoreCase))
+            {
+                WriteApiResponse(stream, DesktopApiProxy.MemoryInit(request.Body));
+                return;
+            }
+
+            if (method == "POST" && string.Equals(path, "/api/memory/reindex", StringComparison.OrdinalIgnoreCase))
+            {
+                WriteApiResponse(stream, DesktopApiProxy.MemoryReindex(request.Body));
+                return;
+            }
+
             if (method != "GET" && method != "HEAD")
             {
                 WritePlainResponse(stream, 405, "Method Not Allowed", "text/plain; charset=utf-8", "Method Not Allowed", false);
@@ -895,28 +907,76 @@ internal static class DesktopApiProxy
                 return JsonError(400, "Memory payload looks sensitive and was rejected.");
             }
 
-            var inboxDir = SafeCombineMemoryPath(vaultPath, Path.Combine("00_Inbox", "pending-memory.md"), true);
-            Directory.CreateDirectory(Path.GetDirectoryName(inboxDir));
-            var tags = JoinTags(GetArray(memory, "tags"));
-            var now = DateTimeOffset.Now.ToString("yyyy-MM-ddTHH:mm:sszzz");
-            var builder = new StringBuilder();
-            builder.AppendLine();
-            builder.Append("## ").AppendLine(now);
-            builder.AppendLine();
-            builder.Append("- scope: ").AppendLine(scope);
-            builder.Append("- type: ").AppendLine(type);
-            builder.Append("- title: ").AppendLine(title);
-            builder.Append("- importance: ").AppendLine(GetDouble(memory, "importance", 0.45, 0, 1).ToString("0.##"));
-            builder.Append("- confidence: ").AppendLine(GetDouble(memory, "confidence", 0.65, 0, 1).ToString("0.##"));
-            builder.Append("- tags: ").AppendLine(tags);
-            builder.AppendLine();
-            builder.AppendLine(text);
-            File.AppendAllText(inboxDir, builder.ToString(), Encoding.UTF8);
+            var tagList = ToLowerSet(GetArray(memory, "tags"));
+            var importance = GetDouble(memory, "importance", 0.45, 0, 1);
+            var confidence = GetDouble(memory, "confidence", 0.65, 0, 1);
+            string relativePath;
+            var approved = false;
+            if (mode == "auto-approved" && !RequiresMemoryReview(type, scope))
+            {
+                relativePath = WriteApprovedMemory(vaultPath, title, type, scope, text, importance, confidence, tagList);
+                approved = true;
+            }
+            else
+            {
+                var reviewReason = mode == "auto-approved"
+                    ? "canonical or policy memory requires manual review"
+                    : string.Empty;
+                relativePath = AppendInboxMemory(vaultPath, reviewReason.Length > 0 ? "pending-review.md" : "pending-memory.md", title, type, scope, text, importance, confidence, tagList, reviewReason);
+            }
             InvalidateMemoryIndex(vaultPath);
             return JsonOk(new Dictionary<string, object>
             {
                 { "success", true },
-                { "path", "00_Inbox/pending-memory.md" }
+                { "approved", approved },
+                { "path", relativePath }
+            });
+        }
+        catch (Exception ex)
+        {
+            return JsonError(400, ex.Message);
+        }
+    }
+
+    public static StudioApiResponse MemoryInit(byte[] body)
+    {
+        try
+        {
+            var input = ParseObject(body);
+            var vaultPath = ValidateMemoryVaultPath(GetString(input, "vaultPath"), true);
+            var created = EnsureMemoryVaultStructure(vaultPath);
+            var notes = BuildMemoryIndex(vaultPath);
+            var indexPath = SafeCombineMemoryPath(vaultPath, MemoryIndexRelativePath, true);
+            TryWriteMemoryIndex(indexPath, notes);
+            return JsonOk(new Dictionary<string, object>
+            {
+                { "success", true },
+                { "vaultPath", vaultPath },
+                { "created", created },
+                { "indexed", notes.Count },
+                { "indexPath", MemoryIndexRelativePath }
+            });
+        }
+        catch (Exception ex)
+        {
+            return JsonError(400, ex.Message);
+        }
+    }
+
+    public static StudioApiResponse MemoryReindex(byte[] body)
+    {
+        try
+        {
+            var input = ParseObject(body);
+            var vaultPath = ValidateMemoryVaultPath(GetString(input, "vaultPath"));
+            var notes = BuildMemoryIndex(vaultPath);
+            var indexPath = SafeCombineMemoryPath(vaultPath, MemoryIndexRelativePath, true);
+            TryWriteMemoryIndex(indexPath, notes);
+            return JsonOk(new Dictionary<string, object>
+            {
+                { "success", true },
+                { "indexed", notes.Count },
+                { "indexPath", MemoryIndexRelativePath }
             });
         }
         catch (Exception ex)
@@ -984,16 +1044,26 @@ internal static class DesktopApiProxy
         return numeric;
     }
 
-    private static string ValidateMemoryVaultPath(string vaultPath)
+    private static string ValidateMemoryVaultPath(string vaultPath, bool allowCreate = false)
     {
         if (string.IsNullOrWhiteSpace(vaultPath))
         {
             throw new InvalidOperationException("Obsidian vault path is required.");
         }
         var fullPath = Path.GetFullPath(Environment.ExpandEnvironmentVariables(vaultPath.Trim()));
+        var root = (Path.GetPathRoot(fullPath) ?? string.Empty).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var normalized = fullPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        if (root.Length > 0 && string.Equals(root, normalized, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException("Obsidian vault path cannot be a drive root.");
+        }
         if (!Directory.Exists(fullPath))
         {
-            throw new InvalidOperationException("Obsidian vault path does not exist.");
+            if (!allowCreate)
+            {
+                throw new InvalidOperationException("Obsidian vault path does not exist.");
+            }
+            Directory.CreateDirectory(fullPath);
         }
         return fullPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
     }
@@ -1074,9 +1144,232 @@ internal static class DesktopApiProxy
         return string.Join(", ", tags.ToArray());
     }
 
+    private static string JoinTags(List<string> tags)
+    {
+        return string.Join(", ", (tags ?? new List<string>()).ToArray());
+    }
+
     private static bool LooksUnsafeMemoryText(string text)
     {
         return RegexContains(text, @"api[_ -]?key|token|password|passwd|secret|bearer\s+[a-z0-9._-]+|sk-[a-z0-9]{16,}|身份证|证件号|真实地址|住址|电话|手机号");
+    }
+
+    private static bool RequiresMemoryReview(string type, string scope)
+    {
+        return string.Equals(scope, "canon", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(type, "profile", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(type, "style", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(type, "lore", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(type, "policy", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string AppendInboxMemory(string vaultPath, string fileName, string title, string type, string scope, string text, double importance, double confidence, List<string> tags, string reviewReason)
+    {
+        var relativePath = Path.Combine("00_Inbox", fileName);
+        var fullPath = SafeCombineMemoryPath(vaultPath, relativePath, true);
+        Directory.CreateDirectory(Path.GetDirectoryName(fullPath));
+        var now = DateTimeOffset.Now.ToString("yyyy-MM-ddTHH:mm:sszzz");
+        var builder = new StringBuilder();
+        builder.AppendLine();
+        builder.Append("## ").AppendLine(now);
+        builder.AppendLine();
+        if (!string.IsNullOrWhiteSpace(reviewReason))
+        {
+            builder.Append("- review_reason: ").AppendLine(reviewReason);
+        }
+        builder.Append("- scope: ").AppendLine(scope);
+        builder.Append("- type: ").AppendLine(type);
+        builder.Append("- title: ").AppendLine(title);
+        builder.Append("- importance: ").AppendLine(importance.ToString("0.##"));
+        builder.Append("- confidence: ").AppendLine(confidence.ToString("0.##"));
+        builder.Append("- tags: ").AppendLine(JoinTags(tags));
+        builder.AppendLine();
+        builder.AppendLine(text);
+        File.AppendAllText(fullPath, builder.ToString(), Encoding.UTF8);
+        return relativePath.Replace(Path.DirectorySeparatorChar, '/');
+    }
+
+    private static string WriteApprovedMemory(string vaultPath, string title, string type, string scope, string text, double importance, double confidence, List<string> tags)
+    {
+        var relativePath = ApprovedMemoryRelativePath(type, title);
+        var fullPath = SafeCombineMemoryPath(vaultPath, relativePath, true);
+        Directory.CreateDirectory(Path.GetDirectoryName(fullPath));
+        var now = DateTimeOffset.Now.ToString("yyyy-MM-ddTHH:mm:sszzz");
+        if (!File.Exists(fullPath))
+        {
+            var builder = new StringBuilder();
+            builder.AppendLine("---");
+            builder.Append("type: ").AppendLine(type);
+            builder.Append("character: ").AppendLine("yachiyo");
+            builder.Append("scope: ").AppendLine(scope);
+            builder.Append("importance: ").AppendLine(importance.ToString("0.##"));
+            builder.Append("confidence: ").AppendLine(confidence.ToString("0.##"));
+            builder.Append("updated: ").AppendLine(now);
+            AppendYamlTags(builder, tags);
+            builder.AppendLine("---");
+            builder.AppendLine();
+            builder.Append("# ").AppendLine(ApprovedMemoryTitle(type, title));
+            builder.AppendLine();
+            builder.AppendLine("## Entries");
+            builder.AppendLine();
+            builder.Append("### ").AppendLine(now);
+            builder.AppendLine();
+            builder.AppendLine(text);
+            File.WriteAllText(fullPath, builder.ToString(), Encoding.UTF8);
+        }
+        else
+        {
+            var builder = new StringBuilder();
+            builder.AppendLine();
+            builder.Append("## ").AppendLine(now);
+            builder.AppendLine();
+            builder.AppendLine(text);
+            File.AppendAllText(fullPath, builder.ToString(), Encoding.UTF8);
+        }
+        return relativePath.Replace(Path.DirectorySeparatorChar, '/');
+    }
+
+    private static string ApprovedMemoryTitle(string type, string title)
+    {
+        if (string.Equals(type, "session", StringComparison.OrdinalIgnoreCase))
+        {
+            return DateTimeOffset.Now.ToString("yyyy-MM-dd") + " Session Memory";
+        }
+        return SanitizeMemoryTitle(title);
+    }
+
+    private static string ApprovedMemoryRelativePath(string type, string title)
+    {
+        var fileName = SlugifyMemoryFileName(title) + ".md";
+        if (string.Equals(type, "viewer", StringComparison.OrdinalIgnoreCase))
+        {
+            if (!fileName.StartsWith("viewer-", StringComparison.OrdinalIgnoreCase)) fileName = "viewer-" + fileName;
+            return Path.Combine("03_Viewers", fileName);
+        }
+        if (string.Equals(type, "session", StringComparison.OrdinalIgnoreCase))
+        {
+            return Path.Combine("04_Sessions", DateTimeOffset.Now.ToString("yyyy-MM-dd") + ".md");
+        }
+        if (string.Equals(type, "joke", StringComparison.OrdinalIgnoreCase))
+        {
+            return Path.Combine("05_Running_Jokes", fileName);
+        }
+        if (string.Equals(type, "scene", StringComparison.OrdinalIgnoreCase))
+        {
+            return Path.Combine("06_Scenes", fileName);
+        }
+        if (string.Equals(type, "sample", StringComparison.OrdinalIgnoreCase))
+        {
+            return Path.Combine("07_Samples", fileName);
+        }
+        return Path.Combine("08_System", fileName);
+    }
+
+    private static string SlugifyMemoryFileName(string title)
+    {
+        var safe = SanitizeMemoryTitle(title).ToLowerInvariant();
+        var slug = System.Text.RegularExpressions.Regex.Replace(safe, @"[^a-z0-9\u3400-\u9fff]+", "-").Trim('-');
+        if (string.IsNullOrWhiteSpace(slug)) slug = "memory";
+        return slug.Length <= 70 ? slug : slug.Substring(0, 70).Trim('-');
+    }
+
+    private static void AppendYamlTags(StringBuilder builder, List<string> tags)
+    {
+        builder.AppendLine("tags:");
+        var usable = tags ?? new List<string>();
+        if (usable.Count == 0)
+        {
+            builder.AppendLine("  - memory");
+            return;
+        }
+        foreach (var tag in usable)
+        {
+            builder.Append("  - ").AppendLine(SanitizeMemoryToken(tag, "memory"));
+        }
+    }
+
+    private static int EnsureMemoryVaultStructure(string vaultPath)
+    {
+        var created = 0;
+        var directories = new[]
+        {
+            "00_Inbox",
+            "01_Profile",
+            "02_Lore",
+            "03_Viewers",
+            "04_Sessions",
+            "05_Running_Jokes",
+            "06_Scenes",
+            "07_Samples",
+            "08_System"
+        };
+        foreach (var directory in directories)
+        {
+            var path = SafeCombineMemoryPath(vaultPath, directory, false);
+            if (!Directory.Exists(path))
+            {
+                Directory.CreateDirectory(path);
+                created += 1;
+            }
+        }
+
+        var templates = new Dictionary<string, string>();
+        templates[Path.Combine("00_Inbox", "pending-memory.md")] = "# Pending Memory\n\nRuntime memory proposals are appended here for manual review.\n";
+        templates[Path.Combine("00_Inbox", "pending-review.md")] = "# Pending Review\n\nCanon, profile, lore, policy, or conflict-prone memory proposals are appended here.\n";
+        templates[Path.Combine("01_Profile", "Yachiyo.md")] = BuildMemoryTemplate("Yachiyo", "profile", "canon", "TODO: Add character profile after the architecture is stable.", "profile", "yachiyo");
+        templates[Path.Combine("01_Profile", "Speech Style.md")] = BuildMemoryTemplate("Speech Style", "style", "canon", "TODO: Add speech style rules after the architecture is stable.", "style", "yachiyo");
+        templates[Path.Combine("01_Profile", "Values.md")] = BuildMemoryTemplate("Values", "profile", "canon", "TODO: Add values after the architecture is stable.", "values", "yachiyo");
+        templates[Path.Combine("01_Profile", "Boundaries.md")] = BuildMemoryTemplate("Boundaries", "policy", "canon", "TODO: Add boundaries after the architecture is stable.", "boundaries", "yachiyo");
+        templates[Path.Combine("02_Lore", "Tsukuyomi.md")] = BuildMemoryTemplate("Tsukuyomi", "lore", "canon", "TODO: Add lore after the architecture is stable.", "lore");
+        templates[Path.Combine("02_Lore", "Iroha.md")] = BuildMemoryTemplate("Iroha", "lore", "canon", "TODO: Add lore after the architecture is stable.", "lore");
+        templates[Path.Combine("02_Lore", "Kaguya.md")] = BuildMemoryTemplate("Kaguya", "lore", "canon", "TODO: Add lore after the architecture is stable.", "lore");
+        templates[Path.Combine("02_Lore", "Fushi.md")] = BuildMemoryTemplate("Fushi", "lore", "canon", "TODO: Add lore after the architecture is stable.", "lore");
+        templates[Path.Combine("02_Lore", "Moon People.md")] = BuildMemoryTemplate("Moon People", "lore", "canon", "TODO: Add lore after the architecture is stable.", "lore");
+        templates[Path.Combine("02_Lore", "Abnormal Entities.md")] = BuildMemoryTemplate("Abnormal Entities", "lore", "canon", "TODO: Add lore after the architecture is stable.", "lore");
+        templates[Path.Combine("03_Viewers", "_template.md")] = BuildMemoryTemplate("Viewer Template", "viewer", "relationship", "Use this file as a template for manually curated viewer notes.", "viewer");
+        templates[Path.Combine("04_Sessions", "_template.md")] = BuildMemoryTemplate("Session Template", "session", "session", "Use this file as a template for manually curated session summaries.", "session");
+        templates[Path.Combine("05_Running_Jokes", "_template.md")] = BuildMemoryTemplate("Running Joke Template", "joke", "long_term", "Use this file as a template for confirmed running jokes.", "running-joke");
+        templates[Path.Combine("06_Scenes", "Stage Fright.md")] = BuildMemoryTemplate("Stage Fright", "scene", "long_term", "TODO: Add scene handling after the architecture is stable.", "scene", "stage-fright");
+        templates[Path.Combine("06_Scenes", "Secret Question.md")] = BuildMemoryTemplate("Secret Question", "scene", "long_term", "TODO: Add scene handling after the architecture is stable.", "scene");
+        templates[Path.Combine("06_Scenes", "TTS Failure.md")] = BuildMemoryTemplate("TTS Failure", "scene", "long_term", "TODO: Add scene handling after the architecture is stable.", "scene", "tts");
+        templates[Path.Combine("06_Scenes", "VTS Disconnected.md")] = BuildMemoryTemplate("VTS Disconnected", "scene", "long_term", "TODO: Add scene handling after the architecture is stable.", "scene", "vts");
+        templates[Path.Combine("06_Scenes", "First Login.md")] = BuildMemoryTemplate("First Login", "scene", "long_term", "TODO: Add scene handling after the architecture is stable.", "scene");
+        templates[Path.Combine("07_Samples", "Gentle Support Samples.md")] = BuildMemoryTemplate("Gentle Support Samples", "sample", "long_term", "TODO: Add curated samples after the architecture is stable.", "sample");
+        templates[Path.Combine("07_Samples", "Mysterious Samples.md")] = BuildMemoryTemplate("Mysterious Samples", "sample", "long_term", "TODO: Add curated samples after the architecture is stable.", "sample");
+        templates[Path.Combine("07_Samples", "Casual Live Samples.md")] = BuildMemoryTemplate("Casual Live Samples", "sample", "long_term", "TODO: Add curated samples after the architecture is stable.", "sample", "live-stream");
+        templates[Path.Combine("08_System", "Memory Policy.md")] = BuildMemoryTemplate("Memory Policy", "policy", "canon", "TODO: Add memory policy after the architecture is stable.", "policy", "memory");
+        templates[Path.Combine("08_System", "Retrieval Rules.md")] = BuildMemoryTemplate("Retrieval Rules", "policy", "canon", "TODO: Add retrieval rules after the architecture is stable.", "policy", "retrieval");
+        templates[Path.Combine("08_System", "Prompt Fragments.md")] = BuildMemoryTemplate("Prompt Fragments", "policy", "canon", "TODO: Add prompt fragments after the architecture is stable.", "policy", "prompt");
+
+        foreach (var entry in templates)
+        {
+            var path = SafeCombineMemoryPath(vaultPath, entry.Key, true);
+            Directory.CreateDirectory(Path.GetDirectoryName(path));
+            if (File.Exists(path)) continue;
+            File.WriteAllText(path, entry.Value, Encoding.UTF8);
+            created += 1;
+        }
+        return created;
+    }
+
+    private static string BuildMemoryTemplate(string title, string type, string scope, string body, params string[] tags)
+    {
+        var now = DateTimeOffset.Now.ToString("yyyy-MM-ddTHH:mm:sszzz");
+        var builder = new StringBuilder();
+        builder.AppendLine("---");
+        builder.Append("type: ").AppendLine(type);
+        builder.AppendLine("character: yachiyo");
+        builder.Append("scope: ").AppendLine(scope);
+        builder.AppendLine("importance: 0.4");
+        builder.AppendLine("confidence: 0.7");
+        builder.Append("updated: ").AppendLine(now);
+        AppendYamlTags(builder, new List<string>(tags));
+        builder.AppendLine("---");
+        builder.AppendLine();
+        builder.Append("# ").AppendLine(title);
+        builder.AppendLine();
+        builder.AppendLine(body);
+        return builder.ToString();
     }
 
     private static void InvalidateMemoryIndex(string vaultPath)
@@ -1153,7 +1446,8 @@ internal static class DesktopApiProxy
         var lower = path.ToLowerInvariant();
         return lower.IndexOf(Path.DirectorySeparatorChar + ".obsidian" + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) >= 0 ||
                lower.IndexOf(Path.DirectorySeparatorChar + ".trash" + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) >= 0 ||
-               lower.IndexOf(Path.DirectorySeparatorChar + ".yachiyo-index" + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) >= 0;
+               lower.IndexOf(Path.DirectorySeparatorChar + ".yachiyo-index" + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) >= 0 ||
+               lower.IndexOf(Path.DirectorySeparatorChar + "00_inbox" + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) >= 0;
     }
 
     private static List<Dictionary<string, object>> LoadOrBuildMemoryIndex(string vaultPath)
@@ -1430,7 +1724,19 @@ internal static class DesktopApiProxy
         if (!matched) return 0.0;
         score += Convert.ToDouble(note["importance"]) * 2.0;
         score += Convert.ToDouble(note["confidence"]) * 0.8;
+        score += MemoryUpdatedBoost(Convert.ToString(note["updated"] ?? string.Empty));
         return score;
+    }
+
+    private static double MemoryUpdatedBoost(string updated)
+    {
+        DateTimeOffset parsed;
+        if (!DateTimeOffset.TryParse(updated, out parsed)) return 0.0;
+        var days = Math.Max(0, (DateTimeOffset.Now - parsed).TotalDays);
+        if (days <= 7) return 0.6;
+        if (days <= 30) return 0.35;
+        if (days <= 90) return 0.15;
+        return 0.0;
     }
 
     private static string NormalizeChatUrl(string apiUrl, string model)
