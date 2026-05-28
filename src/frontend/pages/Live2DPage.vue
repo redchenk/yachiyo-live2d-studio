@@ -45,6 +45,7 @@ let liveTimer = 0;
 let liveTurnInFlight = false;
 let speechPlayer = null;
 const CHARACTER_STATE_EVENT = 'tsukuyomi:live2d-character-state';
+const SETTINGS_SAVED_EVENT = 'tsukuyomi:studio-settings-saved';
 
 const statusLabel = computed(() => {
   if (live2d.error.value) return 'ERROR';
@@ -495,7 +496,7 @@ function buildLiveDirectorPrompt(audienceLines, options = {}) {
     'Use emotion plus actions instead of raw Live2D parameters. Let the behavior controller map actions to VTube Studio tracking curves.',
     'Never show action cues in the spoken reply or caption: no parentheses, no asterisk actions, no Action/Pose labels, and no body descriptions in reply. Put movement only in the actions array.',
     options.streaming
-      ? 'Streaming mode: follow the system format exactly, with SAY lines first and CONTROL JSON last.'
+      ? 'Streaming mode: follow the system format exactly, with VOICE lines first and CONTROL JSON last.'
       : 'Return the required JSON object only.'
   ].join('\n');
 }
@@ -540,6 +541,7 @@ async function runLiveTurn() {
 
 function startLiveDirector() {
   if (liveDirector.running) return;
+  speechPlayer?.warmup?.();
   liveDirector.running = true;
   liveDirector.status = 'starting';
   liveDirector.error = '';
@@ -568,11 +570,17 @@ function sendAudienceLine() {
   if (liveDirector.running && !liveTurnInFlight) scheduleLiveTurn(450);
 }
 
+function handleStudioSettingsSaved() {
+  speechPlayer?.warmup?.();
+}
+
 onMounted(() => {
+  window.addEventListener(SETTINGS_SAVED_EVENT, handleStudioSettingsSaved);
   init();
 });
 
 onUnmounted(() => {
+  window.removeEventListener(SETTINGS_SAVED_EVENT, handleStudioSettingsSaved);
   stopLiveDirector();
   speechPlayer?.destroy();
   speechPlayer = null;

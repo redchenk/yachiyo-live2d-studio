@@ -3,7 +3,7 @@ import { cleanLive2DReply } from './live2dText';
 
 const DEFAULT_GPT_SOVITS_GPT_WEIGHT = 'GPT_weights_v2ProPlus/yachiyo-v2pro-e15.ckpt';
 const DEFAULT_GPT_SOVITS_SOVITS_WEIGHT = 'SoVITS_weights_v2ProPlus/yachiyo-v2pro_e8_s456.pth';
-const MAX_TTS_PREFETCH = 3;
+const MAX_TTS_PREFETCH = 4;
 const TTS_EMOTION_GUIDES = {
   happy: 'bright, smiling, lively',
   smile: 'warm, gentle, smiling',
@@ -169,6 +169,7 @@ function japaneseTtsTranslatorPrompt(options = {}) {
 async function translateForJapaneseTts(text, options = {}) {
   const source = cleanTtsText(text);
   if (!source) return '';
+  if (detectTextLang(source) === 'ja') return source;
   const settings = readRoomLLMSettings();
   if (!settings.apiKey || !settings.apiUrl) {
     throw new Error('请先在 Studio Settings 里配置 LLM，用于把 GPT-SoVITS 文本翻译成日文后再播放。');
@@ -298,7 +299,7 @@ function buildGptSovitsAudioUrl(text, settings) {
   url.searchParams.set('text_split_method', pickSplitMethod(speechText));
   url.searchParams.set('batch_size', '1');
   url.searchParams.set('media_type', 'wav');
-  url.searchParams.set('streaming_mode', 'false');
+  url.searchParams.set('streaming_mode', 'true');
   url.searchParams.set('parallel_infer', 'true');
   url.searchParams.set('_', String(Date.now()));
   return url.toString();
@@ -392,6 +393,10 @@ export function createLive2DSpeechPlayer({ onState } = {}) {
         stopMouth();
         return;
       }
+      if (audioEnvelopes.get(audio)?.values?.length) {
+        startEnvelopeMouth(text, audio);
+        return;
+      }
       const t = audio.currentTime || 0;
       const pulse = Math.max(0, Math.sin(t * 18 + seed * 0.07));
       const accent = Math.max(0, Math.sin(t * 7.3 + seed * 0.13));
@@ -466,13 +471,24 @@ export function createLive2DSpeechPlayer({ onState } = {}) {
     const url = URL.createObjectURL(blob);
     const audio = new Audio(url);
     audio.dataset.objectUrl = url;
-    const envelope = await buildMouthEnvelope(blob);
-    if (envelope?.values?.length) {
-      audioEnvelopes.set(audio, envelope);
-      audio.dataset.mouthMode = 'envelope';
-    } else {
-      audio.dataset.mouthMode = 'synthetic';
-    }
+    audio.dataset.mouthMode = 'synthetic';
+    buildMouthEnvelope(blob)
+      .then((envelope) => {
+        if (!envelope?.values?.length || !audio.dataset.objectUrl) return;
+        audioEnvelopes.set(audio, envelope);
+        audio.dataset.mouthMode = 'envelope';
+      })
+      .catch(() => {});
+    return audio;
+  }
+
+  function createFastAudioFromUrl(url, speechText = '') {
+    const audio = new Audio(url);
+    audio.preload = 'auto';
+    audio.dataset.mouthMode = 'synthetic';
+    audio.dataset.fastStart = 'true';
+    audio.dataset.speechText = speechText;
+    audio.load?.();
     return audio;
   }
 
@@ -494,11 +510,11 @@ export function createLive2DSpeechPlayer({ onState } = {}) {
       const ttsText = await translateForJapaneseTts(text, options);
       if (!ttsText) throw new Error('日文翻译结果为空，已取消语音播放。');
       await ensureGptSovitsWeights(settings);
-      const audio = await createAnalysableAudioFromUrl(buildGptSovitsAudioUrl(ttsText, {
+      const audio = createFastAudioFromUrl(buildGptSovitsAudioUrl(ttsText, {
         ...settings,
         textLang: 'ja',
         promptLang: settings.promptLang || 'ja'
-      }));
+      }), ttsText);
       audio.dataset.speechText = ttsText;
       return audio;
     }
@@ -685,5 +701,14 @@ export function createLive2DSpeechPlayer({ onState } = {}) {
     }
   }
 
-  return { play, enqueue, playQueued: enqueue, clearQueue, stop, destroy };
+  function warmup() {
+    const settings = readRoomTTSSettings();
+    if (settings.enabled && settings.provider === 'gpt-sovits' && !settings.useProxy) {
+      ensureGptSovitsWeights(settings).catch(() => {});
+    }
+  }
+
+  warmup();
+
+  return { play, enqueue, playQueued: enqueue, clearQueue, stop, destroy, warmup };
 }

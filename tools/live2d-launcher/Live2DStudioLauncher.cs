@@ -1362,10 +1362,7 @@ internal static class DesktopApiProxy
             if (contentType.IndexOf("event-stream", StringComparison.OrdinalIgnoreCase) < 0 &&
                 contentType.IndexOf("stream", StringComparison.OrdinalIgnoreCase) < 0)
             {
-                using (var reader = new StreamReader(stream ?? Stream.Null, Encoding.UTF8))
-                {
-                    WriteSseEvent(write, "message", reader.ReadToEnd());
-                }
+                ForwardPossiblyMislabelledStream(stream ?? Stream.Null, write);
                 return;
             }
 
@@ -1379,6 +1376,46 @@ internal static class DesktopApiProxy
                 write(chunk);
             }
         }
+    }
+
+    private static void ForwardPossiblyMislabelledStream(Stream stream, Action<byte[]> write)
+    {
+        var buffer = new byte[8192];
+        var read = stream.Read(buffer, 0, buffer.Length);
+        if (read <= 0) return;
+
+        if (LooksLikeSsePayload(buffer, read))
+        {
+            while (read > 0)
+            {
+                var chunk = new byte[read];
+                Buffer.BlockCopy(buffer, 0, chunk, 0, read);
+                write(chunk);
+                read = stream.Read(buffer, 0, buffer.Length);
+            }
+            return;
+        }
+
+        using (var memory = new MemoryStream())
+        {
+            memory.Write(buffer, 0, read);
+            while (true)
+            {
+                read = stream.Read(buffer, 0, buffer.Length);
+                if (read <= 0) break;
+                memory.Write(buffer, 0, read);
+            }
+            WriteSseEvent(write, "message", Encoding.UTF8.GetString(memory.ToArray()));
+        }
+    }
+
+    private static bool LooksLikeSsePayload(byte[] buffer, int length)
+    {
+        var count = Math.Min(Math.Max(length, 0), 256);
+        if (count <= 0) return false;
+        var head = Encoding.UTF8.GetString(buffer, 0, count).TrimStart('\uFEFF', ' ', '\t', '\r', '\n');
+        return head.StartsWith("data:", StringComparison.OrdinalIgnoreCase) ||
+               head.StartsWith("event:", StringComparison.OrdinalIgnoreCase);
     }
 
     private static void WriteSseEvent(Action<byte[]> write, string eventName, string data)

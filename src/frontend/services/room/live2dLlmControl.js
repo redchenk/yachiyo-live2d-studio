@@ -17,6 +17,7 @@ import { readJson, writeJson } from './roomStorage';
 const HISTORY_KEY = 'live2dLLMControlHistory';
 const SENTENCE_END_PATTERN = /[\u3002\uff01\uff1f\uff0c\u3001,.;\uff1b!?\u2026\n]/u;
 const SENTENCE_TRAILING_PATTERN = /[\s"'\u201d\u2019\uff09)\]\u3011\u300b\u300d\u300f]+/u;
+const SOFT_CHUNK_UNIT_LIMIT = 5;
 const SPEECH_STYLE_BY_EMOTION = {
   happy: { speed: 1.08, pitch: 0.08, pause: 'bright' },
   smile: { speed: 1.06, pitch: 0.07, pause: 'warm' },
@@ -155,6 +156,33 @@ function readStreamingSpeechProgress(text) {
   return pieces.join('\n').trim();
 }
 
+function speakableUnitLength(text) {
+  return String(text || '')
+    .replace(/[\s"'“”‘’()（）[\]【】《》「」『』.,;:!?，。！？、；：…~\-]/g, '')
+    .length;
+}
+
+function findSoftChunkCutIndex(text) {
+  const value = String(text || '');
+  const hasCjk = /[\u3040-\u30ff\u3400-\u9fff]/u.test(value);
+  const limit = hasCjk ? SOFT_CHUNK_UNIT_LIMIT : 20;
+  let units = 0;
+  let lastWhitespace = -1;
+  for (let index = 0; index < value.length; index += 1) {
+    const char = value[index];
+    if (/\s/u.test(char)) {
+      if (units >= Math.max(3, Math.floor(limit * 0.5))) lastWhitespace = index + 1;
+      continue;
+    }
+    if (speakableUnitLength(char) < 1) continue;
+    units += 1;
+    if (units < limit) continue;
+    if (!hasCjk && lastWhitespace > 0) return lastWhitespace;
+    if (hasCjk || units >= limit + 8) return index + 1;
+  }
+  return -1;
+}
+
 function findSentenceCutIndex(text) {
   for (let index = 0; index < text.length; index += 1) {
     if (!SENTENCE_END_PATTERN.test(text[index])) continue;
@@ -172,10 +200,12 @@ function splitCompletedSentences(buffer, flush = false) {
   let rest = String(buffer || '');
   while (rest) {
     const cutIndex = findSentenceCutIndex(rest);
-    if (cutIndex < 0) break;
-    const sentence = rest.slice(0, cutIndex).trim();
+    const softCutIndex = cutIndex < 0 && !flush ? findSoftChunkCutIndex(rest) : -1;
+    if (cutIndex < 0 && softCutIndex < 0) break;
+    const endIndex = cutIndex >= 0 ? cutIndex : softCutIndex;
+    const sentence = rest.slice(0, endIndex).trim();
     if (sentence) sentences.push(sentence);
-    rest = rest.slice(cutIndex);
+    rest = rest.slice(endIndex);
   }
   if (flush && rest.trim()) {
     sentences.push(rest.trim());
@@ -191,7 +221,7 @@ function createReplySentenceEmitter(handlers = {}) {
 
   const emitSentence = (text) => {
     const sentence = cleanReplyForSpeech(text);
-    if (!sentence) return;
+    if (!sentence || speakableUnitLength(sentence) < 2) return;
     const analysis = analyzeLive2DSentenceEmotion(sentence);
     emittedCount += 1;
     handlers.onSentence?.({
@@ -585,15 +615,17 @@ export function live2DControlSystemPrompt() {
 export function live2DStreamingControlSystemPrompt() {
   return [
     'You are controlling a Live2D character named Yachiyo.',
-    'This is a low-latency streaming turn. Start output with spoken lines immediately, then output control JSON at the end.',
+    'This is a low-latency streaming turn. Start output with Japanese spoken VOICE lines immediately, then output control JSON at the end.',
     'Output format must be exactly:',
-    'SAY: first short natural spoken clause, ending as soon as a comma or sentence punctuation is natural.',
-    'SAY: next short natural spoken clause. Prefer comma-sized chunks so TTS can start quickly.',
-    'CONTROL: {"reply":"same spoken text without SAY labels","emotion":"smug|happy|shy|surprised|angry|puff|tongue|dizzy|sad|crying|fire|neutral","intensity":0.72,"actions":[{"type":"look_at_chat","duration":1.2},{"type":"smirk","duration":2.0}],"speech_style":{"speed":1.05,"pitch":0.08,"pause":"playful"}}',
-    'The SAY lines must come before CONTROL. Do not wait to decide actions before writing the SAY lines.',
-    'Keep each SAY line short: one comma-delimited clause per SAY line is ideal.',
-    'SAY lines must contain only natural dialogue. Never put stage directions, parenthesized action hints, asterisk actions, action labels, pose descriptions, or JSON in SAY.',
-    'CONTROL must be one JSON object after the CONTROL label. The reply field must exactly match the spoken SAY text.',
+    'VOICE: first tiny Japanese reaction, 2-6 characters if possible, such as うん、 えへへ、 そうだね、 or あっ、.',
+    'VOICE: next short natural Japanese spoken clause, ending as soon as a comma or sentence punctuation is natural.',
+    'VOICE: continue in very small comma-sized Japanese chunks so TTS can start quickly.',
+    'CONTROL: {"reply":"same Japanese spoken text without VOICE labels","emotion":"smug|happy|shy|surprised|angry|puff|tongue|dizzy|sad|crying|fire|neutral","intensity":0.72,"actions":[{"type":"look_at_chat","duration":1.2},{"type":"smirk","duration":2.0}],"speech_style":{"speed":1.05,"pitch":0.08,"pause":"playful"}}',
+    'The VOICE lines must come before CONTROL. Do not wait to decide actions before writing the VOICE lines.',
+    'Emit the first VOICE before planning the full answer. Do not wait for CONTROL before speaking.',
+    'Keep each VOICE line short: one comma-delimited Japanese clause or about 5-8 Japanese characters per VOICE line is ideal.',
+    'VOICE lines must contain only natural Japanese dialogue. Never put stage directions, parenthesized action hints, asterisk actions, action labels, pose descriptions, or JSON in VOICE.',
+    'CONTROL must be one JSON object after the CONTROL label. The reply field must exactly match the spoken VOICE text.',
     'Choose 2-5 semantic actions that match the spoken meaning and mood.',
     'Use only semantic emotion ids and semantic actions. Do not output raw Live2D parameters, VTube Studio parameter ids, expression file names, live2d.parameters, parameterTargets, or pose descriptions.',
     `Good action combos: ${behaviorActionComboPrompt()}.`,
