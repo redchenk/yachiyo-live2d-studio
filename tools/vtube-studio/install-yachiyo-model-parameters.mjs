@@ -44,11 +44,25 @@ if (!Array.isArray(model.ParameterSettings)) model.ParameterSettings = [];
 const existing = new Map(
   model.ParameterSettings.map((item, index) => [`${item.Input}=>${item.OutputLive2D}`, { item, index }])
 );
+const desiredSettings = yachiyoVTubeStudioParameterSettings();
+const desiredKeys = new Set(desiredSettings.map((setting) => `${setting.input}=>${setting.outputLive2D}`));
 
 let added = 0;
 let updated = 0;
+const beforeCleanup = model.ParameterSettings.length;
 
-for (const setting of yachiyoVTubeStudioParameterSettings()) {
+model.ParameterSettings = model.ParameterSettings.filter((item) => {
+  if (item.Folder !== 'Yachiyo Direct Control') return true;
+  return desiredKeys.has(`${item.Input}=>${item.OutputLive2D}`);
+});
+const removed = beforeCleanup - model.ParameterSettings.length;
+
+existing.clear();
+model.ParameterSettings.forEach((item, index) => {
+  existing.set(`${item.Input}=>${item.OutputLive2D}`, { item, index });
+});
+
+for (const setting of desiredSettings) {
   const key = `${setting.input}=>${setting.outputLive2D}`;
   const next = toVTubeParameterSetting(setting);
   const found = existing.get(key);
@@ -62,5 +76,5 @@ for (const setting of yachiyoVTubeStudioParameterSettings()) {
 }
 
 fs.writeFileSync(targetPath, `${JSON.stringify(model, null, 2)}\n`, 'utf8');
-console.log(`Installed Yachiyo VTS mappings: ${added} added, ${updated} updated`);
+console.log(`Installed Yachiyo VTS mappings: ${added} added, ${updated} updated, ${removed} stale removed`);
 console.log(targetPath);

@@ -622,12 +622,6 @@ function setFrameYachiyoBodyChain(frame, pose = {}, weight = 1) {
   setFrameValue(frame, 'ParamAngle_ShoulderR', (z * 0.22 + x * 0.12), directWeight * 0.34);
 }
 
-function setFrameNumberedChain(frame, prefix, values, weight = 0.24) {
-  values.forEach((value, index) => {
-    setFrameValue(frame, `${prefix}${index + 1}`, value, weight * Math.max(0.42, 1 - index * 0.08));
-  });
-}
-
 function setFrameSideChain(frame, prefix, side, values, weight = 0.24) {
   values.forEach((value, index) => {
     setFrameValue(frame, `${prefix}_${side}${index + 1}`, value, weight * Math.max(0.42, 1 - index * 0.08));
@@ -641,21 +635,16 @@ function setFramePairedChain(frame, prefix, leftValues, rightValues, weight = 0.
 
 function setFrameYachiyoSecondaryPhysics(frame, character, amount = 1) {
   if (!character) return;
-  const bodyX = (Number(character.bodyX) || 0) * amount;
-  const bodyY = (Number(character.bodyY) || 0) * amount;
-  const bodyZ = (Number(character.bodyZ) || 0) * amount;
   const headX = (Number(character.faceX) || 0) * amount;
   const headY = (Number(character.faceY) || 0) * amount;
   const headZ = (Number(character.faceZ) || 0) * amount;
-  const posY = (Number(character.bodyPosY) || 0) * amount;
   const breath = clampFallback(character.breath, 0, 1, 0.5);
   const breathWave = (breath - 0.5) * 2;
   const energy = clampFallback(character.energy, 0, 1, 0.4);
   const lively = ['happy', 'smile', 'surprised', 'tongue', 'fire'].includes(character.emotion) ? 1 : 0;
   const sad = ['sad', 'namida', 'tears', 'crying'].includes(character.emotion) ? 1 : 0;
-  const speaking = character.mode === 'speaking';
 
-  setFrameValue(frame, 'ParamBreath', breath, 0.42);
+  setFrameValue(frame, 'ParamBreath', breath, 0.58);
 
   const earPerk = clamp(0.1 + energy * 0.32 + lively * 0.14 - sad * 0.08, -0.08, 0.72);
   const leftEarShape = clamp(earPerk + headZ * 0.006 - headX * 0.004, -0.2, 0.86);
@@ -665,97 +654,6 @@ function setFrameYachiyoSecondaryPhysics(frame, character, amount = 1) {
     [rightEarShape, rightEarShape * 0.72 - breathWave * 0.04, rightEarShape * 0.48 - headY * 0.006],
     0.42
   );
-  setFramePairedChain(frame, 'ParamEarPhysics',
-    [headX * -0.16 + headZ * 0.12 + breathWave * 2.2, headY * -0.14 + breathWave * 1.6],
-    [headX * -0.16 - headZ * 0.12 - breathWave * 2.2, headY * -0.14 - breathWave * 1.6],
-    0.34
-  );
-  setFramePairedChain(frame, 'ParamHatEar',
-    [headX * -0.12 + headZ * 0.12, headY * -0.1 + breathWave * 1.1],
-    [headX * -0.12 - headZ * 0.12, headY * -0.1 - breathWave * 1.1],
-    0.24
-  );
-
-  const wingPulse = breathWave * (5.8 + energy * 2.6) + (speaking ? energy * 1.5 : 0);
-  setFramePairedChain(frame, 'ParamWingPhysics',
-    [wingPulse, wingPulse * 0.74 + bodyZ * 0.18, wingPulse * 0.48 - bodyY * 0.18, -wingPulse * 0.32],
-    [-wingPulse, -wingPulse * 0.74 + bodyZ * 0.18, -wingPulse * 0.48 - bodyY * 0.18, wingPulse * 0.32],
-    0.32
-  );
-
-  const tailBase = bodyX * 0.32 + bodyZ * 0.24 + breathWave * (4.4 + energy);
-  const tailLift = bodyY * 0.18 + posY * 18;
-  const tailLeft = [tailBase, tailBase * 0.82 + tailLift, tailBase * 0.64, tailBase * 0.46 - tailLift * 0.42];
-  const tailRight = tailLeft.map((value, index) => (index % 2 ? value * 0.72 : -value * 0.86));
-  setFramePairedChain(frame, 'ParamTailPhysics', tailLeft, tailRight, 0.26);
-
-  const clothX = bodyX * 0.42 + bodyZ * 0.34;
-  const clothY = bodyY * 0.36 + posY * 22;
-  const clothZ = bodyZ * 0.48 + bodyX * 0.12;
-  setFramePairedChain(frame, 'ParamDressAngle',
-    [clothX * 0.38 + clothZ * 0.2, clothX * 0.28, clothY * 0.18],
-    [clothX * 0.38 - clothZ * 0.2, clothX * 0.28, clothY * 0.18],
-    0.34
-  );
-  setFrameNumberedChain(frame, 'ParamCheongsamPhysics_X', [clothX, clothX * 0.82, clothX * 0.64, clothX * 0.48, clothX * 0.34], 0.34);
-  setFrameNumberedChain(frame, 'ParamDressPhysics_X', [clothX, clothX * 0.82, clothX * 0.64], 0.3);
-  setFrameNumberedChain(frame, 'ParamDressPhysics_Y', [clothY, clothY * 0.82, clothY * 0.64], 0.3);
-  setFramePairedChain(frame, 'ParamDressPhysics',
-    [clothZ, clothZ * 0.78 + clothX * 0.2],
-    [-clothZ, -clothZ * 0.78 + clothX * 0.2],
-    0.28
-  );
-  setFramePairedChain(frame, 'ParamSleevePhysics',
-    [bodyX * 0.5 + bodyZ * 0.24, bodyY * 0.3, bodyZ * 0.42],
-    [bodyX * 0.5 - bodyZ * 0.24, bodyY * 0.3, -bodyZ * 0.42],
-    0.26
-  );
-  setFramePairedChain(frame, 'ParamSleeveLPhysics',
-    [bodyX * 0.42 + clothZ * 0.22, clothY * 0.24],
-    [bodyX * 0.42 - clothZ * 0.22, clothY * 0.24],
-    0.24
-  );
-  setFramePairedChain(frame, 'ParamBackClothesPhysics',
-    [clothZ, clothY * 0.72],
-    [-clothZ, clothY * 0.72],
-    0.24
-  );
-  setFrameNumberedChain(frame, 'ParamBackClothesPhysics_X', [clothX, clothX * 0.8], 0.22);
-  setFrameNumberedChain(frame, 'ParamBackClothesPhysics_Y', [clothY, clothY * 0.8], 0.22);
-  setFramePairedChain(frame, 'ParamOvercoatPhysics',
-    [clothZ * 0.9, clothY * 0.58],
-    [-clothZ * 0.9, clothY * 0.58],
-    0.22
-  );
-  setFrameNumberedChain(frame, 'ParamOvercoatPhysics_X', [clothX, clothX * 0.78], 0.2);
-  setFrameNumberedChain(frame, 'ParamOvercoatPhysics_Y', [clothY, clothY * 0.78], 0.2);
-
-  const headSwing = headX * 0.26 + headZ * 0.28;
-  setFramePairedChain(frame, 'ParamBowHPhysics',
-    [headSwing, headY * 0.24],
-    [headSwing, headY * 0.24],
-    0.2
-  );
-  setFramePairedChain(frame, 'ParamBowBPhysics',
-    [clothX * 0.5, clothY * 0.42],
-    [clothX * 0.5, clothY * 0.42],
-    0.2
-  );
-  setFramePairedChain(frame, 'ParamHChainPhysics',
-    [headSwing * 0.72, headY * 0.22 + breathWave],
-    [headSwing * 0.72, headY * 0.22 - breathWave],
-    0.18
-  );
-  setFramePairedChain(frame, 'ParamBChainPhysics',
-    [clothX * 0.42, clothY * 0.34],
-    [clothX * 0.42, clothY * 0.34],
-    0.18
-  );
-  setFrameNumberedChain(frame, 'ParamLiquidPhysics_X', [clothX * 0.36, clothX * 0.26, clothX * 0.18], 0.16);
-  setFrameValue(frame, 'ParamLiquidPhysics_Y', clothY * 0.24, 0.16);
-  setFrameValue(frame, 'ParamLiquidPhysics_Z', clothZ * 0.22, 0.16);
-  setFrameValue(frame, 'ParamPearlPhysics_L1', clothX * 0.2 + breathWave * 0.8, 0.14);
-  setFrameValue(frame, 'ParamPearlPhysics_L2', clothY * 0.18 - breathWave * 0.6, 0.14);
 }
 
 function setFrameBody(frame, pose = {}, weight = 1) {
