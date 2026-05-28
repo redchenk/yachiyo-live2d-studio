@@ -10,14 +10,7 @@ import {
   semanticExpressionFromEmotion,
   semanticExpressionVTSOverlay
 } from '../../constants/room/yachiyoExpressionPresetRegistry';
-import {
-  YACHIYO_BODY_SWITCH_PARAMETER_IDS,
-  YACHIYO_MODEL_DIRECT_PARAMETER_IDS,
-  YACHIYO_MODEL_PARAMETER_RANGES,
-  yachiyoDirectParameterIdForLive2D,
-  yachiyoExpressionResetParameters,
-  yachiyoParameterDomain
-} from '../../constants/room/yachiyoModelParameterRegistry';
+import { YACHIYO_MODEL_PARAMETER_RANGES } from '../../constants/room/yachiyoModelParameterRegistry';
 import { createLive2DCharacterStateMachine } from './live2dCharacterStateMachine';
 
 const ROOM_ACT_EVENT = 'tsukuyomi:room-act';
@@ -185,17 +178,7 @@ function clampFallback(value, min, max, fallback) {
 }
 
 function injectionProfile(id) {
-  if (YACHIYO_MODEL_DIRECT_PARAMETER_IDS.has(id)) {
-    const domain = yachiyoParameterDomain(id);
-    if (domain === 'body' || domain === 'head' || domain === 'hair') return { alpha: 0.42, step: 2.8 };
-    if (domain === 'body-switch') return { alpha: 1, step: 1 };
-    if (domain === 'breath') return { alpha: 0.34, step: 0.08 };
-    if (domain === 'eye') return { alpha: 0.36, step: 0.1 };
-    if (domain === 'ear-shape') return { alpha: 0.5, step: 0.18 };
-    if (domain === 'ear' || domain === 'wing' || domain === 'tail') return { alpha: 0.38, step: 2.2 };
-    if (domain === 'cloth' || domain === 'accessory') return { alpha: 0.36, step: 2.6 };
-    return { alpha: 0.62, step: 0.18 };
-  }
+  if (id.startsWith('ParamEarShape')) return { alpha: 0.42, step: 0.16 };
   if (MOUTH_INJECTION_IDS.has(id)) return { alpha: 0.66, step: 0.26 };
   if (id === 'EyeOpenLeft' || id === 'EyeOpenRight') return { alpha: 0.88, step: 0.72 };
   if (id.startsWith('Eye')) return { alpha: 0.34, step: 0.11 };
@@ -310,25 +293,12 @@ function normalizeLive2DParam(item) {
     : null;
 }
 
-function shouldInjectYachiyoDirectParameter(id, options = {}) {
-  const domain = yachiyoParameterDomain(id);
-  if (!domain) return false;
-  if (options.body && ['body', 'body-switch', 'hair', 'breath', 'wing', 'tail', 'cloth', 'accessory'].includes(domain)) return true;
-  if (options.face && ['head', 'eye', 'expression', 'ear-shape', 'ear', 'accessory'].includes(domain)) return true;
-  return false;
-}
-
 function mapLive2DParametersToVTS(parameters, options) {
   const merged = new Map();
   for (const raw of Array.isArray(parameters) ? parameters : []) {
     const item = normalizeLive2DParam(raw);
     if (!item) continue;
     const { key, value, weight } = item;
-    const directId = yachiyoDirectParameterIdForLive2D(item.id);
-
-    if (directId && shouldInjectYachiyoDirectParameter(directId, options)) {
-      addWeighted(merged, directId, value, weight);
-    }
 
     if (options.face) {
       if (['paramanglex', 'paramangle_headx', 'paramanglemodify_headx'].includes(key)) {
@@ -549,111 +519,26 @@ function setFrameEyes(frame, x = 0, y = 0, weight = 0.8) {
   setFrameValue(frame, 'EyeRightY', y, weight);
 }
 
-function setFrameYachiyoExpressionDefaults(frame) {
-  yachiyoExpressionResetParameters().forEach((item) => {
-    setFrameValue(frame, item.id, item.value, item.weight);
-  });
-}
+function setFrameYachiyoEars(frame, character = {}, strength = 1) {
+  const amount = clampFallback(strength, 0, 1, 1);
+  const energy = clampFallback(character.energy, 0, 1, 0.34);
+  const emotion = String(character.emotion || 'neutral');
+  const headX = Number(character.faceX) || 0;
+  const headY = Number(character.faceY) || 0;
+  const headZ = Number(character.faceZ) || 0;
+  const lively = ['happy', 'smile', 'surprised', 'tongue', 'fire'].includes(emotion) ? 1 : 0;
+  const droop = ['sad', 'namida', 'tears', 'crying', 'dizzy'].includes(emotion) ? 1 : 0;
+  const alert = ['surprised', 'fire'].includes(emotion) ? 1 : 0;
+  const base = clamp((0.08 + energy * 0.28 + lively * 0.14 + alert * 0.12 - droop * 0.22) * amount, -0.32, 0.72);
+  const lean = clamp((headZ * 0.006 - headX * 0.003) * amount, -0.16, 0.16);
+  const lift = clamp((-headY * 0.005 + alert * 0.08 - droop * 0.08) * amount, -0.18, 0.18);
 
-function setFrameYachiyoHead(frame, pose = {}, weight = 1) {
-  const x = Number(pose.x) || 0;
-  const y = Number(pose.y) || 0;
-  const z = Number(pose.z) || 0;
-  const directWeight = clamp(weight * 0.62, 0.01, 0.82);
-  setFrameValue(frame, 'ParamAngle_HeadX', x * 0.86, directWeight);
-  setFrameValue(frame, 'ParamAngle_HeadY', y * 0.86, directWeight);
-  setFrameValue(frame, 'ParamAngle_HeadZ', z * 0.72, directWeight);
-  setFrameValue(frame, 'ParamAngle_HeadZ2', z * 0.42, directWeight * 0.72);
-  setFrameValue(frame, 'ParamAngleModify_HeadX', x * 0.28, directWeight * 0.5);
-  setFrameValue(frame, 'ParamAngleModify_HeadY', y * 0.28, directWeight * 0.5);
-}
-
-function setFrameYachiyoBodyChain(frame, pose = {}, weight = 1) {
-  const bodyX = Number(pose.x) || 0;
-  const bodyY = Number(pose.y) || 0;
-  const bodyZ = Number(pose.z) || 0;
-  const posX = Number(pose.posX) || 0;
-  const posY = Number(pose.posY) || 0;
-  const connected = pose.connected === 0 ? 0 : 1;
-  const directWeight = clamp(weight * 0.68, 0.01, 0.9);
-  const switchValue = connected ? 1 : 0;
-
-  YACHIYO_BODY_SWITCH_PARAMETER_IDS.forEach((id) => {
-    setFrameValue(frame, id, switchValue, 1);
-  });
-
-  const x = bodyX * 1.34 + posX * 26;
-  const y = bodyY * 1.18 + posY * 36;
-  const z = bodyZ * 1.28 + posX * 18;
-  const chestZ = z * 0.82 + x * 0.18;
-  const hipZ = -z * 0.62 + x * 0.08;
-
-  setFrameValue(frame, 'ParamBodyInput_BodyX', x, directWeight);
-  setFrameValue(frame, 'ParamOutput_BodyX', x * 0.82, directWeight * 0.86);
-  setFrameValue(frame, 'ParamPhysicsRAM_BodyX', x * 0.94, directWeight * 0.74);
-  setFrameValue(frame, 'ParamAngle_BodyX', bodyX * 0.86, directWeight * 0.78);
-  setFrameValue(frame, 'ParamAngle_BodyX2', bodyX * 0.58, directWeight * 0.6);
-  setFrameValue(frame, 'ParamAngle_BodyX3', bodyX * 0.38, directWeight * 0.48);
-
-  setFrameValue(frame, 'PositionZ', y * 0.86, directWeight * 0.72);
-  setFrameValue(frame, 'ParamPosition_Z', y * 0.66, directWeight * 0.62);
-  setFrameValue(frame, 'ParamBodyInput_BodyY', y, directWeight);
-  setFrameValue(frame, 'ParamOutput_BodyY', y * 0.82, directWeight * 0.86);
-  setFrameValue(frame, 'ParamPhysicsRAM_BodyY', y * 0.94, directWeight * 0.74);
-  setFrameValue(frame, 'ParamAngle_BodyY', bodyY * 0.92, directWeight * 0.78);
-  setFrameValue(frame, 'ParamAngle_BodyY2', bodyY * 0.58, directWeight * 0.6);
-  setFrameValue(frame, 'ParamAngle_HipUp', Math.max(0, posY * 18 + bodyY * 0.32), directWeight * 0.46);
-  setFrameValue(frame, 'ParamAngle_HipDown', Math.min(0, posY * 18 + bodyY * 0.32), directWeight * 0.42);
-
-  setFrameValue(frame, 'ParamBodyInput_BodyZ', z, directWeight);
-  setFrameValue(frame, 'ParamOutput_BodyZ', z * 0.82, directWeight * 0.86);
-  setFrameValue(frame, 'ParamPhysicsRAM_BodyZ', z * 0.94, directWeight * 0.74);
-  setFrameValue(frame, 'ParamAngle_BodyZ', bodyZ * 0.94, directWeight * 0.82);
-  setFrameValue(frame, 'ParamAngle_BodyZ2', bodyZ * 0.58, directWeight * 0.62);
-  setFrameValue(frame, 'ParamBodyInput_ChestZ', chestZ, directWeight * 0.78);
-  setFrameValue(frame, 'ParamOutput_ChestZ', chestZ * 0.72, directWeight * 0.66);
-  setFrameValue(frame, 'ParamPhysicsRAM_ChestZ', chestZ * 0.84, directWeight * 0.58);
-  setFrameValue(frame, 'ParamAngle_ChestZ', chestZ * 0.58, directWeight * 0.64);
-  setFrameValue(frame, 'ParamBodyInput_HipZ', hipZ, directWeight * 0.72);
-  setFrameValue(frame, 'ParamOutput_HipZ', hipZ * 0.72, directWeight * 0.58);
-  setFrameValue(frame, 'ParamPhysicsRAM_HipZ', hipZ * 0.84, directWeight * 0.52);
-  setFrameValue(frame, 'ParamAngle_HipZ', hipZ * 0.62, directWeight * 0.56);
-  setFrameValue(frame, 'ParamAngle_ShoulderL', (-z * 0.22 + x * 0.12), directWeight * 0.34);
-  setFrameValue(frame, 'ParamAngle_ShoulderR', (z * 0.22 + x * 0.12), directWeight * 0.34);
-}
-
-function setFrameSideChain(frame, prefix, side, values, weight = 0.24) {
-  values.forEach((value, index) => {
-    setFrameValue(frame, `${prefix}_${side}${index + 1}`, value, weight * Math.max(0.42, 1 - index * 0.08));
-  });
-}
-
-function setFramePairedChain(frame, prefix, leftValues, rightValues, weight = 0.24) {
-  setFrameSideChain(frame, prefix, 'L', leftValues, weight);
-  setFrameSideChain(frame, prefix, 'R', rightValues, weight);
-}
-
-function setFrameYachiyoSecondaryPhysics(frame, character, amount = 1) {
-  if (!character) return;
-  const headX = (Number(character.faceX) || 0) * amount;
-  const headY = (Number(character.faceY) || 0) * amount;
-  const headZ = (Number(character.faceZ) || 0) * amount;
-  const breath = clampFallback(character.breath, 0, 1, 0.5);
-  const breathWave = (breath - 0.5) * 2;
-  const energy = clampFallback(character.energy, 0, 1, 0.4);
-  const lively = ['happy', 'smile', 'surprised', 'tongue', 'fire'].includes(character.emotion) ? 1 : 0;
-  const sad = ['sad', 'namida', 'tears', 'crying'].includes(character.emotion) ? 1 : 0;
-
-  setFrameValue(frame, 'ParamBreath', breath, 0.58);
-
-  const earPerk = clamp(0.1 + energy * 0.32 + lively * 0.14 - sad * 0.08, -0.08, 0.72);
-  const leftEarShape = clamp(earPerk + headZ * 0.006 - headX * 0.004, -0.2, 0.86);
-  const rightEarShape = clamp(earPerk - headZ * 0.006 + headX * 0.004, -0.2, 0.86);
-  setFramePairedChain(frame, 'ParamEarShape',
-    [leftEarShape, leftEarShape * 0.72 + breathWave * 0.04, leftEarShape * 0.48 - headY * 0.006],
-    [rightEarShape, rightEarShape * 0.72 - breathWave * 0.04, rightEarShape * 0.48 - headY * 0.006],
-    0.42
-  );
+  setFrameValue(frame, 'ParamEarShape_L1', clamp(base + lean, -0.45, 0.82), 0.52);
+  setFrameValue(frame, 'ParamEarShape_R1', clamp(base - lean, -0.45, 0.82), 0.52);
+  setFrameValue(frame, 'ParamEarShape_L2', clamp(base * 0.68 + lift, -0.45, 0.76), 0.42);
+  setFrameValue(frame, 'ParamEarShape_R2', clamp(base * 0.68 + lift, -0.45, 0.76), 0.42);
+  setFrameValue(frame, 'ParamEarShape_L3', clamp(base * 0.42 - lift * 0.5 + lean * 0.35, -0.45, 0.72), 0.34);
+  setFrameValue(frame, 'ParamEarShape_R3', clamp(base * 0.42 - lift * 0.5 - lean * 0.35, -0.45, 0.72), 0.34);
 }
 
 function setFrameBody(frame, pose = {}, weight = 1) {
@@ -675,7 +560,6 @@ function setFrameBody(frame, pose = {}, weight = 1) {
   setFrameValue(frame, 'MocopiBodyPositionX', posX, weight * 0.75);
   setFrameValue(frame, 'MocopiBodyPositionY', posY, weight * 0.75);
   setFrameValue(frame, 'MocopiBodyPositionZ', posZ, weight * 0.75);
-  setFrameYachiyoBodyChain(frame, pose, weight);
 }
 
 function createDirectTrackingFrame(options = {}) {
@@ -694,7 +578,7 @@ function createDirectTrackingFrame(options = {}) {
     setFrameValue(frame, 'EyeOpenRight', 0.92, 0.85);
   }
   setFrameEyes(frame, 0, 0, 0.8);
-  setFrameYachiyoExpressionDefaults(frame);
+  setFrameYachiyoEars(frame, {}, 1);
   setFrameBody(frame, {}, 1);
   return frame;
 }
@@ -1203,11 +1087,6 @@ function applyCharacterStateFrame(frame, character, strength = 1) {
   setFrameValue(frame, 'FaceAngleX', character.faceX * amount, 0.72);
   setFrameValue(frame, 'FaceAngleY', character.faceY * amount, 0.7);
   setFrameValue(frame, 'FaceAngleZ', character.faceZ * amount, 0.68);
-  setFrameYachiyoHead(frame, {
-    x: character.faceX * amount,
-    y: character.faceY * amount,
-    z: character.faceZ * amount
-  }, 0.78);
   setFrameValue(frame, 'FacePositionX', character.facePosX * amount, facePositionWeight);
   setFrameValue(frame, 'FacePositionY', character.facePosY * amount, facePositionWeight);
   setFrameValue(frame, 'MouthSmile', character.mouthSmile, 0.72);
@@ -1215,17 +1094,7 @@ function applyCharacterStateFrame(frame, character, strength = 1) {
   setFrameValue(frame, 'BrowLeftY', character.browLeftY, 0.54);
   setFrameValue(frame, 'BrowRightY', character.browRightY, 0.54);
   setFrameEyes(frame, character.eyeX * amount, character.eyeY * amount, 0.78);
-  setFrameValue(frame, 'ParamEyeBallX2', character.eyeX * amount * 0.5, 0.28);
-  setFrameValue(frame, 'ParamEyeBallY2', character.eyeY * amount * 0.46, 0.26);
-  setFrameValue(frame, 'ParamEyeBallX3', character.eyeX * amount * 0.32, 0.2);
-  setFrameValue(frame, 'ParamEyeBallY3', character.eyeY * amount * 0.3, 0.18);
-  setFrameValue(frame, 'ParamEyeLSquint', character.eyeSquint || 0, 0.22);
-  setFrameValue(frame, 'ParamEyeRSquint', character.eyeSquint || 0, 0.22);
-  setFrameValue(frame, 'ParamBreath2', character.breath2 ?? 0.46, 0.34);
-  setFrameValue(frame, 'ParamBreath3', character.breath3 ?? 0.42, 0.3);
-  setFrameValue(frame, 'ParamHairFront', (character.hairFront || 0) * amount, 0.32);
-  setFrameValue(frame, 'ParamHairSide', (character.hairSide || 0) * amount, 0.32);
-  setFrameValue(frame, 'ParamHairBack', (character.hairBack || 0) * amount, 0.28);
+  setFrameYachiyoEars(frame, character, amount);
   setFrameBody(frame, {
     x: character.bodyX * amount,
     y: character.bodyY * amount,
@@ -1233,7 +1102,6 @@ function applyCharacterStateFrame(frame, character, strength = 1) {
     posX: character.bodyPosX * amount,
     posY: character.bodyPosY * amount
   }, bodyWeight);
-  setFrameYachiyoSecondaryPhysics(frame, character, amount);
 }
 
 function applyAutoBlink(frame, samples, nowMs, baseOpen = 0.92, options = {}) {
