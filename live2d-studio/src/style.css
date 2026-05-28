@@ -206,6 +206,246 @@
   gap: 0.55rem;
 }
 
+.studio-memory-console {
+  min-width: 0;
+  display: grid;
+  gap: 0.72rem;
+}
+
+.studio-memory-toolbar,
+.studio-memory-search,
+.studio-memory-results-head,
+.studio-memory-note header,
+.studio-memory-note footer,
+.studio-memory-note-actions,
+.studio-memory-switches {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+}
+
+.studio-memory-toolbar,
+.studio-memory-note header,
+.studio-memory-note footer {
+  justify-content: space-between;
+  gap: 0.65rem;
+}
+
+.studio-memory-toolbar .studio-check-row {
+  flex: 1;
+  min-width: 12rem;
+}
+
+.studio-memory-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.35rem;
+  min-width: 11rem;
+}
+
+.studio-memory-stats span,
+.studio-memory-tags span,
+.studio-memory-note em,
+.studio-memory-selected span {
+  min-width: 0;
+  border: 1px solid rgba(235, 242, 255, 0.14);
+  border-radius: 999px;
+  padding: 0.32rem 0.46rem;
+  overflow: hidden;
+  color: rgba(235, 242, 255, 0.72);
+  background: rgba(255, 255, 255, 0.06);
+  font-size: 0.68rem;
+  font-weight: 850;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.studio-memory-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.55rem;
+}
+
+.studio-memory-switches {
+  gap: 0.55rem;
+}
+
+.studio-memory-switches .studio-check-row {
+  flex: 1;
+}
+
+.studio-memory-search {
+  align-items: end;
+  gap: 0.55rem;
+}
+
+.studio-memory-search label {
+  flex: 1;
+}
+
+.studio-memory-search button {
+  min-width: 5.4rem;
+}
+
+.studio-memory-results {
+  min-height: 12rem;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 0.5rem;
+  border: 1px solid rgba(235, 242, 255, 0.13);
+  border-radius: 8px;
+  padding: 0.64rem;
+  background: rgba(3, 7, 18, 0.26);
+}
+
+.studio-memory-results-head {
+  justify-content: space-between;
+  gap: 0.75rem;
+  color: rgba(235, 242, 255, 0.82);
+  font-size: 0.76rem;
+  font-weight: 900;
+}
+
+.studio-memory-results-head small,
+.studio-memory-note small {
+  color: rgba(235, 242, 255, 0.5);
+  font-size: 0.68rem;
+  font-weight: 850;
+}
+
+.studio-memory-note-list {
+  min-height: 0;
+  max-height: 24rem;
+  display: grid;
+  gap: 0.52rem;
+  overflow: auto;
+  padding-right: 0.18rem;
+}
+
+.studio-memory-note {
+  min-width: 0;
+  display: grid;
+  gap: 0.44rem;
+  border: 1px solid rgba(235, 242, 255, 0.13);
+  border-radius: 8px;
+  padding: 0.7rem;
+  background: rgba(255, 255, 255, 0.055);
+  cursor: pointer;
+  transition: border-color 0.18s ease, background 0.18s ease;
+}
+
+.studio-memory-note:hover,
+.studio-memory-note.selected {
+  border-color: rgba(158, 232, 255, 0.45);
+  background: rgba(158, 232, 255, 0.12);
+}
+
+.studio-memory-note.disabled {
+  opacity: 0.62;
+}
+
+.studio-memory-note header div {
+  min-width: 0;
+  display: grid;
+  gap: 0.14rem;
+}
+
+.studio-memory-note strong,
+.studio-memory-selected strong {
+  min-width: 0;
+  overflow: hidden;
+  color: rgba(248, 251, 255, 0.94);
+  font-size: 0.84rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.studio-memory-note header span {
+  color: rgba(158, 232, 255, 0.74);
+  font-size: 0.68rem;
+  font-weight: 850;
+}
+
+.studio-memory-note em {
+  flex: 0 0 auto;
+  color: rgba(255, 213, 151, 0.9);
+  font-style: normal;
+}
+
+.studio-memory-note code {
+  min-width: 0;
+  overflow: hidden;
+  color: rgba(235, 242, 255, 0.58);
+  font-size: 0.68rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.studio-memory-note p {
+  margin: 0;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow: hidden;
+  color: rgba(235, 242, 255, 0.72);
+  font-size: 0.74rem;
+  line-height: 1.5;
+}
+
+.studio-memory-tags {
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
+
+.studio-memory-tags span {
+  max-width: 7rem;
+  padding: 0.24rem 0.42rem;
+}
+
+.studio-memory-note-actions {
+  justify-content: end;
+  gap: 0.45rem;
+}
+
+.studio-memory-note-actions .studio-secondary-btn {
+  min-height: 2rem;
+  padding: 0 0.58rem;
+}
+
+.studio-memory-empty {
+  min-height: 8rem;
+  display: grid;
+  place-items: center;
+  border: 1px dashed rgba(235, 242, 255, 0.14);
+  border-radius: 7px;
+  color: rgba(235, 242, 255, 0.52);
+  font-size: 0.78rem;
+  font-weight: 850;
+}
+
+.studio-memory-selected {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  border: 1px solid rgba(158, 232, 255, 0.2);
+  border-radius: 7px;
+  padding: 0.55rem 0.65rem;
+  background: rgba(158, 232, 255, 0.08);
+}
+
+.studio-primary-btn:disabled,
+.studio-secondary-btn:disabled,
+.studio-icon-btn:disabled,
+.studio-settings-tabs button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+  transform: none;
+}
+
 .studio-settings-actions {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto auto auto;
@@ -283,6 +523,31 @@
 
   .studio-memory-actions {
     grid-template-columns: 1fr;
+  }
+
+  .studio-memory-toolbar,
+  .studio-memory-search,
+  .studio-memory-switches,
+  .studio-memory-note header,
+  .studio-memory-note footer {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .studio-memory-grid,
+  .studio-memory-stats {
+    grid-template-columns: 1fr;
+  }
+
+  .studio-memory-toolbar .studio-check-row,
+  .studio-memory-stats {
+    min-width: 0;
+    width: 100%;
+  }
+
+  .studio-memory-search button,
+  .studio-memory-switches .studio-check-row {
+    width: 100%;
   }
 
   .studio-settings-actions button {

@@ -30,6 +30,7 @@ import {
   deleteLive2DMemoryNote,
   initializeLive2DMemoryVault,
   listLive2DMemoryNotes,
+  searchLive2DMemory,
   setLive2DMemoryNoteDisabled,
   rebuildLive2DMemoryIndex
 } from '@frontend/services/room/live2dMemory';
@@ -85,6 +86,9 @@ const activeTab = ref('llm');
 const status = ref('');
 const memoryBusy = ref('');
 const memoryManagePath = ref('');
+const memorySearchQuery = ref('');
+const memoryNotes = ref([]);
+const memoryResultMode = ref('idle');
 const llm = reactive(readRoomLLMSettings());
 const tts = reactive(readRoomTTSSettings());
 const model = reactive(readRoomModelSettings());
@@ -94,6 +98,21 @@ const memory = reactive(readRoomMemorySettings());
 let statusTimer = 0;
 
 const localTts = computed(() => tts.provider === 'gpt-sovits');
+const memoryStats = computed(() => {
+  const notes = Array.isArray(memoryNotes.value) ? memoryNotes.value : [];
+  const disabled = notes.filter((note) => note?.disabled).length;
+  const active = Math.max(0, notes.length - disabled);
+  return {
+    total: notes.length,
+    active,
+    disabled
+  };
+});
+const selectedMemoryNote = computed(() => {
+  const path = memoryManagePath.value.trim();
+  if (!path) return null;
+  return memoryNotes.value.find((note) => note?.path === path) || null;
+});
 const ttsApiPlaceholder = computed(() => {
   if (tts.provider === 'openai') return 'https://api.openai.com/v1/audio/speech';
   if (tts.provider === 'mimo') return DEFAULT_MIMO_TTS_API_URL;
@@ -196,9 +215,65 @@ function saveSettings() {
   setStatus('Saved');
 }
 
+function noteTitle(note) {
+  return String(note?.title || note?.path || 'Memory note').trim();
+}
+
+function notePath(note) {
+  return String(note?.path || '').trim();
+}
+
+function noteTypeLabel(note) {
+  return [note?.type, note?.scope].map((item) => String(item || '').trim()).filter(Boolean).join(' / ') || 'memory';
+}
+
+function noteSummary(note) {
+  return String(note?.summary || note?.content || '').replace(/\s+/g, ' ').trim();
+}
+
+function noteTags(note) {
+  return Array.isArray(note?.tags) ? note.tags.filter(Boolean).slice(0, 5) : [];
+}
+
+function noteScoreLabel(note) {
+  const importance = Number(note?.importance);
+  const confidence = Number(note?.confidence);
+  const parts = [];
+  if (Number.isFinite(importance)) parts.push(`I ${importance.toFixed(2)}`);
+  if (Number.isFinite(confidence)) parts.push(`C ${confidence.toFixed(2)}`);
+  return parts.join(' · ');
+}
+
+function selectMemoryNote(note) {
+  const path = notePath(note);
+  if (path) memoryManagePath.value = path;
+}
+
+function setMemoryNotes(notes, mode) {
+  memoryNotes.value = Array.isArray(notes) ? notes.filter(Boolean) : [];
+  memoryResultMode.value = mode;
+  if (!memoryManagePath.value.trim() && memoryNotes.value.length) {
+    memoryManagePath.value = notePath(memoryNotes.value[0]);
+  }
+}
+
+function updateMemoryNote(path, patch = {}) {
+  memoryNotes.value = memoryNotes.value.map((note) => (
+    notePath(note) === path ? { ...note, ...patch } : note
+  ));
+}
+
+function removeMemoryNote(path) {
+  memoryNotes.value = memoryNotes.value.filter((note) => notePath(note) !== path);
+  if (memoryManagePath.value.trim() === path) {
+    memoryManagePath.value = memoryNotes.value.length ? notePath(memoryNotes.value[0]) : '';
+  }
+}
+
 async function runMemoryTool(action, label) {
   if (memoryBusy.value) return;
   memoryBusy.value = action;
+  let shouldRefreshNotes = false;
   try {
     const savedMemory = writeRoomMemorySettings(memory);
     Object.assign(memory, savedMemory);
@@ -209,14 +284,16 @@ async function runMemoryTool(action, label) {
       ? `${result.created || 0} created, ${result.indexed || 0} indexed`
       : `${result.indexed || 0} indexed`;
     setStatus(`${label}: ${detail}`);
+    shouldRefreshNotes = true;
   } catch (error) {
     setStatus(error?.message || `${label} failed`);
   } finally {
     memoryBusy.value = '';
   }
+  if (shouldRefreshNotes) await listMemoryNotes(true);
 }
 
-async function listMemoryNotes() {
+async function listMemoryNotes(silent = false) {
   if (memoryBusy.value) return;
   memoryBusy.value = 'list';
   try {
@@ -224,7 +301,8 @@ async function listMemoryNotes() {
     Object.assign(memory, savedMemory);
     const result = await listLive2DMemoryNotes({ includeDisabled: true, maxNotes: 500 }, savedMemory);
     const disabledCount = (result.notes || []).filter((note) => note.disabled).length;
-    setStatus(`Memory notes: ${(result.notes || []).length}, disabled: ${disabledCount}`);
+    setMemoryNotes(result.notes || [], 'list');
+    if (!silent) setStatus(`Memory notes: ${(result.notes || []).length}, disabled: ${disabledCount}`);
   } catch (error) {
     setStatus(error?.message || 'List notes failed');
   } finally {
@@ -232,14 +310,39 @@ async function listMemoryNotes() {
   }
 }
 
-async function setManagedMemoryDisabled(disabled) {
-  const path = memoryManagePath.value.trim();
+async function searchMemoryNotes() {
+  if (memoryBusy.value) return;
+  const query = memorySearchQuery.value.trim();
+  if (!query) {
+    await listMemoryNotes();
+    return;
+  }
+  memoryBusy.value = 'search';
+  try {
+    const savedMemory = writeRoomMemorySettings(memory);
+    Object.assign(memory, savedMemory);
+    const notes = await searchLive2DMemory(query, {
+      maxNotes: Math.max(1, Number(savedMemory.maxNotesPerTurn) || 3)
+    });
+    setMemoryNotes(notes, 'search');
+    setStatus(`Search results: ${notes.length}`);
+  } catch (error) {
+    setStatus(error?.message || 'Search failed');
+  } finally {
+    memoryBusy.value = '';
+  }
+}
+
+async function setManagedMemoryDisabled(disabled, targetPath = '') {
+  const path = String(targetPath || memoryManagePath.value).trim();
   if (!path || memoryBusy.value) return;
   memoryBusy.value = disabled ? 'disable' : 'enable';
   try {
     const savedMemory = writeRoomMemorySettings(memory);
     Object.assign(memory, savedMemory);
     await setLive2DMemoryNoteDisabled(path, disabled, savedMemory);
+    updateMemoryNote(path, { disabled });
+    memoryManagePath.value = path;
     setStatus(disabled ? 'Memory note disabled' : 'Memory note enabled');
   } catch (error) {
     setStatus(error?.message || 'Memory update failed');
@@ -248,8 +351,8 @@ async function setManagedMemoryDisabled(disabled) {
   }
 }
 
-async function deleteManagedMemoryNote() {
-  const path = memoryManagePath.value.trim();
+async function deleteManagedMemoryNote(targetPath = '') {
+  const path = String(targetPath || memoryManagePath.value).trim();
   if (!path || memoryBusy.value) return;
   if (!window.confirm(`Move this memory note to 00_Inbox/deleted?\n${path}`)) return;
   memoryBusy.value = 'delete';
@@ -257,7 +360,7 @@ async function deleteManagedMemoryNote() {
     const savedMemory = writeRoomMemorySettings(memory);
     Object.assign(memory, savedMemory);
     const result = await deleteLive2DMemoryNote(path, savedMemory);
-    memoryManagePath.value = '';
+    removeMemoryNote(path);
     setStatus(`Memory note moved: ${result.deletedPath}`);
   } catch (error) {
     setStatus(error?.message || 'Delete note failed');
@@ -421,73 +524,166 @@ onUnmounted(() => {
       </section>
 
       <section v-else class="studio-settings-section">
-        <label class="studio-check-row">
-          <input v-model="memory.enabled" type="checkbox">
-          <span>Enable Obsidian memory</span>
-        </label>
-        <label>
-          <span>Vault Path</span>
-          <input v-model="memory.vaultPath" type="text" spellcheck="false" placeholder="D:\Obsidian\YachiyoMemoryVault">
-        </label>
-        <label>
-          <span>Retrieval</span>
-          <select v-model="memory.retrievalMode">
-            <option v-for="option in retrievalModeOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
-          </select>
-        </label>
-        <label>
-          <span>Write Mode</span>
-          <select v-model="memory.writeMode">
-            <option v-for="option in writeModeOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
-          </select>
-        </label>
-        <label>
-          <span>Max Notes</span>
-          <input v-model.number="memory.maxNotesPerTurn" type="number" min="1" max="8">
-        </label>
-        <label class="studio-check-row">
-          <input v-model="memory.allowViewerMemory" type="checkbox">
-          <span>Viewer memory</span>
-        </label>
-        <label class="studio-check-row">
-          <input v-model="memory.allowSessionMemory" type="checkbox">
-          <span>Session memory</span>
-        </label>
-        <div class="studio-memory-actions studio-wide-field">
-          <button
-            class="studio-secondary-btn"
-            type="button"
-            :disabled="Boolean(memoryBusy)"
-            @click="runMemoryTool('init', 'Vault initialized')"
-          >
-            Initialize Vault
-          </button>
-          <button
-            class="studio-secondary-btn"
-            type="button"
-            :disabled="Boolean(memoryBusy)"
-            @click="runMemoryTool('reindex', 'Index rebuilt')"
-          >
-            Rebuild Index
-          </button>
-        </div>
-        <label class="studio-wide-field">
-          <span>Manage Note Path</span>
-          <input v-model="memoryManagePath" type="text" spellcheck="false" placeholder="03_Viewers/viewer-redchenk.md">
-        </label>
-        <div class="studio-memory-actions studio-wide-field">
-          <button class="studio-secondary-btn" type="button" :disabled="Boolean(memoryBusy)" @click="listMemoryNotes">
-            List Notes
-          </button>
-          <button class="studio-secondary-btn" type="button" :disabled="Boolean(memoryBusy) || !memoryManagePath.trim()" @click="setManagedMemoryDisabled(true)">
-            Disable
-          </button>
-          <button class="studio-secondary-btn" type="button" :disabled="Boolean(memoryBusy) || !memoryManagePath.trim()" @click="setManagedMemoryDisabled(false)">
-            Enable
-          </button>
-          <button class="studio-secondary-btn" type="button" :disabled="Boolean(memoryBusy) || !memoryManagePath.trim()" @click="deleteManagedMemoryNote">
-            Delete
-          </button>
+        <div class="studio-memory-console studio-wide-field">
+          <div class="studio-memory-toolbar">
+            <label class="studio-check-row">
+              <input v-model="memory.enabled" type="checkbox">
+              <span>Enable Obsidian memory</span>
+            </label>
+            <div class="studio-memory-stats" aria-label="Memory note counts">
+              <span>{{ memoryStats.active }} Active</span>
+              <span>{{ memoryStats.disabled }} Disabled</span>
+              <span>{{ memoryStats.total }} Total</span>
+            </div>
+          </div>
+
+          <label>
+            <span>Vault Path</span>
+            <input v-model="memory.vaultPath" type="text" spellcheck="false" placeholder="D:\Obsidian\YachiyoMemoryVault">
+          </label>
+
+          <div class="studio-memory-grid">
+            <label>
+              <span>Retrieval</span>
+              <select v-model="memory.retrievalMode">
+                <option v-for="option in retrievalModeOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
+              </select>
+            </label>
+            <label>
+              <span>Write Mode</span>
+              <select v-model="memory.writeMode">
+                <option v-for="option in writeModeOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
+              </select>
+            </label>
+            <label>
+              <span>Max Notes</span>
+              <input v-model.number="memory.maxNotesPerTurn" type="number" min="1" max="8">
+            </label>
+          </div>
+
+          <div class="studio-memory-switches">
+            <label class="studio-check-row">
+              <input v-model="memory.allowViewerMemory" type="checkbox">
+              <span>Viewer memory</span>
+            </label>
+            <label class="studio-check-row">
+              <input v-model="memory.allowSessionMemory" type="checkbox">
+              <span>Session memory</span>
+            </label>
+          </div>
+
+          <div class="studio-memory-actions">
+            <button
+              class="studio-secondary-btn"
+              type="button"
+              :disabled="Boolean(memoryBusy)"
+              @click="runMemoryTool('init', 'Vault initialized')"
+            >
+              Initialize Vault
+            </button>
+            <button
+              class="studio-secondary-btn"
+              type="button"
+              :disabled="Boolean(memoryBusy)"
+              @click="runMemoryTool('reindex', 'Index rebuilt')"
+            >
+              Rebuild Index
+            </button>
+            <button class="studio-secondary-btn" type="button" :disabled="Boolean(memoryBusy)" @click="listMemoryNotes()">
+              List Notes
+            </button>
+          </div>
+
+          <div class="studio-memory-search">
+            <label>
+              <span>Search Memory</span>
+              <input
+                v-model="memorySearchQuery"
+                type="search"
+                spellcheck="false"
+                placeholder="stage fright, live2d, viewer..."
+                @keydown.enter.prevent="searchMemoryNotes"
+              >
+            </label>
+            <button class="studio-primary-btn" type="button" :disabled="Boolean(memoryBusy)" @click="searchMemoryNotes">
+              Search
+            </button>
+          </div>
+
+          <label>
+            <span>Selected Note Path</span>
+            <input v-model="memoryManagePath" type="text" spellcheck="false" placeholder="03_Viewers/viewer-redchenk.md">
+          </label>
+
+          <div class="studio-memory-actions">
+            <button class="studio-secondary-btn" type="button" :disabled="Boolean(memoryBusy) || !memoryManagePath.trim()" @click="setManagedMemoryDisabled(true)">
+              Disable
+            </button>
+            <button class="studio-secondary-btn" type="button" :disabled="Boolean(memoryBusy) || !memoryManagePath.trim()" @click="setManagedMemoryDisabled(false)">
+              Enable
+            </button>
+            <button class="studio-secondary-btn" type="button" :disabled="Boolean(memoryBusy) || !memoryManagePath.trim()" @click="deleteManagedMemoryNote()">
+              Delete
+            </button>
+          </div>
+
+          <div class="studio-memory-results" aria-live="polite">
+            <div class="studio-memory-results-head">
+              <span>{{ memoryResultMode === 'search' ? 'Search Results' : 'Vault Notes' }}</span>
+              <small>{{ memoryNotes.length }} notes</small>
+            </div>
+            <div v-if="memoryNotes.length" class="studio-memory-note-list">
+              <article
+                v-for="note in memoryNotes"
+                :key="notePath(note)"
+                class="studio-memory-note"
+                :class="{ selected: memoryManagePath.trim() === notePath(note), disabled: note.disabled }"
+                @click="selectMemoryNote(note)"
+              >
+                <header>
+                  <div>
+                    <strong>{{ noteTitle(note) }}</strong>
+                    <span>{{ noteTypeLabel(note) }}</span>
+                  </div>
+                  <em v-if="note.disabled">Disabled</em>
+                </header>
+                <code>{{ notePath(note) }}</code>
+                <p v-if="noteSummary(note)">{{ noteSummary(note) }}</p>
+                <footer>
+                  <div class="studio-memory-tags">
+                    <span v-for="tag in noteTags(note)" :key="`${notePath(note)}-${tag}`">#{{ tag }}</span>
+                  </div>
+                  <small>{{ noteScoreLabel(note) }}</small>
+                </footer>
+                <div class="studio-memory-note-actions">
+                  <button
+                    class="studio-secondary-btn"
+                    type="button"
+                    :disabled="Boolean(memoryBusy)"
+                    @click.stop="setManagedMemoryDisabled(!note.disabled, notePath(note))"
+                  >
+                    {{ note.disabled ? 'Enable' : 'Disable' }}
+                  </button>
+                  <button
+                    class="studio-secondary-btn"
+                    type="button"
+                    :disabled="Boolean(memoryBusy)"
+                    @click.stop="deleteManagedMemoryNote(notePath(note))"
+                  >
+                    Delete
+                  </button>
+                </div>
+              </article>
+            </div>
+            <div v-else class="studio-memory-empty">
+              {{ memoryBusy ? 'Loading memory...' : 'No memory notes loaded' }}
+            </div>
+          </div>
+
+          <div v-if="selectedMemoryNote" class="studio-memory-selected">
+            <span>Selected</span>
+            <strong>{{ noteTitle(selectedMemoryNote) }}</strong>
+          </div>
         </div>
       </section>
 
