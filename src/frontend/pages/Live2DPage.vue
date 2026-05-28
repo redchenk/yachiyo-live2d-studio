@@ -478,7 +478,7 @@ function resetLLMHistory() {
   };
 }
 
-function buildLiveDirectorPrompt(audienceLines) {
+function buildLiveDirectorPrompt(audienceLines, options = {}) {
   const chat = audienceLines.length
     ? audienceLines.map((line, index) => `${index + 1}. ${line}`).join('\n')
     : 'No new audience messages. Continue the show with a short autonomous streamer thought.';
@@ -494,7 +494,9 @@ function buildLiveDirectorPrompt(audienceLines) {
     `Prefer action combos like ${behaviorActionComboPrompt()}.`,
     'Use emotion plus actions instead of raw Live2D parameters. Let the behavior controller map actions to VTube Studio tracking curves.',
     'Never show action cues in the spoken reply or caption: no parentheses, no asterisk actions, no Action/Pose labels, and no body descriptions in reply. Put movement only in the actions array.',
-    'Return the required JSON object only.'
+    options.streaming
+      ? 'Streaming mode: follow the system format exactly, with SAY lines first and CONTROL JSON last.'
+      : 'Return the required JSON object only.'
   ].join('\n');
 }
 
@@ -516,7 +518,7 @@ async function runLiveTurn() {
     const shouldSpeak = Boolean(liveDirector.autoVoice && speechPlayer);
     if (shouldSpeak) {
       liveDirector.status = 'thinking';
-      await performStreamingLiveTurn(buildLiveDirectorPrompt(audienceLines));
+      await performStreamingLiveTurn(buildLiveDirectorPrompt(audienceLines, { streaming: true }));
       liveDirector.status = 'idle';
       return;
     }

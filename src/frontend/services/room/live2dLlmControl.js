@@ -15,8 +15,8 @@ import {
 import { readJson, writeJson } from './roomStorage';
 
 const HISTORY_KEY = 'live2dLLMControlHistory';
-const SENTENCE_END_PATTERN = /[。！？!?…\n]/u;
-const SENTENCE_TRAILING_PATTERN = /[\s"'”’）)\]】》」』]+/u;
+const SENTENCE_END_PATTERN = /[\u3002\uff01\uff1f!?\u2026\n]/u;
+const SENTENCE_TRAILING_PATTERN = /[\s"'\u201d\u2019\uff09)\]\u3011\u300b\u300d\u300f]+/u;
 const SPEECH_STYLE_BY_EMOTION = {
   happy: { speed: 1.08, pitch: 0.08, pause: 'bright' },
   smile: { speed: 1.06, pitch: 0.07, pause: 'warm' },
@@ -144,6 +144,17 @@ function readReplyFieldProgress(text) {
   return { value: '', complete: false, found: false };
 }
 
+function readStreamingSpeechProgress(text) {
+  const value = String(text || '').replace(/<think>[\s\S]*?<\/think>/gi, '');
+  const beforeControl = value.split(/\n\s*(?:CONTROL|JSON|LIVE2D_CONTROL)\s*[:：]/i)[0] || '';
+  const pieces = [];
+  beforeControl.split(/\r?\n/).forEach((line) => {
+    const match = line.match(/^\s*(?:SAY|SPEECH|VOICE|LINE)\s*[:：]\s*(.*)$/i);
+    if (match) pieces.push(match[1]);
+  });
+  return pieces.join('\n').trim();
+}
+
 function findSentenceCutIndex(text) {
   for (let index = 0; index < text.length; index += 1) {
     if (!SENTENCE_END_PATTERN.test(text[index])) continue;
@@ -205,6 +216,11 @@ function createReplySentenceEmitter(handlers = {}) {
 
   return {
     pushRaw(rawText, options = {}) {
+      const streamingSpeech = readStreamingSpeechProgress(rawText);
+      if (streamingSpeech) {
+        pushReply(streamingSpeech, { flush: options.flush });
+        return;
+      }
       const field = readReplyFieldProgress(rawText);
       if (!field.found) return;
       pushReply(field.value, { flush: options.flush || field.complete });
@@ -460,7 +476,8 @@ export function parseLive2DControlPayload(rawText) {
     };
   } catch (_) {
     const stageText = extractLive2DStageDirections(rawText);
-    const reply = cleanReplyForSpeech(rawText) || 'OK.';
+    const streamingSpeech = readStreamingSpeechProgress(rawText);
+    const reply = cleanReplyForSpeech(streamingSpeech || rawText) || 'OK.';
     const behaviorLive2D = compileBehaviorIntent({ reply, text: [stageText, reply].filter(Boolean).join('\n') });
     const inferredLive2D = inferLive2DIntentFromText([stageText, reply].filter(Boolean).join('\n'));
     return {
@@ -565,6 +582,27 @@ export function live2DControlSystemPrompt() {
   ].join('\n');
 }
 
+export function live2DStreamingControlSystemPrompt() {
+  return [
+    'You are controlling a Live2D character named Yachiyo.',
+    'This is a low-latency streaming turn. Start output with spoken lines immediately, then output control JSON at the end.',
+    'Output format must be exactly:',
+    'SAY: first natural spoken sentence with punctuation.',
+    'SAY: optional second natural spoken sentence with punctuation.',
+    'CONTROL: {"reply":"same spoken text without SAY labels","emotion":"smug|happy|shy|surprised|angry|puff|tongue|dizzy|sad|crying|fire|neutral","intensity":0.72,"actions":[{"type":"look_at_chat","duration":1.2},{"type":"smirk","duration":2.0}],"speech_style":{"speed":1.05,"pitch":0.08,"pause":"playful"}}',
+    'The SAY lines must come before CONTROL. Do not wait to decide actions before writing the SAY lines.',
+    'SAY lines must contain only natural dialogue. Never put stage directions, parenthesized action hints, asterisk actions, action labels, pose descriptions, or JSON in SAY.',
+    'CONTROL must be one JSON object after the CONTROL label. The reply field must exactly match the spoken SAY text.',
+    'Choose 2-5 semantic actions that match the spoken meaning and mood.',
+    'Use only semantic emotion ids and semantic actions. Do not output raw Live2D parameters, VTube Studio parameter ids, expression file names, live2d.parameters, parameterTargets, or pose descriptions.',
+    `Good action combos: ${behaviorActionComboPrompt()}.`,
+    'Use intensity 0.45-0.85 for normal talking, 0.85-1.0 for punchlines or surprise.',
+    semanticExpressionPromptCatalog(),
+    semanticActionPromptCatalog(),
+    'The execution layer maps semantic emotions to expression presets, VTube Studio expressions, and fine motion overlays.'
+  ].join('\n');
+}
+
 export function readLive2DLLMHistory() {
   const history = readJson(HISTORY_KEY, []);
   return Array.isArray(history) ? history.filter((item) => item && ['user', 'assistant'].includes(item.role)).slice(-8) : [];
@@ -625,7 +663,7 @@ export async function requestLive2DControlStream(message, handlers = {}) {
   }
 
   const history = readLive2DLLMHistory();
-  const systemPrompt = [settings.systemPrompt, live2DControlSystemPrompt()].filter(Boolean).join('\n\n');
+  const systemPrompt = [settings.systemPrompt, live2DStreamingControlSystemPrompt()].filter(Boolean).join('\n\n');
   const sentenceEmitter = createReplySentenceEmitter(handlers);
   let rawReply = '';
 
