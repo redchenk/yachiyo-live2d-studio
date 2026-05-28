@@ -435,6 +435,9 @@ async function performStreamingLiveTurn(message) {
     const visibleReply = queuedSpeechCount < 1
       ? visibleYachiyoText(await translateLive2DReplyToChinese(finalResult.reply).catch(() => '')) || 'OK.'
       : streamedReply;
+    if (queuedSpeechCount > 0 && finalResult.live2d) {
+      dispatchRoomLive2D(alignLive2DToSpeech(finalResult.live2d, Number(finalResult.live2d.durationMs) || 0));
+    }
     if (queuedSpeechCount < 1 && visibleReply) {
       const finalSpeech = visibleYachiyoText(finalResult.reply) || visibleReply;
       const finalCaptionPromise = translateLive2DReplyToChinese(finalSpeech)
