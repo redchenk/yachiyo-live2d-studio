@@ -284,6 +284,7 @@ internal sealed class LocalStudioServer : IDisposable
         this.repoRoot = repoRoot.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
         this.port = port;
         this.live2DPath = live2DPath;
+        DesktopApiProxy.Configure(this.repoRoot);
     }
 
     public string Url
@@ -733,11 +734,19 @@ internal sealed class StudioApiResponse
 internal static class DesktopApiProxy
 {
     private static readonly JavaScriptSerializer Json = new JavaScriptSerializer { MaxJsonLength = int.MaxValue };
+    private static string repoRoot = string.Empty;
     private const int MaxMemoryNoteBytes = 256 * 1024;
     private const int MaxMemoryWriteChars = 2000;
     private const int MaxMemorySearchFiles = 800;
     private const string MemoryIndexRelativePath = ".yachiyo-index/memory-index.json";
     private const string DisabledMemoryRelativePath = ".yachiyo-index/disabled-memory.json";
+
+    public static void Configure(string root)
+    {
+        repoRoot = string.IsNullOrWhiteSpace(root)
+            ? string.Empty
+            : Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+    }
 
     public static StudioApiResponse Chat(byte[] body)
     {
@@ -1454,16 +1463,46 @@ internal static class DesktopApiProxy
         templates[Path.Combine("08_System", "Memory Policy.md")] = BuildMemoryTemplate("Memory Policy", "policy", "canon", "TODO: Add memory policy after the architecture is stable.", "policy", "memory");
         templates[Path.Combine("08_System", "Retrieval Rules.md")] = BuildMemoryTemplate("Retrieval Rules", "policy", "canon", "TODO: Add retrieval rules after the architecture is stable.", "policy", "retrieval");
         templates[Path.Combine("08_System", "Prompt Fragments.md")] = BuildMemoryTemplate("Prompt Fragments", "policy", "canon", "TODO: Add prompt fragments after the architecture is stable.", "policy", "prompt");
+        MergeMemorySeedTemplates(templates);
 
         foreach (var entry in templates)
         {
             var path = SafeCombineMemoryPath(vaultPath, entry.Key, true);
             Directory.CreateDirectory(Path.GetDirectoryName(path));
-            if (File.Exists(path)) continue;
+            if (File.Exists(path) && !CanReplaceMemoryPlaceholder(path)) continue;
             File.WriteAllText(path, entry.Value, Encoding.UTF8);
             created += 1;
         }
         return created;
+    }
+
+    private static void MergeMemorySeedTemplates(Dictionary<string, string> templates)
+    {
+        if (string.IsNullOrWhiteSpace(repoRoot)) return;
+        var seedRoot = Path.GetFullPath(Path.Combine(repoRoot, "memory-seeds", "obsidian"));
+        if (!Directory.Exists(seedRoot)) return;
+        var root = seedRoot.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        foreach (var file in Directory.GetFiles(seedRoot, "*.md", SearchOption.AllDirectories))
+        {
+            var fullPath = Path.GetFullPath(file);
+            if (!fullPath.StartsWith(root, StringComparison.OrdinalIgnoreCase)) continue;
+            var relativePath = fullPath.Substring(root.Length);
+            templates[relativePath] = File.ReadAllText(fullPath, Encoding.UTF8);
+        }
+    }
+
+    private static bool CanReplaceMemoryPlaceholder(string path)
+    {
+        try
+        {
+            var text = File.ReadAllText(path, Encoding.UTF8);
+            return text.IndexOf("TODO: Add ", StringComparison.OrdinalIgnoreCase) >= 0 &&
+                   text.IndexOf("after the architecture is stable", StringComparison.OrdinalIgnoreCase) >= 0;
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     private static string BuildMemoryTemplate(string title, string type, string scope, string body, params string[] tags)

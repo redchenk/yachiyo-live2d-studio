@@ -7,6 +7,7 @@ import {
   semanticActionPromptCatalog
 } from './live2dBehaviorController';
 import { behaviorActionComboPrompt } from '../../constants/room/behaviorActionRegistry';
+import { yachiyoCorePersonalityPrompt } from '../../constants/room/yachiyoPersonalityPrompt';
 import { semanticExpressionPromptCatalog } from '../../constants/room/yachiyoExpressionPresetRegistry';
 import {
   cleanLive2DReply,
@@ -800,7 +801,7 @@ export async function requestLive2DControl(message) {
 
   const history = readLive2DLLMHistory();
   const memoryPrompt = await buildLive2DMemoryPrompt(message);
-  const systemPrompt = [settings.systemPrompt, memoryPrompt, live2DControlSystemPrompt()].filter(Boolean).join('\n\n');
+  const systemPrompt = [yachiyoCorePersonalityPrompt(), settings.systemPrompt, memoryPrompt, live2DControlSystemPrompt()].filter(Boolean).join('\n\n');
   let rawReply = '';
 
   if (settings.useProxy) {
@@ -845,7 +846,7 @@ export async function requestLive2DControlStream(message, handlers = {}) {
 
   const history = readLive2DLLMHistory();
   const memoryPrompt = await buildLive2DMemoryPrompt(message);
-  const systemPrompt = [settings.systemPrompt, memoryPrompt, live2DStreamingControlSystemPrompt()].filter(Boolean).join('\n\n');
+  const systemPrompt = [yachiyoCorePersonalityPrompt(), settings.systemPrompt, memoryPrompt, live2DStreamingControlSystemPrompt()].filter(Boolean).join('\n\n');
   const sentenceEmitter = createReplySentenceEmitter(handlers);
   let rawReply = '';
 
