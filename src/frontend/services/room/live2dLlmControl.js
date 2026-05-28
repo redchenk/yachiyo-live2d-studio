@@ -108,6 +108,18 @@ function extractJsonObject(text) {
   return start >= 0 && end > start ? value.slice(start, end + 1).trim() : value;
 }
 
+function extractLabeledJsonObject(text, labels = ['CONTROL', 'JSON', 'LIVE2D_CONTROL']) {
+  const value = String(text || '').replace(/<think>[\s\S]*?<\/think>/gi, '');
+  let startIndex = -1;
+  for (const label of labels) {
+    const match = new RegExp(`(?:^|\\n)\\s*${escapeRegExp(label)}\\s*[:：]`, 'i').exec(value);
+    if (!match) continue;
+    startIndex = Math.max(startIndex, match.index + match[0].length);
+  }
+  if (startIndex < 0) return '';
+  return extractJsonObject(value.slice(startIndex));
+}
+
 function escapeRegExp(text) {
   return String(text || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
@@ -168,6 +180,28 @@ function readStreamingSpeechProgress(text) {
     if (match) pieces.push(match[1]);
   });
   return pieces.join('\n').trim();
+}
+
+function parseStreamingBeatLine(line) {
+  const match = String(line || '').match(/^\s*(?:BEAT|EMOTION_BEAT|ACTION_BEAT)\s*[:：]\s*(.*)$/i);
+  if (!match) return null;
+  const source = extractJsonObject(match[1]);
+  if (!source || !source.startsWith('{')) return null;
+  try {
+    const data = JSON.parse(source);
+    return data && typeof data === 'object' ? data : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+function readStreamingBeatsProgress(text) {
+  const value = String(text || '').replace(/<think>[\s\S]*?<\/think>/gi, '');
+  const beforeControl = value.split(/\n\s*(?:CONTROL|JSON|LIVE2D_CONTROL)\s*[:：]/i)[0] || '';
+  return beforeControl
+    .split(/\r?\n/)
+    .map((line) => parseStreamingBeatLine(line))
+    .filter(Boolean);
 }
 
 function speakableUnitLength(text) {
@@ -272,23 +306,65 @@ function joinSpeechChunks(left, right) {
   return `${previous}${shouldJoinSpeechChunksWithSpace(previous, next) ? ' ' : ''}${next}`;
 }
 
+function normalizeStreamingBeat(rawBeat = {}, sentence = '', fallbackEmotion = 'neutral', fallbackSpeechStyle = null) {
+  const beat = rawBeat && typeof rawBeat === 'object' ? rawBeat : {};
+  const nested = beat.live2d && typeof beat.live2d === 'object' ? beat.live2d : {};
+  const emotion = normalizeEmotion(
+    beat.emotion || beat.mood || beat.expression || nested.emotion || nested.mood || nested.expression,
+    fallbackEmotion
+  );
+  const rawActions = beat.actions || beat.behaviorActions || beat.behaviourActions || nested.actions || nested.behaviorActions || [];
+  const actions = Array.isArray(rawActions)
+    ? rawActions
+    : (rawActions ? [{ type: rawActions }] : []);
+  const speechStyle = beat.speech_style || beat.speechStyle || nested.speech_style || nested.speechStyle || fallbackSpeechStyle || null;
+
+  return {
+    reply: sentence,
+    text: sentence,
+    emotion,
+    mood: emotion,
+    intensity: beat.intensity ?? nested.intensity ?? (emotion === 'neutral' ? 0.58 : 0.72),
+    actions,
+    speech_style: speechStyleForEmotion(emotion, speechStyle)
+  };
+}
+
+function buildBeatLive2DIntent(sentence, beat, fallbackEmotion = 'neutral', fallbackSpeechStyle = null) {
+  const payload = normalizeStreamingBeat(beat, sentence, fallbackEmotion, fallbackSpeechStyle);
+  const behaviorIntent = compileBehaviorIntent(payload);
+  const inferredIntent = inferLive2DIntentFromText(sentence);
+  return mergeBehaviorAndExplicitIntent(behaviorIntent, inferredIntent) || behaviorIntent || inferredIntent;
+}
+
 function createReplySentenceEmitter(handlers = {}) {
   let seenReply = '';
   let sentenceBuffer = '';
   let pendingShortSentence = '';
+  let seenBeatCount = 0;
+  const pendingBeats = [];
   let emittedCount = 0;
 
   const dispatchSentence = (text) => {
     const sentence = cleanReplyForSpeech(text);
     if (!sentence || speakableUnitLength(sentence) < 2) return;
     const analysis = analyzeLive2DSentenceEmotion(sentence);
+    const beat = pendingBeats.shift() || null;
+    const speechStyle = beat
+      ? speechStyleForEmotion(normalizeEmotion(beat.emotion || beat.mood || beat.expression, analysis.emotion), beat.speech_style || beat.speechStyle || null)
+      : analysis.speechStyle;
+    const live2d = beat
+      ? buildBeatLive2DIntent(sentence, beat, analysis.emotion, analysis.speechStyle)
+      : buildSentenceLive2DIntent(sentence, analysis.emotion, analysis.speechStyle);
+    const emotion = live2d?.emotion || live2d?.expression || analysis.emotion;
     emittedCount += 1;
     handlers.onSentence?.({
       index: emittedCount,
       text: sentence,
-      emotion: analysis.emotion,
-      speechStyle: analysis.speechStyle,
-      live2d: buildSentenceLive2DIntent(sentence, analysis.emotion, analysis.speechStyle)
+      emotion,
+      speechStyle: live2d?.speechStyle || speechStyle,
+      live2d,
+      beat
     });
   };
 
@@ -328,6 +404,11 @@ function createReplySentenceEmitter(handlers = {}) {
 
   return {
     pushRaw(rawText, options = {}) {
+      const beats = readStreamingBeatsProgress(rawText);
+      if (beats.length > seenBeatCount) {
+        pendingBeats.push(...beats.slice(seenBeatCount));
+        seenBeatCount = beats.length;
+      }
       const streamingSpeech = readStreamingSpeechProgress(rawText);
       if (streamingSpeech) {
         pushReply(streamingSpeech, { flush: options.flush });
@@ -400,6 +481,7 @@ async function readStreamingTextResponse(response, handlers = {}) {
       payload = JSON.parse(data);
     } catch (_) {
       rawText += data;
+      handlers.onEvent?.({ event, payload: null, delta: data, rawText });
       handlers.onText?.(data, rawText);
       return;
     }
@@ -407,6 +489,7 @@ async function readStreamingTextResponse(response, handlers = {}) {
       throw new Error(payload?.message || payload?.error?.message || 'LLM stream failed');
     }
     const delta = pickStreamDelta(payload);
+    handlers.onEvent?.({ event, payload, delta, rawText });
     if (!delta) return;
     rawText += delta;
     handlers.onText?.(delta, rawText, payload);
@@ -586,7 +669,7 @@ function normalizeMemoryWritesFromPayload(data) {
 }
 
 export function parseLive2DControlPayload(rawText) {
-  const jsonText = extractJsonObject(rawText);
+  const jsonText = extractLabeledJsonObject(rawText) || extractJsonObject(rawText);
   try {
     const data = JSON.parse(jsonText);
     const rawReply = data.reply || data.text || data.message || '';
@@ -812,20 +895,23 @@ export function live2DControlSystemPrompt() {
 export function live2DStreamingControlSystemPrompt() {
   return [
     'You are controlling a Live2D character named Yachiyo.',
-    'This is a low-latency streaming turn. Start output with Japanese spoken VOICE lines immediately, then output control JSON at the end.',
+    'This is a low-latency streaming turn. Output one compact semantic BEAT before each Japanese spoken VOICE line, then output final CONTROL JSON at the end.',
     'Output format must be exactly:',
+    'BEAT: {"emotion":"happy","intensity":0.68,"actions":[{"type":"look_at_chat","duration":0.9},{"type":"smile","duration":1.2}],"speech_style":{"speed":1.06,"pitch":0.06,"pause":"bright"}}',
     'VOICE: first short Japanese phrase, 8-14 kana/characters if possible, such as うん、聞いてるよ、 or えへへ、いいね、.',
+    'BEAT: {"emotion":"smug","intensity":0.72,"actions":[{"type":"smirk","duration":1.1},{"type":"lean_in","duration":1.0,"delay":0.08}],"speech_style":{"speed":1.04,"pitch":0.05,"pause":"teasing"}}',
     'For TTS stability, do not use tiny fragments; the first VOICE should include at least one short phrase, not only a filler.',
     'VOICE: next natural Japanese clause or short sentence, normally about 18-32 Japanese characters.',
     'VOICE: combine tiny comma clauses instead of making every comma its own TTS chunk; prefer one stable phrase over many tiny fragments.',
     'CONTROL: {"reply":"same Japanese spoken text without VOICE labels","emotion":"smug|happy|shy|surprised|angry|puff|tongue|dizzy|sad|crying|fire|neutral","intensity":0.72,"actions":[{"type":"look_at_chat","duration":1.2},{"type":"smirk","duration":2.0}],"speech_style":{"speed":1.05,"pitch":0.08,"pause":"playful"},"memory_writes":[]}',
-    'The VOICE lines must come before CONTROL. Do not wait to decide actions before writing the VOICE lines.',
-    'Emit the first VOICE before planning the full answer. Do not wait for CONTROL before speaking.',
+    'Each BEAT must be a single-line JSON object and must appear immediately before the VOICE it controls.',
+    'BEAT contains only semantic fields: emotion, intensity, actions, and speech_style. Keep it short so the first VOICE can start quickly.',
+    'The VOICE lines must come before CONTROL. Emit the first BEAT and VOICE before planning the full answer. Do not wait for CONTROL before speaking.',
     'Avoid standalone ultra-short VOICE lines like only うん、 あっ、 えへへ、. Attach a few spoken words so each chunk is stable for TTS.',
     'Keep the first VOICE line low-latency; after that, prioritize smooth GPT-SoVITS quality and natural sentence rhythm.',
-    'VOICE lines must contain only natural Japanese dialogue. Never put stage directions, parenthesized action hints, asterisk actions, action labels, pose descriptions, or JSON in VOICE.',
+    'VOICE lines must contain only natural Japanese dialogue. Never put BEAT JSON, stage directions, parenthesized action hints, asterisk actions, action labels, pose descriptions, or JSON in VOICE.',
     'CONTROL must be one JSON object after the CONTROL label. The reply field must exactly match the spoken VOICE text.',
-    'Choose 2-5 semantic actions that match the spoken meaning and mood.',
+    'Choose 2-5 semantic actions across the turn that match the spoken meaning and mood. Per-BEAT actions may be 1-3 concise semantic actions.',
     'Use only semantic emotion ids and semantic actions. Do not output raw Live2D parameters, VTube Studio parameter ids, expression file names, live2d.parameters, parameterTargets, or pose descriptions.',
     `Good action combos: ${behaviorActionComboPrompt()}.`,
     'Use intensity 0.45-0.85 for normal talking, 0.85-1.0 for punchlines or surprise.',
@@ -930,7 +1016,8 @@ export async function requestLive2DControlStream(message, handlers = {}) {
       onText: (delta, accumulated) => {
         sentenceEmitter.pushRaw(accumulated);
         handlers.onDelta?.({ delta, raw: accumulated });
-      }
+      },
+      onEvent: (event) => handlers.onEvent?.(event)
     });
   } else {
     const apiUrl = normalizeOpenAIUrl(settings.apiUrl);
@@ -948,7 +1035,8 @@ export async function requestLive2DControlStream(message, handlers = {}) {
       onText: (delta, accumulated) => {
         sentenceEmitter.pushRaw(accumulated);
         handlers.onDelta?.({ delta, raw: accumulated });
-      }
+      },
+      onEvent: (event) => handlers.onEvent?.(event)
     });
   }
 
