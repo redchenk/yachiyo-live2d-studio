@@ -1,0 +1,12 @@
+{
+  "Type": "Live2D Expression",
+  "Parameters": [
+    { "Id": "ParamTongueOut", "Value": 1.0, "Blend": "Add" },
+    { "Id": "ParamTongueOut_BS", "Value": 1.0, "Blend": "Add" },
+    { "Id": "ParamMouthOpenY", "Value": 0.38, "Blend": "Add" },
+    { "Id": "ParamMouthForm", "Value": 0.32, "Blend": "Add" },
+    { "Id": "ParamEyeLSmile", "Value": 0.35, "Blend": "Add" },
+    { "Id": "ParamEyeRSmile", "Value": 0.35, "Blend": "Add" },
+    { "Id": "ParamCheek", "Value": 0.25, "Blend": "Add" }
+  ]
+}

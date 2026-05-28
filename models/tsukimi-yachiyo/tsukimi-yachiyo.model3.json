@@ -10,8 +10,17 @@
       { "Name": "neutral", "File": "expression_neutral.exp3.json" },
       { "Name": "smile", "File": "expression_smile.exp3.json" },
       { "Name": "bsmile", "File": "expression_bsmile.exp3.json" },
+      { "Name": "shy", "File": "expression_shy.exp3.json" },
+      { "Name": "smug", "File": "expression_smug.exp3.json" },
+      { "Name": "surprised", "File": "expression_surprised.exp3.json" },
+      { "Name": "angry", "File": "expression_angry.exp3.json" },
+      { "Name": "puff", "File": "expression_puff.exp3.json" },
+      { "Name": "tongue", "File": "expression_tongue.exp3.json" },
+      { "Name": "dizzy", "File": "expression_dizzy.exp3.json" },
       { "Name": "namida", "File": "expression_namida.exp3.json" },
-      { "Name": "tears", "File": "expression_tears.exp3.json" }
+      { "Name": "tears", "File": "expression_tears.exp3.json" },
+      { "Name": "crying", "File": "expression_crying.exp3.json" },
+      { "Name": "fire", "File": "expression_fire.exp3.json" }
     ],
     "Physics": "tsukimi-yachiyo.physics3.json"
   },

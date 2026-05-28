@@ -1,0 +1,12 @@
+{
+  "Type": "Live2D Expression",
+  "Parameters": [
+    { "Id": "ParamCheekPuff", "Value": 1.0, "Blend": "Add" },
+    { "Id": "ParamCheekPuff2", "Value": 0.75, "Blend": "Add" },
+    { "Id": "ParamMouthShrug", "Value": 0.45, "Blend": "Add" },
+    { "Id": "ParamMouthForm", "Value": -0.28, "Blend": "Add" },
+    { "Id": "ParamBrowLY", "Value": -0.12, "Blend": "Add" },
+    { "Id": "ParamBrowRY", "Value": -0.12, "Blend": "Add" },
+    { "Id": "ParamCheek", "Value": 0.38, "Blend": "Add" }
+  ]
+}

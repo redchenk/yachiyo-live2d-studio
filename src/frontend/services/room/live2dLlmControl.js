@@ -1,4 +1,3 @@
-import { live2DPromptCatalog } from '../../constants/room/live2dManifest';
 import {
   inferLive2DIntentFromText,
   normalizeLive2DIntent
@@ -8,6 +7,7 @@ import {
   semanticActionPromptCatalog
 } from './live2dBehaviorController';
 import { behaviorActionComboPrompt } from '../../constants/room/behaviorActionRegistry';
+import { semanticExpressionPromptCatalog } from '../../constants/room/yachiyoExpressionPresetRegistry';
 import {
   cleanLive2DReply,
   extractLive2DStageDirections
@@ -236,17 +236,17 @@ export function live2DControlSystemPrompt() {
     'Yachiyo is being tested as an autonomous AI VTuber streamer: keep her present, reactive, playful, and concise.',
     'Return exactly one JSON object. Do not use Markdown. Do not add prose outside JSON.',
     'JSON schema:',
-    '{"reply":"short visible reply","emotion":"smug|happy|shy|surprised|sad|neutral","intensity":0.72,"actions":[{"type":"look_at_chat","duration":1.2},{"type":"smirk","duration":2.0},{"type":"head_tilt","side":"right","duration":1.5}],"speech_style":{"speed":1.05,"pitch":0.08,"pause":"playful"}}',
+    '{"reply":"short visible reply","emotion":"smug|happy|shy|surprised|angry|puff|tongue|dizzy|sad|crying|fire|neutral","intensity":0.72,"actions":[{"type":"look_at_chat","duration":1.2},{"type":"smirk","duration":2.0},{"type":"head_tilt","side":"right","duration":1.5}],"speech_style":{"speed":1.05,"pitch":0.08,"pause":"playful"}}',
     'The reply field must contain only natural dialogue. Never put stage directions, parenthesized action hints, asterisk actions, action labels, or pose descriptions in reply.',
     'The actions field is required and must contain at least 2 semantic actions. If the moment is calm, use look_at_chat + breathe.',
     'Actions must match the reply meaning and mood. Vary action combos between turns; do not repeat the same body action unless the dialogue specifically calls for it.',
-    'Use semantic actions, not raw Live2D parameters, for normal turns. The behavior controller maps actions to VTube Studio tracking curves.',
+    'Use only semantic emotion ids and semantic actions. Do not output raw Live2D parameters, VTube Studio parameter ids, expression file names, live2d.parameters, parameterTargets, or pose descriptions.',
     `Choose 2-5 actions per live-stream turn. Good combos: ${behaviorActionComboPrompt()}.`,
     'Use intensity 0.45-0.85 for normal talking, 0.85-1.0 for punchlines or surprise.',
     'Use duration in seconds. Overlapping actions are allowed by repeating similar delay values; omit delay for a natural staggered performance.',
-    'Only use raw live2d.parameters when a very specific model parameter is necessary.',
+    semanticExpressionPromptCatalog(),
     semanticActionPromptCatalog(),
-    live2DPromptCatalog()
+    'The execution layer maps semantic emotions to expression presets, VTube Studio expressions, and fine motion overlays.'
   ].join('\n');
 }
 

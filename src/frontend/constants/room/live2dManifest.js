@@ -1,41 +1,11 @@
 import { behaviorBodyPoseManifestItems } from './behaviorActionRegistry';
+import { semanticExpressionManifestItems } from './yachiyoExpressionPresetRegistry';
 
 export const roomLive2DManifest = {
   id: 'tsukimi-yachiyo',
   name: 'Tsukimi Yachiyo',
   modelJson: '/models/tsukimi-yachiyo/tsukimi-yachiyo.model3.json',
-  expressions: [
-    {
-      id: 'neutral',
-      label: 'Neutral',
-      emotion: 'neutral',
-      prompt: 'calm, attentive, listening, or no strong emotion'
-    },
-    {
-      id: 'smile',
-      label: 'Smile',
-      emotion: 'happy',
-      prompt: 'warm, happy, reassured, or gentle smile'
-    },
-    {
-      id: 'bsmile',
-      label: 'Shy smile',
-      emotion: 'shy',
-      prompt: 'shy, blushing, playful, smug, or mildly annoyed'
-    },
-    {
-      id: 'namida',
-      label: 'Tearful',
-      emotion: 'sad',
-      prompt: 'sad, lonely, moved, or eyes welling up'
-    },
-    {
-      id: 'tears',
-      label: 'Crying',
-      emotion: 'crying',
-      prompt: 'crying, strongly hurt, or clearly shedding tears'
-    }
-  ],
+  expressions: semanticExpressionManifestItems(),
   motions: behaviorBodyPoseManifestItems(),
   parameterControls: [
     {
@@ -422,6 +392,146 @@ export const roomLive2DManifest = {
       id: 'ParamCheek',
       label: 'Cheek',
       prompt: 'blush or cheek tension',
+      min: 0,
+      max: 1
+    },
+    {
+      id: 'ParamEyeLSmile',
+      label: 'Left eye smile',
+      prompt: 'left happy eye curve for soft smile presets',
+      min: 0,
+      max: 1
+    },
+    {
+      id: 'ParamEyeRSmile',
+      label: 'Right eye smile',
+      prompt: 'right happy eye curve for soft smile presets',
+      min: 0,
+      max: 1
+    },
+    {
+      id: 'ParamEyeSmile_Happy_L',
+      label: 'Left happy eye',
+      prompt: 'model-specific happy eye expression on the left eye',
+      min: 0,
+      max: 1
+    },
+    {
+      id: 'ParamEyeSmile_Happy_R',
+      label: 'Right happy eye',
+      prompt: 'model-specific happy eye expression on the right eye',
+      min: 0,
+      max: 1
+    },
+    {
+      id: 'ParamEyeSmile_Angry_L',
+      label: 'Left angry eye',
+      prompt: 'model-specific angry eye expression on the left eye',
+      min: 0,
+      max: 1
+    },
+    {
+      id: 'ParamEyeSmile_Angry_R',
+      label: 'Right angry eye',
+      prompt: 'model-specific angry eye expression on the right eye',
+      min: 0,
+      max: 1
+    },
+    {
+      id: 'ParamBrowLAngle',
+      label: 'Left brow angle',
+      prompt: 'left brow angle for smug, angry, worried, or teasing presets',
+      min: -1,
+      max: 1
+    },
+    {
+      id: 'ParamBrowRAngle',
+      label: 'Right brow angle',
+      prompt: 'right brow angle for smug, angry, worried, or teasing presets',
+      min: -1,
+      max: 1
+    },
+    {
+      id: 'ParamMouthX',
+      label: 'Mouth X',
+      prompt: 'asymmetric mouth offset for smug or teasing presets',
+      min: -1,
+      max: 1
+    },
+    {
+      id: 'ParamTongueOut',
+      label: 'Tongue out',
+      prompt: 'tongue-out control for playful presets',
+      min: 0,
+      max: 1
+    },
+    {
+      id: 'ParamJawOpen',
+      label: 'Jaw open',
+      prompt: 'jaw opening for surprise without relying only on speech volume',
+      min: 0,
+      max: 1
+    },
+    {
+      id: 'ParamMouthPuckerWiden',
+      label: 'Mouth pucker',
+      prompt: 'pucker or widen mouth shape for surprise and pout presets',
+      min: -1,
+      max: 1
+    },
+    {
+      id: 'ParamCheekPuff',
+      label: 'Cheek puff',
+      prompt: 'cheek puff control for pouting presets',
+      min: 0,
+      max: 1
+    },
+    {
+      id: 'ParamMouthFunnel',
+      label: 'Mouth funnel',
+      prompt: 'rounded mouth shape for surprise or dazed presets',
+      min: 0,
+      max: 1
+    },
+    {
+      id: 'ParamMouthPressLipOpen',
+      label: 'Pressed lip open',
+      prompt: 'pressed lip opening for tense or hesitant presets',
+      min: -1.3,
+      max: 1.3
+    },
+    {
+      id: 'ParamMouthShrug',
+      label: 'Mouth shrug',
+      prompt: 'mouth shrug for pout, doubt, or mild annoyance presets',
+      min: 0,
+      max: 1
+    },
+    {
+      id: 'ParamEyeCircles',
+      label: 'Dizzy eye circles',
+      prompt: 'dizzy or overwhelmed eye effect',
+      min: 0,
+      max: 1
+    },
+    {
+      id: 'ParamPupilQuake_L1',
+      label: 'Left pupil quake',
+      prompt: 'left pupil shake effect for panic or dizziness',
+      min: 0,
+      max: 1
+    },
+    {
+      id: 'ParamPupilQuake_R1',
+      label: 'Right pupil quake',
+      prompt: 'right pupil shake effect for panic or dizziness',
+      min: 0,
+      max: 1
+    },
+    {
+      id: 'fire',
+      label: 'Fire effect',
+      prompt: 'model-specific fire effect for intense angry or fired-up presets',
       min: 0,
       max: 1
     },

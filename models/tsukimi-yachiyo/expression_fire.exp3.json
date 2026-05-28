@@ -1,0 +1,12 @@
+{
+  "Type": "Live2D Expression",
+  "Parameters": [
+    { "Id": "fire", "Value": 1.0, "Blend": "Add" },
+    { "Id": "ParamEyeSmile_Angry_L", "Value": 0.7, "Blend": "Add" },
+    { "Id": "ParamEyeSmile_Angry_R", "Value": 0.7, "Blend": "Add" },
+    { "Id": "ParamBrowLAngle", "Value": -0.45, "Blend": "Add" },
+    { "Id": "ParamBrowRAngle", "Value": 0.45, "Blend": "Add" },
+    { "Id": "ParamMouthForm", "Value": -0.35, "Blend": "Add" },
+    { "Id": "ParamCheek", "Value": 0.3, "Blend": "Add" }
+  ]
+}

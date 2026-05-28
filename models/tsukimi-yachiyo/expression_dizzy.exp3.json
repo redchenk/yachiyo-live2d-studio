@@ -1,0 +1,12 @@
+{
+  "Type": "Live2D Expression",
+  "Parameters": [
+    { "Id": "ParamEyeCircles", "Value": 1.0, "Blend": "Add" },
+    { "Id": "ParamPupilQuake_L1", "Value": 0.85, "Blend": "Add" },
+    { "Id": "ParamPupilQuake_R1", "Value": 0.85, "Blend": "Add" },
+    { "Id": "ParamEyeLOpen", "Value": 0.2, "Blend": "Add" },
+    { "Id": "ParamEyeROpen", "Value": 0.2, "Blend": "Add" },
+    { "Id": "ParamMouthFunnel", "Value": 0.35, "Blend": "Add" },
+    { "Id": "ParamMouthForm", "Value": -0.22, "Blend": "Add" }
+  ]
+}

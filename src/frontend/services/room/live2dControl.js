@@ -4,39 +4,17 @@ import {
   normalizeBehaviorBodyPose
 } from '../../constants/room/behaviorActionRegistry';
 import { normalizeBehaviorActions } from './live2dBehaviorController';
+import {
+  normalizeSemanticExpressionId,
+  semanticExpressionBehaviorActions,
+  semanticExpressionFromEmotion
+} from '../../constants/room/yachiyoExpressionPresetRegistry';
 
 const DEBUG_STATE_KEY = 'roomLive2DDebugState';
 export const ROOM_LIVE2D_PENDING_INTENT_KEY = 'roomLive2DPendingIntent';
 const DEBUG_HISTORY_LIMIT = 12;
 
 let activeQueueTimers = [];
-
-const expressionAliases = {
-  neutral: 'neutral',
-  none: 'neutral',
-  normal: 'neutral',
-  calm: 'neutral',
-  default: 'neutral',
-  happy: 'smile',
-  joy: 'smile',
-  cheerful: 'smile',
-  smile: 'smile',
-  gentle: 'smile',
-  warm: 'smile',
-  shy: 'bsmile',
-  blush: 'bsmile',
-  embarrassed: 'bsmile',
-  playful: 'bsmile',
-  bsmile: 'bsmile',
-  annoyed: 'bsmile',
-  angry: 'bsmile',
-  sad: 'namida',
-  sorrow: 'namida',
-  namida: 'namida',
-  tears: 'tears',
-  crying: 'tears',
-  cry: 'tears'
-};
 
 const motionAliases = {
   tap_body: 'tap_body',
@@ -72,28 +50,6 @@ const bodyPoseAliases = {
   excited: 'bounce',
   emphasis: 'emphasis',
   accent: 'emphasis'
-};
-
-const emotionAliases = {
-  happy: 'smile',
-  joy: 'smile',
-  cheerful: 'smile',
-  smile: 'smile',
-  warm: 'smile',
-  shy: 'bsmile',
-  blush: 'bsmile',
-  embarrassed: 'bsmile',
-  playful: 'bsmile',
-  angry: 'bsmile',
-  annoyed: 'bsmile',
-  sad: 'namida',
-  sorrow: 'namida',
-  crying: 'tears',
-  cry: 'tears',
-  tears: 'tears',
-  neutral: 'neutral',
-  calm: 'neutral',
-  default: 'neutral'
 };
 
 function manifestIds(items) {
@@ -167,7 +123,7 @@ function appendDebugHistory(entry) {
 export function normalizeLive2DExpression(value, manifest = roomLive2DManifest) {
   const ids = manifestIds(manifest.expressions);
   const key = normalizeToken(value);
-  const aliased = expressionAliases[key] || key;
+  const aliased = normalizeSemanticExpressionId(key) || key;
   return ids.has(aliased) ? aliased : '';
 }
 
@@ -219,8 +175,7 @@ function normalizeLive2DParameterTargets(value, manifest = roomLive2DManifest) {
 }
 
 export function normalizeLive2DEmotion(value, manifest = roomLive2DManifest) {
-  const key = normalizeToken(value);
-  const aliased = emotionAliases[key] || key;
+  const aliased = semanticExpressionFromEmotion(value);
   return normalizeLive2DExpression(aliased, manifest);
 }
 
@@ -535,15 +490,23 @@ function mergeParameterTargets(explicitTargets, fallbackTargets) {
 
 function normalizeLive2DStep(input, manifest = roomLive2DManifest) {
   if (!input || typeof input !== 'object') return null;
-  const behaviorActions = normalizeBehaviorActions(input.behaviorActions || input.actions, {
-    intensity: input.intensity
-  });
   const rawExpression = input.expression || input.expressionId || input.face || input.mood || input.emotion || '';
   const expression = normalizeLive2DExpression(rawExpression, manifest) || normalizeLive2DEmotion(input.emotion || input.mood, manifest);
+  const intensity = clamp01(input.intensity, 0.65);
+  let behaviorActions = normalizeBehaviorActions(input.behaviorActions || input.actions, {
+    intensity
+  });
+  const presetActions = semanticExpressionBehaviorActions(expression || input.emotion || input.mood, {
+    existingActions: behaviorActions,
+    intensity,
+    limit: Math.max(0, 5 - behaviorActions.length)
+  });
+  if (presetActions.length) {
+    behaviorActions = normalizeBehaviorActions([...behaviorActions, ...presetActions], { intensity });
+  }
   const motion = normalizeLive2DMotion(input.motion || input.action, manifest);
   const bodyPose = normalizeLive2DBodyPose(input.bodyPose || input.pose || input.posture || input.motion || input.action, manifest);
   const expressionMix = normalizeExpressionMix(input.expressionMix, expression, manifest);
-  const intensity = clamp01(input.intensity, 0.65);
   const durationMs = normalizeDuration(input.durationMs || input.duration);
   const explicitParameters = normalizeLive2DParameterTargets(input.parameters || input.parameterTargets || input.params, manifest);
   const parameters = mergeParameterTargets(
@@ -594,6 +557,36 @@ export function normalizeLive2DIntent(input, manifest = roomLive2DManifest) {
 
 const textExpressionMatchers = [
   {
+    expression: 'fire',
+    pattern: /(\u71c3|\u7206\u53d1|\u7206\u767c|\u70ed\u8840|\u71b1\u8840|furious|rage|fired up|serious)/iu,
+    emotion: 'fire'
+  },
+  {
+    expression: 'angry',
+    pattern: /(\u751f\u6c14|\u751f\u6c23|\u6124\u6012|\u61a4\u6012|\u607c\u706b|\u60f1\u706b|\u70e6|\u7169|angry|annoyed|irritated|mad|scold)/iu,
+    emotion: 'angry'
+  },
+  {
+    expression: 'surprised',
+    pattern: /(\u60ca\u8bb6|\u9a5a\u8a1d|\u9707\u60ca|\u9a5a\u5446|\u5413|surpris|shock|startled|wow)/iu,
+    emotion: 'surprised'
+  },
+  {
+    expression: 'puff',
+    pattern: /(\u9f13\u8138|\u5634\u8138|\u6485\u5634|\u751f\u95f7\u6c23|\u751f\u95f7\u6c14|pout|puff|sulk|cheek puff)/iu,
+    emotion: 'puff'
+  },
+  {
+    expression: 'tongue',
+    pattern: /(\u5410\u820c|\u8c03\u76ae|\u8abf\u76ae|tongue|blep|cheeky|mischief|teasing)/iu,
+    emotion: 'tongue'
+  },
+  {
+    expression: 'dizzy',
+    pattern: /(\u6655|\u56f0\u60d1|\u56f0\u60d1|\u614c|\u6655\u4e86|dizzy|confused|dazed|overwhelmed|panic)/iu,
+    emotion: 'dizzy'
+  },
+  {
     expression: 'tears',
     pattern: /(\u5927\u54ed|\u54ed\u6ce3|\u6d41\u6cea|\u6d41\u6dda|\u75db\u54ed|crying|tears|sob|weeping|\u6ce3\u304f|\u6ce3\u3044\u3066)/iu,
     emotion: 'crying'
@@ -604,8 +597,13 @@ const textExpressionMatchers = [
     emotion: 'sad'
   },
   {
-    expression: 'bsmile',
-    pattern: /(\u5bb3\u7f9e|\u8138\u7ea2|\u81c9\u7d05|\u8c03\u76ae|\u8abf\u76ae|\u751f\u6c14|\u751f\u6c23|\u6124\u6012|\u61a4\u6012|shy|blush|angry|annoyed|smug|teasing|\u7167\u308c)/iu,
+    expression: 'smug',
+    pattern: /(\u5f97\u610f|\u574f\u7b11|\u5c0f\u574f|smug|smirk|sly|confident)/iu,
+    emotion: 'smug'
+  },
+  {
+    expression: 'shy',
+    pattern: /(\u5bb3\u7f9e|\u8138\u7ea2|\u81c9\u7d05|shy|blush|embarrassed|bashful|flustered|\u7167\u308c)/iu,
     emotion: 'shy'
   },
   {

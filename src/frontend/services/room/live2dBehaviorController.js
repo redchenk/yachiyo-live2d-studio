@@ -9,28 +9,11 @@ import {
   normalizeBehaviorToken,
   semanticActionPromptCatalog
 } from '../../constants/room/behaviorActionRegistry';
-
-const EMOTION_EXPRESSIONS = {
-  happy: 'smile',
-  joy: 'smile',
-  cheerful: 'smile',
-  smile: 'smile',
-  smug: 'bsmile',
-  shy: 'bsmile',
-  blush: 'bsmile',
-  embarrassed: 'bsmile',
-  playful: 'bsmile',
-  angry: 'bsmile',
-  annoyed: 'bsmile',
-  surprised: 'bsmile',
-  surprise: 'bsmile',
-  sad: 'namida',
-  sorrow: 'namida',
-  crying: 'tears',
-  tears: 'tears',
-  neutral: 'neutral',
-  calm: 'neutral'
-};
+import {
+  normalizeSemanticExpressionId,
+  semanticExpressionBehaviorActions,
+  semanticExpressionFromEmotion
+} from '../../constants/room/yachiyoExpressionPresetRegistry';
 
 function clamp(value, min, max, fallback = min) {
   const numeric = Number(value);
@@ -106,8 +89,7 @@ export function normalizeBehaviorActions(actions = [], options = {}) {
 }
 
 export function behaviorExpressionFromEmotion(emotion) {
-  const key = normalizeToken(emotion);
-  return EMOTION_EXPRESSIONS[key] || (key ? EMOTION_EXPRESSIONS.neutral : '');
+  return semanticExpressionFromEmotion(emotion);
 }
 
 function pickNestedControl(payload = {}) {
@@ -164,6 +146,9 @@ function fallbackActionsForPayload(payload = {}, nested = {}) {
 
 export function compileBehaviorIntent(payload = {}) {
   const nested = pickNestedControl(payload);
+  const emotion = payload.emotion || payload.mood || nested.emotion || nested.mood;
+  const rawExpression = payload.expression || payload.expressionId || payload.face || nested.expression || nested.expressionId || nested.face;
+  const expression = normalizeSemanticExpressionId(rawExpression) || behaviorExpressionFromEmotion(emotion) || undefined;
   let actions = normalizeBehaviorActions(
     payload.actions || payload.behaviorActions || nested.actions || nested.behaviorActions || [],
     {
@@ -176,10 +161,19 @@ export function compileBehaviorIntent(payload = {}) {
       intensity: payload.intensity ?? nested.intensity ?? 0.68
     });
   }
+  const presetActions = semanticExpressionBehaviorActions(expression || emotion, {
+    existingActions: actions,
+    intensity: payload.intensity ?? nested.intensity ?? 0.72,
+    limit: Math.max(0, 5 - actions.length)
+  });
+  if (presetActions.length) {
+    actions = normalizeBehaviorActions([...actions, ...presetActions], {
+      intensity: payload.intensity ?? nested.intensity ?? 0.72,
+      style: payload.speech_style?.pause || payload.speechStyle?.pause || nested.speech_style?.pause || nested.speechStyle?.pause
+    });
+  }
 
-  const emotion = payload.emotion || payload.mood || nested.emotion || nested.mood;
   const speechStyle = payload.speech_style || payload.speechStyle || nested.speech_style || nested.speechStyle || null;
-  const expression = behaviorExpressionFromEmotion(emotion) || undefined;
   const parameters = actions.flatMap((action) => behaviorActionParameterTargets(action));
   const bodyAction = actions.find((action) => behaviorActionBodyPose(action.type));
   const durationMs = Math.max(

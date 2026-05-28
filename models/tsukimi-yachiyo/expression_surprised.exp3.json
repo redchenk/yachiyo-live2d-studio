@@ -1,0 +1,13 @@
+{
+  "Type": "Live2D Expression",
+  "Parameters": [
+    { "Id": "ParamEyeLOpen", "Value": 0.38, "Blend": "Add" },
+    { "Id": "ParamEyeROpen", "Value": 0.38, "Blend": "Add" },
+    { "Id": "ParamBrowLY", "Value": 0.62, "Blend": "Add" },
+    { "Id": "ParamBrowRY", "Value": 0.62, "Blend": "Add" },
+    { "Id": "ParamJawOpen", "Value": 0.55, "Blend": "Add" },
+    { "Id": "ParamMouthFunnel", "Value": 0.55, "Blend": "Add" },
+    { "Id": "ParamMouthPuckerWiden", "Value": -0.38, "Blend": "Add" },
+    { "Id": "ParamMouthForm", "Value": -0.28, "Blend": "Add" }
+  ]
+}

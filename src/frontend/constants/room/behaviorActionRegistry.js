@@ -408,7 +408,7 @@ export function behaviorBodyActionButtons() {
 }
 
 export function behaviorActionComboPrompt() {
-  return 'look_at_chat + smirk + head_tilt, nod + smile, lean_in + blink, shake_head + smirk, bounce + smile, or shiver + shy';
+  return 'look_at_chat + smirk + head_tilt, nod + smile, lean_in + blink, shake_head + smirk, bounce + smile, or shiver + head_tilt';
 }
 
 export function semanticActionPromptCatalog() {

@@ -4,6 +4,12 @@ import {
   behaviorActionPriority,
   normalizeBehaviorBodyPose
 } from '../../constants/room/behaviorActionRegistry';
+import {
+  normalizeSemanticExpressionId,
+  semanticExpressionFileCandidates,
+  semanticExpressionFromEmotion,
+  semanticExpressionVTSOverlay
+} from '../../constants/room/yachiyoExpressionPresetRegistry';
 import { createLive2DCharacterStateMachine } from './live2dCharacterStateMachine';
 
 const ROOM_ACT_EVENT = 'tsukuyomi:room-act';
@@ -21,14 +27,24 @@ const VTS_EXPRESSION_ALIASES = {
   joy: ['happy', 'smile'],
   smile: ['smile', 'happy'],
   bsmile: ['bsmile', 'blush', 'shy', 'smug'],
-  blush: ['bsmile', 'blush', 'shy'],
-  shy: ['bsmile', 'blush', 'shy'],
-  smug: ['bsmile', 'smug'],
-  playful: ['bsmile', 'smug', 'playful'],
+  blush: ['shy', 'blush', 'bsmile'],
+  shy: ['shy', 'blush', 'bsmile'],
+  smug: ['smug', 'bsmile'],
+  playful: ['smug', 'playful', 'bsmile'],
+  surprised: ['surprised', 'surprise'],
+  surprise: ['surprised', 'surprise'],
+  angry: ['angry', 'annoyed'],
+  annoyed: ['angry', 'annoyed'],
+  puff: ['puff', 'pout'],
+  pout: ['puff', 'pout'],
+  tongue: ['tongue', 'tongue_out', 'blep'],
+  dizzy: ['dizzy', 'confused'],
+  confused: ['dizzy', 'confused'],
+  fire: ['fire', 'rage'],
   namida: ['namida', 'sad', 'tear'],
   sad: ['namida', 'sad', 'tear'],
   tears: ['tears', 'cry', 'crying'],
-  crying: ['tears', 'cry', 'crying'],
+  crying: ['crying', 'tears', 'cry'],
   neutral: ['neutral', 'normal', 'default']
 };
 
@@ -43,6 +59,14 @@ const VTS_RANGES = {
   MouthOpen: [0, 1],
   VoiceVolumePlusMouthOpen: [0, 1],
   VoiceVolume: [0, 1],
+  MouthX: [-1, 1],
+  TongueOut: [0, 1],
+  JawOpen: [0, 1],
+  MouthPucker: [-1, 1],
+  CheekPuff: [0, 1],
+  MouthFunnel: [0, 1],
+  MouthPressLipOpen: [-1.3, 1.3],
+  MouthShrug: [0, 1],
   Brows: [0, 1],
   BrowLeftY: [0, 1],
   BrowRightY: [0, 1],
@@ -94,7 +118,15 @@ const EYE_INJECTION_IDS = new Set([
 const MOUTH_INJECTION_IDS = new Set([
   'MouthOpen',
   'VoiceVolumePlusMouthOpen',
-  'VoiceVolume'
+  'VoiceVolume',
+  'MouthX',
+  'TongueOut',
+  'JawOpen',
+  'MouthPucker',
+  'CheekPuff',
+  'MouthFunnel',
+  'MouthPressLipOpen',
+  'MouthShrug'
 ]);
 
 function clamp(value, min, max) {
@@ -180,8 +212,9 @@ function expressionCandidates(value) {
   const raw = String(value || '').trim();
   const key = normalizeExpressionToken(raw);
   if (!key) return [];
+  const semanticCandidates = semanticExpressionFileCandidates(raw);
   const aliases = VTS_EXPRESSION_ALIASES[key] || [key];
-  return [...new Set([raw, key, ...aliases].map(normalizeExpressionToken).filter(Boolean))];
+  return [...new Set([raw, key, ...semanticCandidates, ...aliases].map(normalizeExpressionToken).filter(Boolean))];
 }
 
 function addWeighted(target, id, value, weight = 1) {
@@ -246,6 +279,22 @@ function mapLive2DParametersToVTS(parameters, options) {
         addWeighted(merged, 'MouthSmile', toUnit(value), weight);
       } else if (key === 'parammouthopeny') {
         addWeighted(merged, 'MouthOpen', value, weight);
+      } else if (['parammouthx', 'parammouthx2'].includes(key)) {
+        addWeighted(merged, 'MouthX', value, weight);
+      } else if (['paramtongueout', 'paramtongueout_bs'].includes(key)) {
+        addWeighted(merged, 'TongueOut', value, weight);
+      } else if (key === 'paramjawopen') {
+        addWeighted(merged, 'JawOpen', value, weight);
+      } else if (key === 'parammouthpuckerwiden') {
+        addWeighted(merged, 'MouthPucker', value, weight);
+      } else if (['paramcheekpuff', 'paramcheekpuff2'].includes(key)) {
+        addWeighted(merged, 'CheekPuff', value, weight);
+      } else if (key === 'parammouthfunnel') {
+        addWeighted(merged, 'MouthFunnel', value, weight);
+      } else if (key === 'parammouthpresslipopen') {
+        addWeighted(merged, 'MouthPressLipOpen', value, weight);
+      } else if (key === 'parammouthshrug') {
+        addWeighted(merged, 'MouthShrug', value, weight);
       }
     }
 
@@ -855,6 +904,19 @@ function applyDirectOverlay(frame, sample, dominant, options = {}) {
   }
 }
 
+function applySemanticExpressionOverlay(frame, expression, strength = 1) {
+  const overlay = semanticExpressionVTSOverlay(expression);
+  if (!overlay.length) return;
+  const amount = clampFallback(strength, 0, 1, 1);
+  overlay.forEach((item) => {
+    const weight = clampFallback(item.weight, 0.01, 1, 0.55) * amount;
+    const value = Number(item.value);
+    if (!item.id || !Number.isFinite(value)) return;
+    if (item.mode === 'add') addFrameValue(frame, item.id, value * amount, weight);
+    else setFrameValue(frame, item.id, value, weight);
+  });
+}
+
 function applyCharacterStateFrame(frame, character, strength = 1) {
   if (!character) return;
   const amount = clampFallback(strength, 0, 1, 1);
@@ -888,7 +950,7 @@ function applyAutoBlink(frame, samples, nowMs, baseOpen = 0.92) {
   setFrameValue(frame, 'EyeOpenRight', open, 0.92);
 }
 
-function sampleVTSBehaviorActions(actions, elapsedMs, nowMs = performance.now(), character = null) {
+function sampleVTSBehaviorActions(actions, elapsedMs, nowMs = performance.now(), character = null, expression = '') {
   const samples = activeBehaviorSamples(actions, elapsedMs);
   if (samples.some((sample) => sample.action.type === 'reset' && sample.energy > 0.5)) return behaviorResetFrame();
 
@@ -896,6 +958,7 @@ function sampleVTSBehaviorActions(actions, elapsedMs, nowMs = performance.now(),
   const speaking = character?.mode === 'speaking';
   const dominant = pickDominantMotion(samples);
   applyCharacterStateFrame(frame, character, speaking && dominant ? 0.42 : (speaking ? 0.82 : 0.68));
+  applySemanticExpressionOverlay(frame, expression || character?.emotion, speaking ? 0.68 : 0.82);
   applyDirectMotion(frame, dominant);
   samples.forEach((sample) => applyDirectOverlay(frame, sample, dominant, { faceOnly: false }));
   applyAutoBlink(frame, samples, nowMs, character?.eyeOpen);
@@ -905,6 +968,7 @@ function sampleVTSBehaviorActions(actions, elapsedMs, nowMs = performance.now(),
 function sampleVTSIdleFrame(nowMs = performance.now(), character = null) {
   const frame = createDirectTrackingFrame();
   applyCharacterStateFrame(frame, character, 1);
+  applySemanticExpressionOverlay(frame, character?.emotion, 0.52);
   applyAutoBlink(frame, [], nowMs, character?.eyeOpen);
   return finalizeDirectFrame(frame);
 }
@@ -1172,6 +1236,12 @@ export function mountVTubeStudioBridge() {
     resolveExpressionFile(expression)
       .then((file) => {
         if (!file) return;
+        activeExpressionFiles.forEach((activeFile) => {
+          if (activeFile === file) return;
+          clearExpressionTimer(activeFile);
+          setVTSExpression(activeFile, false, 0.3);
+          activeExpressionFiles.delete(activeFile);
+        });
         clearExpressionTimer(file);
         setVTSExpression(file, true, 0.35);
         activeExpressionFiles.add(file);
@@ -1256,7 +1326,13 @@ export function mountVTubeStudioBridge() {
       stopBehaviorFrame();
       return;
     }
-    queueInjection(sampleVTSBehaviorActions(behaviorPlan.actions, elapsedMs, now, characterState.sample(now)));
+    queueInjection(sampleVTSBehaviorActions(
+      behaviorPlan.actions,
+      elapsedMs,
+      now,
+      characterState.sample(now),
+      behaviorPlan.expression
+    ));
     behaviorFrameId = window.requestAnimationFrame(tickBehavior);
   }
 
@@ -1274,7 +1350,7 @@ export function mountVTubeStudioBridge() {
     idleFrameId = window.requestAnimationFrame(tickIdle);
   }
 
-  function startBehaviorPlan(actions, durationMs) {
+  function startBehaviorPlan(actions, durationMs, options = {}) {
     if (!Array.isArray(actions) || !actions.length) return;
     const enrichedActions = enrichBehaviorActions(actions);
     const planDurationMs = Math.max(
@@ -1287,7 +1363,8 @@ export function mountVTubeStudioBridge() {
     behaviorPlan = {
       actions: enrichedActions,
       durationMs: planDurationMs,
-      startedAt: performance.now()
+      startedAt: performance.now(),
+      expression: options.expression || semanticExpressionFromEmotion(options.emotion)
     };
     characterState.setMode('acting', {
       holdMs: planDurationMs + 420,
@@ -1302,17 +1379,19 @@ export function mountVTubeStudioBridge() {
     const detail = event.detail || {};
     characterState.onRoomAct(detail);
     const behaviorActions = Array.isArray(detail.behaviorActions) ? detail.behaviorActions : [];
+    const expression = normalizeSemanticExpressionId(
+      detail.expression || detail.expressionMix?.[0]?.expression || detail.emotion || detail.mood
+    ) || semanticExpressionFromEmotion(detail.emotion || detail.mood);
     if (behaviorActions.length) {
-      startBehaviorPlan(behaviorActions, detail.durationMs || detail.duration);
+      startBehaviorPlan(behaviorActions, detail.durationMs || detail.duration, {
+        expression,
+        emotion: detail.emotion || detail.mood
+      });
     }
     if (settings.injectFace) {
-      const expression = String(detail.expression || detail.expressionMix?.[0]?.expression || detail.emotion || '').toLowerCase();
       if (expression) activateVTSExpression(expression, detail.durationMs || detail.duration);
-      if (expression.includes('smile') || expression.includes('happy')) {
-        queueInjection([{ id: 'MouthSmile', value: 0.74, weight: 0.35 }, { id: 'Brows', value: 0.58, weight: 0.2 }]);
-      } else if (expression.includes('sad') || expression.includes('tears') || expression.includes('cry')) {
-        queueInjection([{ id: 'MouthSmile', value: 0.26, weight: 0.35 }, { id: 'Brows', value: 0.32, weight: 0.28 }]);
-      }
+      const overlay = semanticExpressionVTSOverlay(expression);
+      if (overlay.length) queueInjection(overlay);
     }
     if (settings.injectBody && !behaviorActions.length) {
       const mapped = mapLive2DParametersToVTS(detail.parameters || detail.parameterTargets || detail.params, {
