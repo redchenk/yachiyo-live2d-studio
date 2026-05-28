@@ -25,11 +25,11 @@ const HISTORY_KEY = 'live2dLLMControlHistory';
 const HARD_SENTENCE_END_PATTERN = /[\u3002\uff01\uff1f.!?\u2026]/u;
 const SOFT_SENTENCE_END_PATTERN = /[\uff0c\u3001,;\uff1b\n]/u;
 const SENTENCE_TRAILING_PATTERN = /[\s"'\u201d\u2019\uff09)\]\u3011\u300b\u300d\u300f]+/u;
-const FIRST_TTS_CHUNK_UNIT_LIMIT = 12;
+const FIRST_TTS_CHUNK_UNIT_LIMIT = 8;
 const FOLLOWUP_TTS_CHUNK_UNIT_LIMIT = 20;
-const FIRST_SOFT_CHUNK_UNIT_LIMIT = 16;
+const FIRST_SOFT_CHUNK_UNIT_LIMIT = 12;
 const FOLLOWUP_SOFT_CHUNK_UNIT_LIMIT = 30;
-const FIRST_MAX_CHUNK_UNIT_LIMIT = 22;
+const FIRST_MAX_CHUNK_UNIT_LIMIT = 16;
 const FOLLOWUP_MAX_CHUNK_UNIT_LIMIT = 42;
 const SPEECH_STYLE_BY_EMOTION = {
   happy: { speed: 1.08, pitch: 0.08, pause: 'bright' },
@@ -181,9 +181,9 @@ function chunkProfileFor(text, chunkIndex = 0) {
   const hasCjk = /[\u3040-\u30ff\u3400-\u9fff]/u.test(value);
   const first = chunkIndex < 1;
   return {
-    min: hasCjk ? (first ? FIRST_TTS_CHUNK_UNIT_LIMIT : FOLLOWUP_TTS_CHUNK_UNIT_LIMIT) : (first ? 24 : 58),
-    soft: hasCjk ? (first ? FIRST_SOFT_CHUNK_UNIT_LIMIT : FOLLOWUP_SOFT_CHUNK_UNIT_LIMIT) : (first ? 36 : 86),
-    max: hasCjk ? (first ? FIRST_MAX_CHUNK_UNIT_LIMIT : FOLLOWUP_MAX_CHUNK_UNIT_LIMIT) : (first ? 52 : 130)
+    min: hasCjk ? (first ? FIRST_TTS_CHUNK_UNIT_LIMIT : FOLLOWUP_TTS_CHUNK_UNIT_LIMIT) : (first ? 18 : 58),
+    soft: hasCjk ? (first ? FIRST_SOFT_CHUNK_UNIT_LIMIT : FOLLOWUP_SOFT_CHUNK_UNIT_LIMIT) : (first ? 28 : 86),
+    max: hasCjk ? (first ? FIRST_MAX_CHUNK_UNIT_LIMIT : FOLLOWUP_MAX_CHUNK_UNIT_LIMIT) : (first ? 42 : 130)
   };
 }
 
@@ -800,7 +800,7 @@ export function live2DStreamingControlSystemPrompt() {
     'You are controlling a Live2D character named Yachiyo.',
     'This is a low-latency streaming turn. Start output with Japanese spoken VOICE lines immediately, then output control JSON at the end.',
     'Output format must be exactly:',
-    'VOICE: first short Japanese phrase, 10-18 kana/characters if possible, such as うん、聞いてるよ、 or えへへ、いいね、.',
+    'VOICE: first short Japanese phrase, 8-14 kana/characters if possible, such as うん、聞いてるよ、 or えへへ、いいね、.',
     'For TTS stability, do not use tiny fragments; the first VOICE should include at least one short phrase, not only a filler.',
     'VOICE: next natural Japanese clause or short sentence, normally about 18-32 Japanese characters.',
     'VOICE: combine tiny comma clauses instead of making every comma its own TTS chunk; prefer one stable phrase over many tiny fragments.',
