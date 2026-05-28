@@ -10,7 +10,10 @@ import {
   semanticExpressionFromEmotion,
   semanticExpressionVTSOverlay
 } from '../../constants/room/yachiyoExpressionPresetRegistry';
-import { YACHIYO_MODEL_PARAMETER_RANGES } from '../../constants/room/yachiyoModelParameterRegistry';
+import {
+  YACHIYO_MODEL_PARAMETER_RANGES,
+  yachiyoVTubeStudioParameterSettings
+} from '../../constants/room/yachiyoModelParameterRegistry';
 import { createLive2DCharacterStateMachine } from './live2dCharacterStateMachine';
 
 const ROOM_ACT_EVENT = 'tsukuyomi:room-act';
@@ -160,6 +163,8 @@ const MOUTH_INJECTION_IDS = new Set([
   'MouthPressLipOpen',
   'MouthShrug'
 ]);
+
+let yachiyoDirectInputsReady = false;
 
 function clamp(value, min, max) {
   const numeric = Number(value);
@@ -520,6 +525,7 @@ function setFrameEyes(frame, x = 0, y = 0, weight = 0.8) {
 }
 
 function setFrameYachiyoEars(frame, character = {}, strength = 1) {
+  if (!yachiyoDirectInputsReady) return;
   const amount = clampFallback(strength, 0, 1, 1);
   const energy = clampFallback(character.energy, 0, 1, 0.34);
   const emotion = String(character.emotion || 'neutral');
@@ -1171,6 +1177,7 @@ export function mountVTubeStudioBridge() {
   let socket = null;
   let connectPromise = null;
   let authenticated = false;
+  let yachiyoParameterCreationPromise = null;
   let requestCounter = 0;
   let bodyFrameId = 0;
   let bodyMotion = null;
@@ -1309,10 +1316,42 @@ export function mountVTubeStudioBridge() {
     authenticated = true;
   }
 
+  function parameterAlreadyExists(error) {
+    return /already exists|exists|duplicate|taken/i.test(String(error?.message || ''));
+  }
+
+  async function ensureYachiyoParameters() {
+    if (yachiyoDirectInputsReady) return true;
+    if (yachiyoParameterCreationPromise) return yachiyoParameterCreationPromise;
+    yachiyoParameterCreationPromise = (async () => {
+      for (const item of yachiyoVTubeStudioParameterSettings()) {
+        await sendPayload('ParameterCreationRequest', {
+          parameterName: item.input,
+          explanation: `Yachiyo model input for ${item.outputLive2D}`,
+          min: item.min,
+          max: item.max,
+          defaultValue: item.defaultValue
+        }, true).catch((error) => {
+          if (parameterAlreadyExists(error)) return null;
+          throw error;
+        });
+      }
+      yachiyoDirectInputsReady = true;
+      return true;
+    })()
+      .catch(() => false)
+      .finally(() => {
+        yachiyoParameterCreationPromise = null;
+      });
+    return yachiyoParameterCreationPromise;
+  }
+
   function closeSocket() {
     stopIdleFrame();
     authenticated = false;
     connectPromise = null;
+    yachiyoParameterCreationPromise = null;
+    yachiyoDirectInputsReady = false;
     smoothedInjection.clear();
     lastInjectionAt = 0;
     pendingRequests.forEach((item) => item.reject(new Error('VTube Studio connection closed.')));
@@ -1342,6 +1381,7 @@ export function mountVTubeStudioBridge() {
       nextSocket.onopen = async () => {
         try {
           await authenticate();
+          await ensureYachiyoParameters();
           setStatus('connected');
           startIdleFrame();
           resolve(nextSocket);
