@@ -141,6 +141,10 @@ const EYE_OWNING_EXPRESSION_TOKENS = new Set([
   '眼泪'
 ]);
 
+const MOMENTARY_EXPRESSION_TOKENS = new Set(['blep', 'tongue', 'tongue_out']);
+const MOMENTARY_EXPRESSION_PARAMETER_IDS = new Set(['TongueOut']);
+const MOMENTARY_EXPRESSION_PULSE_MS = 640;
+
 const MOUTH_INJECTION_IDS = new Set([
   'MouthOpen',
   'VoiceVolumePlusMouthOpen',
@@ -245,6 +249,15 @@ function expressionCandidates(value) {
 
 function expressionOwnsEyeOpen(value) {
   return expressionCandidates(value).some((candidate) => EYE_OWNING_EXPRESSION_TOKENS.has(candidate));
+}
+
+function expressionIsMomentary(value) {
+  return expressionCandidates(value).some((candidate) => MOMENTARY_EXPRESSION_TOKENS.has(candidate));
+}
+
+function filterMomentaryExpressionOverlay(overlay, expression, options = {}) {
+  if (options.includeMomentary || !expressionIsMomentary(expression)) return overlay;
+  return overlay.filter((item) => !MOMENTARY_EXPRESSION_PARAMETER_IDS.has(item.id));
 }
 
 function addWeighted(target, id, value, weight = 1) {
@@ -1022,8 +1035,12 @@ function applyDirectOverlay(frame, sample, dominant, options = {}) {
   }
 }
 
-function applySemanticExpressionOverlay(frame, expression, strength = 1) {
-  const overlay = semanticExpressionVTSOverlay(expression);
+function applySemanticExpressionOverlay(frame, expression, strength = 1, options = {}) {
+  const overlay = filterMomentaryExpressionOverlay(
+    semanticExpressionVTSOverlay(expression),
+    expression,
+    options
+  );
   if (!overlay.length) return;
   const amount = clampFallback(strength, 0, 1, 1);
   overlay.forEach((item) => {
@@ -1141,6 +1158,7 @@ export function mountVTubeStudioBridge() {
   const smoothedInjection = new Map();
   const expressionActivationTimers = new Map();
   const expressionTimers = new Map();
+  const momentaryExpressionTimers = new Map();
   const activeExpressionFiles = new Set();
   let flushTimer = 0;
   let lastInjectionAt = 0;
@@ -1154,6 +1172,35 @@ export function mountVTubeStudioBridge() {
       pendingInjection.delete(id);
       smoothedInjection.delete(id);
     });
+  }
+
+  function releaseInjectedMomentaryParameters() {
+    MOMENTARY_EXPRESSION_PARAMETER_IDS.forEach((id) => {
+      pendingInjection.delete(id);
+      smoothedInjection.delete(id);
+    });
+  }
+
+  function clearMomentaryExpressionTimer(key) {
+    const timer = momentaryExpressionTimers.get(key);
+    if (timer) window.clearTimeout(timer);
+    momentaryExpressionTimers.delete(key);
+  }
+
+  function pulseMomentaryExpressionOverlay(expression, overlay = semanticExpressionVTSOverlay(expression)) {
+    if (!expressionIsMomentary(expression)) return false;
+    const pulse = overlay.filter((item) => MOMENTARY_EXPRESSION_PARAMETER_IDS.has(item.id));
+    if (!pulse.length) return false;
+    const key = normalizeExpressionToken(expression) || 'momentary';
+    clearMomentaryExpressionTimer(key);
+    queueInjection(pulse);
+    const timer = window.setTimeout(() => {
+      momentaryExpressionTimers.delete(key);
+      releaseInjectedMomentaryParameters();
+      queueInjection(pulse.map((item) => ({ id: item.id, value: 0, weight: 1 })));
+    }, MOMENTARY_EXPRESSION_PULSE_MS);
+    momentaryExpressionTimers.set(key, timer);
+    return true;
   }
 
   function setStatus(status, error = '') {
@@ -1368,6 +1415,7 @@ export function mountVTubeStudioBridge() {
     });
     activeExpressionFiles.clear();
     releaseInjectedEyeOpen();
+    releaseInjectedMomentaryParameters();
   }
 
   function deactivateOtherExpressions(nextFile) {
@@ -1393,6 +1441,7 @@ export function mountVTubeStudioBridge() {
     resolveExpressionFile(expression)
       .then((file) => {
         if (!file) return;
+        const momentaryExpression = expressionIsMomentary(expression) || expressionIsMomentary(file);
         deactivateOtherExpressions(file);
         clearExpressionActivationTimer(file);
         clearExpressionTimer(file);
@@ -1403,12 +1452,15 @@ export function mountVTubeStudioBridge() {
         expressionActivationTimers.set(file, activationTimer);
         activeExpressionFiles.add(file);
         if (expressionOwnsEyeOpen(file)) releaseInjectedEyeOpen();
-        const holdMs = clamp(Math.round(Number(durationMs) || 2600), 900, 9000);
+        const holdMs = momentaryExpression
+          ? clamp(Math.min(Math.round(Number(durationMs) || MOMENTARY_EXPRESSION_PULSE_MS), MOMENTARY_EXPRESSION_PULSE_MS), 420, MOMENTARY_EXPRESSION_PULSE_MS)
+          : clamp(Math.round(Number(durationMs) || 2600), 900, 9000);
         const timer = window.setTimeout(() => {
           setVTSExpression(file, false, 0.45);
           activeExpressionFiles.delete(file);
           expressionTimers.delete(file);
           if (!activeExpressionOwnsEyeOpen()) releaseInjectedEyeOpen();
+          if (momentaryExpression) releaseInjectedMomentaryParameters();
         }, holdMs);
         expressionTimers.set(file, timer);
       })
@@ -1561,7 +1613,9 @@ export function mountVTubeStudioBridge() {
     if (settings.injectFace) {
       if (expression) activateVTSExpression(expression, detail.durationMs || detail.duration);
       const overlay = semanticExpressionVTSOverlay(expression);
-      if (overlay.length) queueInjection(overlay);
+      const continuousOverlay = filterMomentaryExpressionOverlay(overlay, expression);
+      if (expression) pulseMomentaryExpressionOverlay(expression, overlay);
+      if (continuousOverlay.length) queueInjection(continuousOverlay);
     }
     if (settings.injectBody && !behaviorActions.length) {
       const mapped = mapLive2DParametersToVTS(detail.parameters || detail.parameterTargets || detail.params, {
@@ -1638,6 +1692,8 @@ export function mountVTubeStudioBridge() {
     expressionActivationTimers.clear();
     expressionTimers.forEach((timer) => window.clearTimeout(timer));
     expressionTimers.clear();
+    momentaryExpressionTimers.forEach((timer) => window.clearTimeout(timer));
+    momentaryExpressionTimers.clear();
     activeExpressionFiles.clear();
     stopBodyFrame();
     stopBehaviorFrame();
