@@ -430,6 +430,21 @@ function actionSideSign(action, fallback = 1) {
   return fallback;
 }
 
+function actionVariant(action) {
+  return Math.abs(Math.round(Number(action?.motionVariant) || 0)) % 4;
+}
+
+function actionArc(action) {
+  return clampFallback(action?.motionArc, -1, 1, 0);
+}
+
+function actionSecondarySign(action, fallback = -1) {
+  const value = Number(action?.secondarySign);
+  if (value < 0) return -1;
+  if (value > 0) return 1;
+  return fallback;
+}
+
 function actionEnvelope(progress) {
   const t = clamp(progress, 0, 1);
   if (t < 0.28) return ease(t / 0.28);
@@ -759,6 +774,9 @@ function pickDominantMotion(samples) {
 function applyDirectMotion(frame, sample) {
   if (!sample) return;
   const { action, progress: t, phase, energy: e, sign } = sample;
+  const variant = actionVariant(action);
+  const arc = actionArc(action);
+  const secondarySign = actionSecondarySign(action, -sign);
   const fast = Math.sin(phase * 2);
   const slow = Math.sin(phase);
   const beat = Math.abs(Math.sin(phase * 2));
@@ -766,80 +784,143 @@ function applyDirectMotion(frame, sample) {
   switch (action.type) {
     case 'look_at_chat': {
       const x = 14 * slow * e;
-      const z = 8 * Math.sin(phase * 0.5) * e;
+      const z = (8 * Math.sin(phase * 0.5) + (variant === 1 ? 1.8 * sign * Math.abs(slow) : 0)) * e;
+      const y = (3 * Math.sin(phase * 0.7) - (variant === 2 ? 1.4 * Math.abs(slow) : 0)) * e;
       setFrameValue(frame, 'FaceAngleX', x, 1);
-      setFrameValue(frame, 'FaceAngleY', 3 * Math.sin(phase * 0.7) * e, 1);
+      setFrameValue(frame, 'FaceAngleY', y, 1);
       setFrameValue(frame, 'FaceAngleZ', z, 1);
       setFrameEyes(frame, -x / 30, -0.12 * e, 0.8);
-      setFrameBody(frame, { x: x / 8, z: z / 5 }, 1);
+      setFrameBody(frame, {
+        x: x / 8,
+        y: variant === 3 ? -1.4 * Math.abs(slow) * e : 0,
+        z: z / 5,
+        posX: variant === 1 ? 0.05 * sign * Math.abs(slow) * e : 0
+      }, 1);
       break;
     }
-    case 'nod':
+    case 'nod': {
+      const sideLean = variant ? sign * (1.3 + Math.abs(arc)) * slow * e : 0;
       setFrameValue(frame, 'FaceAngleY', (13 * beat - 4) * e, 1);
       setFrameValue(frame, 'FacePositionY', -2.5 * beat * e, 0.9);
-      setFrameBody(frame, { y: 5.5 * beat * e, posY: 0.22 * beat * e }, 1);
+      if (variant === 2) addFrameValue(frame, 'FaceAngleZ', sideLean * 0.9, 0.5);
+      setFrameBody(frame, {
+        y: 5.5 * beat * e,
+        z: sideLean * 0.64,
+        posX: sideLean * 0.012,
+        posY: 0.22 * beat * e
+      }, 1);
       break;
+    }
     case 'shake_head':
       setFrameValue(frame, 'FaceAngleX', 15 * fast * e, 1);
-      setFrameValue(frame, 'FaceAngleZ', 6 * fast * e, 0.74);
+      setFrameValue(frame, 'FaceAngleZ', (6 * fast + (variant === 1 ? 1.4 * slow * secondarySign : 0)) * e, 0.74);
       setFrameEyes(frame, -0.28 * fast * e, 0, 0.72);
-      setFrameBody(frame, { x: 4.8 * fast * e, z: 1.8 * fast * e }, 1);
+      setFrameBody(frame, {
+        x: 4.8 * fast * e,
+        y: variant === 2 ? 0.9 * Math.abs(slow) * e : 0,
+        z: (1.8 * fast + (variant === 3 ? 1.2 * slow * secondarySign : 0)) * e
+      }, 1);
       break;
     case 'head_tilt':
-      setFrameValue(frame, 'FaceAngleX', 5 * sign * e, 0.72);
+      setFrameValue(frame, 'FaceAngleX', (5 * sign + (variant === 2 ? 1.4 * secondarySign * Math.sin(phase) : 0)) * e, 0.72);
       setFrameValue(frame, 'FaceAngleZ', 16 * sign * e, 1);
       setFrameValue(frame, 'FacePositionX', 4.2 * sign * e, 0.86);
+      if (variant === 1) addFrameValue(frame, 'FaceAngleY', -1.7 * e, 0.46);
+      if (variant === 3) addFrameValue(frame, 'FacePositionY', -0.9 * Math.abs(slow) * e, 0.42);
       setFrameEyes(frame, -0.18 * sign * e, 0, 0.7);
-      setFrameBody(frame, { z: 8 * sign * e, posX: 0.32 * sign * e }, 1);
+      setFrameBody(frame, {
+        x: variant === 2 ? 0.9 * secondarySign * slow * e : 0,
+        y: variant === 1 ? -1.2 * e : 0,
+        z: 8 * sign * e,
+        posX: 0.32 * sign * e,
+        posY: variant === 3 ? 0.04 * Math.abs(slow) * e : 0
+      }, 1);
       break;
     case 'lean_in':
-      setFrameValue(frame, 'FaceAngleY', -5.2 * e, 0.78);
+      setFrameValue(frame, 'FaceAngleY', (-5.2 - (variant === 1 ? 0.9 * Math.abs(slow) : 0)) * e, 0.78);
       setFrameValue(frame, 'FacePositionY', -2.8 * e, 0.72);
+      if (variant === 2) addFrameValue(frame, 'FaceAngleZ', 2.4 * sign * slow * e, 0.54);
+      if (variant === 3) addFrameValue(frame, 'FacePositionX', 1.8 * sign * Math.abs(slow) * e, 0.48);
       setFrameEyes(frame, 0, -0.16 * e, 0.72);
-      setFrameBody(frame, { y: -6.2 * e }, 1);
+      setFrameBody(frame, {
+        y: -6.2 * e,
+        z: variant === 2 ? 1.6 * sign * slow * e : 0,
+        posX: variant === 3 ? 0.08 * sign * Math.abs(slow) * e : 0
+      }, 1);
       break;
     case 'lean_left':
     case 'lean_right': {
       const leanSign = action.type === 'lean_left' ? -1 : 1;
-      setFrameValue(frame, 'FaceAngleX', 5 * leanSign * e, 0.72);
+      setFrameValue(frame, 'FaceAngleX', (5 * leanSign + (variant === 2 ? 1.2 * secondarySign * slow : 0)) * e, 0.72);
       setFrameValue(frame, 'FaceAngleZ', 16 * leanSign * e, 1);
       setFrameValue(frame, 'FacePositionX', 5.5 * leanSign * e, 0.9);
+      if (variant === 1) addFrameValue(frame, 'FaceAngleY', -1.4 * e, 0.42);
+      if (variant === 3) addFrameValue(frame, 'FacePositionY', -0.8 * Math.abs(slow) * e, 0.44);
       setFrameEyes(frame, -0.35 * leanSign * e, 0, 0.8);
-      setFrameBody(frame, { z: 8 * leanSign * e, posX: 0.38 * leanSign * e }, 1);
+      setFrameBody(frame, {
+        y: variant === 1 ? -1.1 * e : 0,
+        z: 8 * leanSign * e,
+        posX: 0.38 * leanSign * e,
+        posY: variant === 3 ? 0.04 * Math.abs(slow) * e : 0
+      }, 1);
       break;
     }
     case 'sway': {
       const side = slow * e;
-      setFrameValue(frame, 'FaceAngleX', 5.5 * side, 0.82);
-      setFrameValue(frame, 'FaceAngleZ', 9 * side, 0.9);
+      const lift = variant === 1 ? 1.2 * Math.abs(slow) * e : 0;
+      setFrameValue(frame, 'FaceAngleX', (5.5 * slow + (variant === 2 ? 1.4 * sign * Math.abs(slow) : 0)) * e, 0.82);
+      setFrameValue(frame, 'FaceAngleZ', (9 * slow + (variant === 3 ? 1.6 * sign * Math.abs(slow) : 0)) * e, 0.9);
       setFrameValue(frame, 'FacePositionX', 3.2 * side, 0.82);
+      if (lift) addFrameValue(frame, 'FacePositionY', -lift, 0.42);
       setFrameEyes(frame, -0.18 * side, 0, 0.76);
-      setFrameBody(frame, { x: 3.2 * side, z: 6.8 * side, posX: 0.25 * side }, 1);
+      setFrameBody(frame, {
+        x: 3.2 * side,
+        y: lift * 0.72,
+        z: (6.8 * slow + (variant === 3 ? 1.1 * sign * Math.abs(slow) : 0)) * e,
+        posX: 0.25 * side,
+        posY: lift ? 0.06 * Math.abs(slow) * e : 0
+      }, 1);
       break;
     }
-    case 'bounce':
+    case 'bounce': {
+      const sideLean = variant ? sign * (1 + Math.abs(arc) * 0.7) * slow * e : 0;
       setFrameValue(frame, 'FaceAngleY', 4 * beat * e, 0.72);
       setFrameValue(frame, 'FacePositionY', -6.5 * beat * e, 0.95);
+      if (variant === 1) addFrameValue(frame, 'FaceAngleZ', sideLean * 1.4, 0.52);
       setFrameValue(frame, 'MouthSmile', 0.78, 0.8);
       setFrameValue(frame, 'Brows', 0.62, 0.55);
       setFrameValue(frame, 'BrowLeftY', 0.62, 0.55);
       setFrameValue(frame, 'BrowRightY', 0.62, 0.55);
-      setFrameBody(frame, { y: 8.2 * beat * e, posY: 0.36 * beat * e }, 1);
+      setFrameBody(frame, {
+        y: 8.2 * beat * e,
+        z: sideLean * 0.72,
+        posX: sideLean * 0.016,
+        posY: 0.36 * beat * e
+      }, 1);
       break;
+    }
     case 'shiver': {
-      const jitter = Math.sin(phase * 6) * e;
+      const jitter = Math.sin(phase * (variant === 2 ? 5 : 6)) * e;
       setFrameValue(frame, 'FaceAngleX', 4.2 * jitter, 0.86);
-      setFrameValue(frame, 'FaceAngleZ', 3.2 * Math.sin(phase * 7) * e, 0.78);
+      setFrameValue(frame, 'FaceAngleZ', (3.2 * Math.sin(phase * 7) + (variant === 1 ? 1.2 * sign * slow : 0)) * e, 0.78);
       setFrameValue(frame, 'FacePositionX', 1.6 * Math.sin(phase * 8.2) * e, 0.58);
-      setFrameBody(frame, { x: 1.8 * jitter, z: 3.5 * Math.sin(phase * 6.6) * e }, 0.82);
+      setFrameBody(frame, {
+        x: 1.8 * jitter,
+        y: variant === 3 ? 0.8 * Math.abs(slow) * e : 0,
+        z: 3.5 * Math.sin(phase * 6.6) * e
+      }, 0.82);
       break;
     }
     case 'emphasis': {
       const hit = Math.abs(Math.sin(Math.PI * t)) * e;
       setFrameValue(frame, 'FaceAngleY', -3.2 * hit, 0.72);
-      setFrameValue(frame, 'FaceAngleZ', -10.5 * fast * e, 0.92);
+      setFrameValue(frame, 'FaceAngleZ', sign * 10.5 * fast * e, 0.92);
       setFrameValue(frame, 'FacePositionY', -4.8 * hit, 0.86);
-      setFrameBody(frame, { y: -4.6 * hit, z: -8.2 * fast * e }, 1);
+      setFrameBody(frame, {
+        y: -4.6 * hit,
+        z: sign * 8.2 * fast * e,
+        posX: variant === 1 ? 0.04 * secondarySign * hit : 0
+      }, 1);
       break;
     }
     case 'breathe':
@@ -989,6 +1070,9 @@ function enrichBehaviorActions(actions = []) {
       sideSign,
       tempo,
       amplitude,
+      motionVariant: Math.floor(Math.random() * 4),
+      motionArc: (Math.random() - 0.5) * 2,
+      secondarySign: Math.random() > 0.5 ? 1 : -1,
       phaseOffset: Math.random() * Math.PI * 2,
       durationMs: Math.round(Math.max(Number(action.durationMs) || 1000, 260) * durationJitter),
       delayMs: Math.max(0, Math.round((Number(action.delayMs) || 0) + delayJitter))

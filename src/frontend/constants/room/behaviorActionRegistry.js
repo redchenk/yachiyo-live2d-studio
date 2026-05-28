@@ -408,7 +408,7 @@ export function behaviorBodyActionButtons() {
 }
 
 export function behaviorActionComboPrompt() {
-  return 'look_at_chat + smirk + head_tilt, nod + smile, lean_in + blink, shake_head + smirk, bounce + smile, or shiver + head_tilt';
+  return 'happy: bounce + smile + nod; shy/smug: smirk + sway/head_tilt + lean_in; angry/fire: lean_in + emphasis/shake_head; sad: breathe + nod + sway; surprised: lean_in + bounce + blink. Vary the order and pick actions that match the emotion';
 }
 
 export function semanticActionPromptCatalog() {

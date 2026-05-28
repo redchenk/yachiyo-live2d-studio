@@ -28,10 +28,126 @@ const MODE_PROFILES = {
 const IDLE_ACTION_RATIO = 0.9;
 const ACTION_SPEED_SCALE = 0.9;
 const IDLE_GESTURE_WEIGHTS = [
-  { type: 'bob', weight: 0.46 },
-  { type: 'nod', weight: 0.36 },
-  { type: 'tilt', weight: 0.18 }
+  { type: 'bob', weight: 0.34 },
+  { type: 'nod', weight: 0.24 },
+  { type: 'sway', weight: 0.18 },
+  { type: 'tilt', weight: 0.16 },
+  { type: 'perk', weight: 0.08 }
 ];
+
+const SPEAKING_GESTURE_WEIGHTS = {
+  neutral: [
+    { type: 'nod', weight: 0.32 },
+    { type: 'bob', weight: 0.28 },
+    { type: 'sway', weight: 0.22 },
+    { type: 'tilt', weight: 0.18 }
+  ],
+  smile: [
+    { type: 'bob', weight: 0.34 },
+    { type: 'nod', weight: 0.28 },
+    { type: 'sway', weight: 0.2 },
+    { type: 'perk', weight: 0.1 },
+    { type: 'tilt', weight: 0.08 }
+  ],
+  happy: [
+    { type: 'bob', weight: 0.36 },
+    { type: 'nod', weight: 0.24 },
+    { type: 'sway', weight: 0.18 },
+    { type: 'perk', weight: 0.14 },
+    { type: 'tilt', weight: 0.08 }
+  ],
+  bsmile: [
+    { type: 'sway', weight: 0.28 },
+    { type: 'tilt', weight: 0.24 },
+    { type: 'bob', weight: 0.2 },
+    { type: 'nod', weight: 0.18 },
+    { type: 'perk', weight: 0.1 }
+  ],
+  shy: [
+    { type: 'tilt', weight: 0.3 },
+    { type: 'sway', weight: 0.24 },
+    { type: 'bob', weight: 0.2 },
+    { type: 'nod', weight: 0.18 },
+    { type: 'lean', weight: 0.08 }
+  ],
+  smug: [
+    { type: 'tilt', weight: 0.3 },
+    { type: 'sway', weight: 0.24 },
+    { type: 'lean', weight: 0.22 },
+    { type: 'nod', weight: 0.14 },
+    { type: 'bob', weight: 0.1 }
+  ],
+  surprised: [
+    { type: 'perk', weight: 0.32 },
+    { type: 'bob', weight: 0.28 },
+    { type: 'nod', weight: 0.2 },
+    { type: 'tilt', weight: 0.12 },
+    { type: 'sway', weight: 0.08 }
+  ],
+  angry: [
+    { type: 'lean', weight: 0.32 },
+    { type: 'shake', weight: 0.24 },
+    { type: 'nod', weight: 0.22 },
+    { type: 'tilt', weight: 0.12 },
+    { type: 'sway', weight: 0.1 }
+  ],
+  puff: [
+    { type: 'shake', weight: 0.28 },
+    { type: 'tilt', weight: 0.24 },
+    { type: 'sway', weight: 0.22 },
+    { type: 'nod', weight: 0.16 },
+    { type: 'bob', weight: 0.1 }
+  ],
+  tongue: [
+    { type: 'tilt', weight: 0.26 },
+    { type: 'bob', weight: 0.24 },
+    { type: 'sway', weight: 0.22 },
+    { type: 'perk', weight: 0.16 },
+    { type: 'lean', weight: 0.12 }
+  ],
+  dizzy: [
+    { type: 'sway', weight: 0.34 },
+    { type: 'shake', weight: 0.22 },
+    { type: 'tilt', weight: 0.2 },
+    { type: 'bob', weight: 0.14 },
+    { type: 'nod', weight: 0.1 }
+  ],
+  sad: [
+    { type: 'nod', weight: 0.34 },
+    { type: 'sway', weight: 0.24 },
+    { type: 'bob', weight: 0.18 },
+    { type: 'tilt', weight: 0.16 },
+    { type: 'lean', weight: 0.08 }
+  ],
+  namida: [
+    { type: 'nod', weight: 0.34 },
+    { type: 'sway', weight: 0.24 },
+    { type: 'bob', weight: 0.18 },
+    { type: 'tilt', weight: 0.16 },
+    { type: 'lean', weight: 0.08 }
+  ],
+  tears: [
+    { type: 'nod', weight: 0.3 },
+    { type: 'sway', weight: 0.24 },
+    { type: 'shake', weight: 0.2 },
+    { type: 'bob', weight: 0.14 },
+    { type: 'tilt', weight: 0.12 }
+  ],
+  crying: [
+    { type: 'nod', weight: 0.3 },
+    { type: 'sway', weight: 0.24 },
+    { type: 'shake', weight: 0.2 },
+    { type: 'bob', weight: 0.14 },
+    { type: 'tilt', weight: 0.12 }
+  ],
+  fire: [
+    { type: 'lean', weight: 0.34 },
+    { type: 'nod', weight: 0.24 },
+    { type: 'shake', weight: 0.2 },
+    { type: 'perk', weight: 0.12 },
+    { type: 'sway', weight: 0.1 }
+  ]
+};
 
 function clamp(value, min, max, fallback = min) {
   const numeric = Number(value);
@@ -139,29 +255,72 @@ function startIdleMotionSegment(state, at) {
   state.motionHoldMs = actionMs(80 + Math.random() * 240);
 }
 
+function weightedGestureType(options, excludeType = '') {
+  const pool = (Array.isArray(options) ? options : []).filter((item) => item.type && item.type !== excludeType);
+  const choices = pool.length ? pool : (Array.isArray(options) ? options : []);
+  const total = choices.reduce((sum, item) => sum + item.weight, 0);
+  let roll = Math.random() * Math.max(total, 0.01);
+  for (const item of choices) {
+    roll -= item.weight;
+    if (roll <= 0) return item.type;
+  }
+  return choices[choices.length - 1]?.type || 'nod';
+}
+
+function rememberSpeakingGesture(state, type, side) {
+  state.speakingGestureRepeatCount = state.lastSpeakingGestureType === type
+    ? state.speakingGestureRepeatCount + 1
+    : 1;
+  state.lastSpeakingGestureType = type;
+  state.lastSpeakingGestureSide = side;
+}
+
+function pickSpeakingGestureType(state) {
+  const weights = SPEAKING_GESTURE_WEIGHTS[normalizeEmotion(state.emotion)] || SPEAKING_GESTURE_WEIGHTS.neutral;
+  let type = weightedGestureType(weights);
+  if (type === state.lastSpeakingGestureType) {
+    const shouldSwitch = state.speakingGestureRepeatCount >= 2 || Math.random() < 0.68;
+    if (shouldSwitch) type = weightedGestureType(weights, type);
+  }
+  return type;
+}
+
+function pickGestureSide(state, type, lastSideKey = 'lastIdleGestureSide') {
+  let side = Math.random() > 0.5 ? 1 : -1;
+  if (['tilt', 'sway', 'lean', 'shake'].includes(type) && side === state[lastSideKey] && Math.random() < 0.72) {
+    side *= -1;
+  }
+  return side;
+}
+
+function pickGestureFlavor() {
+  return Math.floor(Math.random() * 4);
+}
+
+function pickGestureArc() {
+  return (Math.random() - 0.5) * 2;
+}
+
 function startSpeakingGesture(state, at) {
-  const nod = Math.random() < 0.58;
-  state.gestureType = nod ? 'nod' : 'tilt';
+  const type = pickSpeakingGestureType(state);
+  const nodLike = ['nod', 'shake', 'perk'].includes(type);
+  state.gestureType = type;
   state.gestureStartedAt = at;
-  state.gestureDurationMs = nod
+  state.gestureDurationMs = nodLike
     ? actionMs(620 + Math.random() * 520)
     : actionMs(780 + Math.random() * 620);
-  state.gestureAmount = nod
+  state.gestureAmount = nodLike
     ? 1.2 + Math.random() * 0.9
     : 0.95 + Math.random() * 0.82;
-  state.gestureSide = Math.random() > 0.5 ? 1 : -1;
+  state.gestureSide = pickGestureSide(state, type, 'lastSpeakingGestureSide');
+  state.gestureFlavor = pickGestureFlavor();
+  state.gestureArc = pickGestureArc();
+  rememberSpeakingGesture(state, type, state.gestureSide);
   state.nextGestureAt = at + state.gestureDurationMs + actionMs(420 + Math.random() * 980);
 }
 
 function weightedIdleGestureType(excludeType = '') {
-  const options = IDLE_GESTURE_WEIGHTS.filter((item) => item.type !== excludeType);
-  const total = options.reduce((sum, item) => sum + item.weight, 0);
-  let roll = Math.random() * total;
-  for (const item of options) {
-    roll -= item.weight;
-    if (roll <= 0) return item.type;
-  }
-  return options[options.length - 1]?.type || 'bob';
+  return weightedGestureType(IDLE_GESTURE_WEIGHTS, excludeType);
 }
 
 function pickIdleGestureType(state) {
@@ -174,11 +333,7 @@ function pickIdleGestureType(state) {
 }
 
 function pickIdleGestureSide(state, type) {
-  let side = Math.random() > 0.5 ? 1 : -1;
-  if (type === 'tilt' && state.lastIdleGestureType === 'tilt' && side === state.lastIdleGestureSide && Math.random() < 0.8) {
-    side *= -1;
-  }
-  return side;
+  return pickGestureSide(state, type, 'lastIdleGestureSide');
 }
 
 function rememberIdleGesture(state, type, side) {
@@ -192,7 +347,7 @@ function rememberIdleGesture(state, type, side) {
 function startIdleGesture(state, at) {
   const type = pickIdleGestureType(state);
   const nod = type === 'nod';
-  const bob = type === 'bob';
+  const bob = type === 'bob' || type === 'perk';
   state.gestureType = type;
   state.gestureStartedAt = at;
   state.gestureDurationMs = bob
@@ -202,6 +357,8 @@ function startIdleGesture(state, at) {
     ? 1.1 + Math.random() * 0.85
     : (nod ? 1.0 + Math.random() * 0.7 : 0.78 + Math.random() * 0.48);
   state.gestureSide = pickIdleGestureSide(state, type);
+  state.gestureFlavor = pickGestureFlavor();
+  state.gestureArc = pickGestureArc();
   rememberIdleGesture(state, type, state.gestureSide);
   state.nextGestureAt = at + state.gestureDurationMs + actionMs(80 + Math.random() * 260);
 }
@@ -210,10 +367,59 @@ function speakingGestureValue(state, at) {
   if (!state.gestureStartedAt || state.gestureType === 'none') return { nod: 0, tilt: 0, lift: 0 };
   const progress = clamp((at - state.gestureStartedAt) / Math.max(state.gestureDurationMs, 1), 0, 1);
   const envelope = Math.sin(Math.PI * progress);
+  const flavor = Math.abs(Math.round(Number(state.gestureFlavor) || 0)) % 4;
+  const arc = clamp(Number(state.gestureArc) || 0, -1, 1, 0);
+  const side = Number(state.gestureSide) || 1;
+  const sideArc = side * (0.88 + Math.abs(arc) * 0.12);
   if (progress >= 1) return { nod: 0, tilt: 0, lift: 0 };
-  if (state.gestureType === 'nod') return { nod: state.gestureAmount * envelope, tilt: 0, lift: 0 };
-  if (state.gestureType === 'bob') return { nod: 0, tilt: 0, lift: state.gestureAmount * envelope };
-  return { nod: 0, tilt: state.gestureSide * state.gestureAmount * envelope, lift: 0 };
+  if (state.gestureType === 'nod') {
+    return {
+      nod: state.gestureAmount * envelope,
+      tilt: flavor === 1 ? sideArc * state.gestureAmount * 0.18 * envelope : (flavor === 2 ? side * state.gestureAmount * 0.1 * envelope : 0),
+      lift: flavor === 3 ? state.gestureAmount * 0.18 * envelope : 0
+    };
+  }
+  if (state.gestureType === 'bob') {
+    return {
+      nod: flavor === 2 ? -state.gestureAmount * 0.16 * envelope : (flavor === 3 ? state.gestureAmount * 0.1 * envelope : 0),
+      tilt: flavor === 1 ? sideArc * state.gestureAmount * 0.14 * envelope : 0,
+      lift: state.gestureAmount * envelope
+    };
+  }
+  if (state.gestureType === 'perk') {
+    return {
+      nod: -state.gestureAmount * (flavor === 2 ? 0.34 : 0.45) * envelope,
+      tilt: sideArc * state.gestureAmount * (flavor === 1 ? 0.28 : 0.18) * envelope,
+      lift: state.gestureAmount * envelope
+    };
+  }
+  if (state.gestureType === 'sway') {
+    return {
+      nod: flavor === 2 ? state.gestureAmount * 0.12 * envelope : 0,
+      tilt: sideArc * state.gestureAmount * 0.68 * envelope,
+      lift: state.gestureAmount * (flavor === 3 ? 0.42 : 0.32) * envelope
+    };
+  }
+  if (state.gestureType === 'lean') {
+    return {
+      nod: -state.gestureAmount * (flavor === 1 ? 0.46 : 0.36) * envelope,
+      tilt: sideArc * state.gestureAmount * 0.86 * envelope,
+      lift: state.gestureAmount * (flavor === 3 ? 0.28 : 0.18) * envelope
+    };
+  }
+  if (state.gestureType === 'shake') {
+    const wave = Math.sin(Math.PI * progress * 2) * envelope;
+    return {
+      nod: state.gestureAmount * (flavor === 1 ? 0.2 : 0.12) * envelope,
+      tilt: sideArc * state.gestureAmount * 0.78 * wave,
+      lift: flavor === 3 ? state.gestureAmount * 0.12 * envelope : 0
+    };
+  }
+  return {
+    nod: flavor === 2 ? state.gestureAmount * 0.1 * envelope : 0,
+    tilt: sideArc * state.gestureAmount * envelope,
+    lift: flavor === 3 ? state.gestureAmount * 0.14 * envelope : 0
+  };
 }
 
 function pickNextGazeTarget(state, now) {
@@ -269,9 +475,14 @@ export function createLive2DCharacterStateMachine() {
     gestureDurationMs: 0,
     gestureAmount: 0,
     gestureSide: 1,
+    gestureFlavor: 0,
+    gestureArc: 0,
     lastIdleGestureType: 'none',
     lastIdleGestureSide: 1,
     idleGestureRepeatCount: 0,
+    lastSpeakingGestureType: 'none',
+    lastSpeakingGestureSide: 1,
+    speakingGestureRepeatCount: 0,
     seed: Math.random() * 1000
   };
 

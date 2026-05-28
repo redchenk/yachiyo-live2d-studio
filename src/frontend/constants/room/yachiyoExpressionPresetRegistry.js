@@ -313,6 +313,80 @@ export const YACHIYO_EXPRESSION_PRESETS = [
 
 const PRESETS_BY_ID = new Map(YACHIYO_EXPRESSION_PRESETS.map((preset) => [preset.id, preset]));
 const EXPRESSION_ALIASES = new Map();
+const RECENT_VARIANTS_BY_PRESET = new Map();
+
+const EXPRESSION_ACTION_VARIANTS = {
+  neutral: [
+    [action('look_at_chat', 1.0), action('breathe', 1.8, 0.1)],
+    [action('breathe', 1.8), action('sway', 1.4, 0.18, { intensity: 0.48 })],
+    [action('look_at_chat', 0.9), action('blink', 0.34, 0.16), action('breathe', 1.6, 0.28)]
+  ],
+  smile: [
+    [action('look_at_chat', 1.0), action('smile', 1.6, 0.05), action('nod', 1.25, 0.18)],
+    [action('smile', 1.4), action('bounce', 1.05, 0.12, { intensity: 0.6 }), action('look_at_chat', 1.0, 0.28)],
+    [action('look_at_chat', 0.9), action('sway', 1.45, 0.08, { intensity: 0.58 }), action('smile', 1.5, 0.18)]
+  ],
+  bsmile: [
+    [action('look_at_chat', 1.0), action('smile', 1.45, 0.08), action('head_tilt', 1.2, 0.24, { side: 'random' })],
+    [action('smile', 1.35), action('blink', 0.34, 0.12), action('sway', 1.35, 0.25, { intensity: 0.52 })],
+    [action('look_at_chat', 0.85), action('head_tilt', 1.25, 0.1, { side: 'random' }), action('smirk', 1.2, 0.24)]
+  ],
+  shy: [
+    [action('look_at_chat', 0.95), action('smile', 1.3, 0.06), action('head_tilt', 1.35, 0.18, { side: 'random' }), action('shiver', 1.0, 0.32, { intensity: 0.58 })],
+    [action('blink', 0.34), action('head_tilt', 1.35, 0.08, { side: 'random' }), action('sway', 1.45, 0.24, { intensity: 0.54 }), action('smile', 1.2, 0.36)],
+    [action('look_at_chat', 0.85), action('lean_in', 1.1, 0.12, { intensity: 0.52 }), action('smile', 1.25, 0.24), action('blink', 0.34, 0.82)]
+  ],
+  smug: [
+    [action('look_at_chat', 0.95), action('smirk', 1.55, 0.05), action('head_tilt', 1.25, 0.16, { side: 'random' }), action('lean_in', 1.3, 0.28, { intensity: 0.72 })],
+    [action('smirk', 1.45), action('lean_left', 1.2, 0.12, { intensity: 0.6 }), action('look_at_chat', 0.95, 0.26), action('wink', 0.52, 0.58, { side: 'random' })],
+    [action('look_at_chat', 0.9), action('lean_in', 1.25, 0.08, { intensity: 0.7 }), action('smirk', 1.4, 0.18), action('head_tilt', 1.15, 0.34, { side: 'random' })]
+  ],
+  surprised: [
+    [action('surprised', 1.15), action('lean_in', 1.25, 0.1, { intensity: 0.76 }), action('blink', 0.34, 1.02), action('bounce', 1.0, 0.18, { intensity: 0.62 })],
+    [action('blink', 0.34), action('surprised', 1.0, 0.08), action('bounce', 1.05, 0.18, { intensity: 0.68 }), action('look_at_chat', 0.9, 0.36)],
+    [action('lean_in', 1.2), action('surprised', 1.05, 0.08), action('head_tilt', 1.1, 0.22, { side: 'random' })]
+  ],
+  angry: [
+    [action('look_at_chat', 0.9), action('shake_head', 1.25, 0.05), action('lean_in', 1.35, 0.18, { intensity: 0.76 }), action('emphasis', 1.0, 0.38, { intensity: 0.72 })],
+    [action('lean_in', 1.25), action('emphasis', 1.0, 0.12, { intensity: 0.76 }), action('shake_head', 1.15, 0.28, { intensity: 0.62 })],
+    [action('look_at_chat', 0.85), action('shake_head', 1.2, 0.08, { intensity: 0.7 }), action('smirk', 1.1, 0.28), action('lean_in', 1.2, 0.42, { intensity: 0.64 })]
+  ],
+  puff: [
+    [action('look_at_chat', 0.9), action('shake_head', 1.05, 0.08, { intensity: 0.58 }), action('head_tilt', 1.25, 0.2, { side: 'random', intensity: 0.68 })],
+    [action('shake_head', 1.1), action('sway', 1.35, 0.16, { intensity: 0.56 }), action('blink', 0.34, 0.36)],
+    [action('look_at_chat', 0.85), action('head_tilt', 1.2, 0.1, { side: 'random' }), action('lean_in', 1.05, 0.26, { intensity: 0.5 })]
+  ],
+  tongue: [
+    [action('look_at_chat', 0.9), action('smirk', 1.4, 0.06), action('wink', 0.52, 0.18, { side: 'random' }), action('lean_in', 1.2, 0.26, { intensity: 0.64 })],
+    [action('smirk', 1.25), action('bounce', 1.0, 0.12, { intensity: 0.56 }), action('wink', 0.52, 0.34, { side: 'random' })],
+    [action('look_at_chat', 0.85), action('head_tilt', 1.15, 0.1, { side: 'random' }), action('smirk', 1.35, 0.2), action('lean_in', 1.1, 0.34, { intensity: 0.54 })]
+  ],
+  dizzy: [
+    [action('look_at_chat', 0.8), action('shake_head', 1.2, 0.05, { intensity: 0.55 }), action('sway', 1.6, 0.16, { intensity: 0.62 }), action('blink', 0.34, 0.9)],
+    [action('sway', 1.55), action('blink', 0.34, 0.12), action('shake_head', 1.05, 0.28, { intensity: 0.46 })],
+    [action('look_at_chat', 0.85), action('head_tilt', 1.25, 0.08, { side: 'random', intensity: 0.56 }), action('sway', 1.45, 0.24, { intensity: 0.58 })]
+  ],
+  namida: [
+    [action('look_at_chat', 0.9), action('nod', 1.25, 0.1, { intensity: 0.54 }), action('breathe', 1.8, 0.18)],
+    [action('breathe', 1.6), action('look_at_chat', 0.85, 0.12), action('nod', 1.2, 0.28, { intensity: 0.48 })],
+    [action('sway', 1.35, 0.06, { intensity: 0.42 }), action('blink', 0.34, 0.3), action('look_at_chat', 0.85, 0.42)]
+  ],
+  tears: [
+    [action('look_at_chat', 0.85), action('shiver', 1.1, 0.08, { intensity: 0.54 }), action('nod', 1.35, 0.18, { intensity: 0.5 }), action('breathe', 1.6, 0.36)],
+    [action('breathe', 1.5), action('nod', 1.25, 0.1, { intensity: 0.46 }), action('shiver', 1.0, 0.34, { intensity: 0.5 })],
+    [action('look_at_chat', 0.8), action('blink', 0.34, 0.08), action('sway', 1.35, 0.24, { intensity: 0.42 }), action('nod', 1.15, 0.42, { intensity: 0.44 })]
+  ],
+  crying: [
+    [action('look_at_chat', 0.8), action('shiver', 1.2, 0.05, { intensity: 0.62 }), action('shake_head', 1.1, 0.2, { intensity: 0.5 }), action('breathe', 1.5, 0.4)],
+    [action('shiver', 1.05), action('nod', 1.25, 0.18, { intensity: 0.48 }), action('breathe', 1.45, 0.32)],
+    [action('look_at_chat', 0.82), action('shake_head', 1.1, 0.12, { intensity: 0.48 }), action('sway', 1.35, 0.34, { intensity: 0.42 })]
+  ],
+  fire: [
+    [action('look_at_chat', 0.85), action('lean_in', 1.25, 0.05, { intensity: 0.82 }), action('emphasis', 1.0, 0.18, { intensity: 0.86 }), action('shake_head', 1.1, 0.34, { intensity: 0.62 })],
+    [action('lean_in', 1.2), action('emphasis', 1.0, 0.1, { intensity: 0.9 }), action('bounce', 1.0, 0.3, { intensity: 0.58 })],
+    [action('look_at_chat', 0.8), action('shake_head', 1.12, 0.08, { intensity: 0.72 }), action('emphasis', 1.0, 0.26, { intensity: 0.82 }), action('lean_in', 1.1, 0.42, { intensity: 0.7 })]
+  ]
+};
 
 for (const preset of YACHIYO_EXPRESSION_PRESETS) {
   [
@@ -327,15 +401,33 @@ for (const preset of YACHIYO_EXPRESSION_PRESETS) {
   });
 }
 
+function randomSide(fallback = 'right') {
+  return Math.random() > 0.5 ? 'right' : (fallback === 'right' ? 'left' : 'right');
+}
+
 function cloneAction(item, index, options = {}) {
   const intensity = Number.isFinite(Number(item.intensity))
     ? Number(item.intensity)
     : Math.min(1, Math.max(0.05, Number(options.intensity) || 0.72));
   return {
     ...item,
+    side: item.side === 'random' ? randomSide() : item.side,
     intensity,
     delay: item.delay ?? (index > 0 ? 0.1 + index * 0.12 : 0)
   };
+}
+
+function pickPresetActionSource(preset, options = {}) {
+  const variants = EXPRESSION_ACTION_VARIANTS[preset.id] || [preset.actions || []];
+  if (variants.length <= 1) return variants[0] || [];
+  const recent = RECENT_VARIANTS_BY_PRESET.get(preset.id);
+  const choices = variants
+    .map((actions, index) => ({ actions, index }))
+    .filter((item) => item.index !== recent);
+  const pool = choices.length ? choices : variants.map((actions, index) => ({ actions, index }));
+  const picked = pool[Math.floor(Math.random() * pool.length)] || pool[0];
+  RECENT_VARIANTS_BY_PRESET.set(preset.id, picked.index);
+  return picked.actions || [];
 }
 
 export function normalizeSemanticExpressionId(value) {
@@ -388,11 +480,13 @@ export function semanticExpressionVTSOverlay(value) {
 
 export function semanticExpressionBehaviorActions(value, options = {}) {
   const preset = resolveSemanticExpressionPreset(value);
-  if (!preset?.actions?.length) return [];
+  if (!preset) return [];
+  const actionSource = pickPresetActionSource(preset, options);
+  if (!actionSource.length) return [];
   const existing = new Set((Array.isArray(options.existingActions) ? options.existingActions : [])
     .map((item) => normalizeBehaviorActionType(item?.type || item?.action || item?.name || item?.motion))
     .filter(Boolean));
-  return preset.actions
+  return actionSource
     .filter((item) => {
       const type = normalizeBehaviorActionType(item.type);
       return type && !existing.has(type);
