@@ -5,7 +5,8 @@ import { useLive2D } from '../composables/room/useLive2D';
 import {
   clearLive2DLLMHistory,
   requestLive2DControl,
-  requestLive2DControlStream
+  requestLive2DControlStream,
+  translateLive2DReplyToChinese
 } from '../services/room/live2dLlmControl';
 import { dispatchRoomLive2D } from '../services/room/live2dControl';
 import { createLive2DSpeechPlayer } from '../services/room/live2dSpeech';
@@ -368,6 +369,7 @@ async function performStreamingLiveTurn(message) {
   const playbackPromises = [];
   let streamedReply = '';
   let finalResult = null;
+  let queuedSpeechCount = 0;
 
   dispatchCharacterState('thinking', { holdMs: 2400, attention: 0.82, arousal: 0.5 });
   llmState.value = {
@@ -379,35 +381,50 @@ async function performStreamingLiveTurn(message) {
   try {
     finalResult = await requestLive2DControlStream(value, {
       onSentence: (sentence) => {
-        const visibleSentence = visibleYachiyoText(sentence.text);
-        if (!visibleSentence) return;
-        streamedReply = joinSpeechText(streamedReply, visibleSentence);
-        upsertLogLine(logId, 'yachiyo', streamedReply, {
-          live2d: sentence.live2d,
-          emotion: sentence.emotion,
-          streaming: true
-        });
+        const speechSentence = visibleYachiyoText(sentence.text);
+        if (!speechSentence) return;
+        const captionPromise = translateLive2DReplyToChinese(speechSentence)
+          .then((caption) => visibleYachiyoText(caption))
+          .catch(() => '');
+        const showCaption = (durationMs = 0) => {
+          captionPromise.then((visibleSentence) => {
+            if (!visibleSentence) return;
+            streamedReply = joinSpeechText(streamedReply, visibleSentence);
+            upsertLogLine(logId, 'yachiyo', streamedReply, {
+              live2d: sentence.live2d,
+              emotion: sentence.emotion,
+              streaming: true
+            });
+            llmState.value = {
+              loading: llmState.value.loading,
+              error: '',
+              reply: streamedReply,
+              raw: finalResult?.raw || null,
+              live2d: sentence.live2d
+            };
+          });
+          if (sentence.live2d) dispatchRoomLive2D(alignLive2DToSpeech(sentence.live2d, durationMs));
+          dispatchCharacterState('speaking', {
+            holdMs: Math.max(durationMs || 0, 1200),
+            emotion: sentence.emotion,
+            emotionHoldMs: Math.max(durationMs || 0, 1800),
+            attention: 0.88,
+            arousal: sentence.emotion === 'sad' || sentence.emotion === 'crying' ? 0.5 : 0.72
+          });
+        };
         llmState.value = {
           loading: true,
           error: '',
-          reply: streamedReply,
+          reply: streamedReply || llmState.value.reply,
           raw: finalResult?.raw || null,
           live2d: sentence.live2d
         };
         liveDirector.status = 'speaking';
-        playbackPromises.push(speechPlayer.enqueue(visibleSentence, {
+        queuedSpeechCount += 1;
+        playbackPromises.push(speechPlayer.enqueue(speechSentence, {
           emotion: sentence.emotion,
           speechStyle: sentence.speechStyle,
-          onStart: ({ durationMs }) => {
-            if (sentence.live2d) dispatchRoomLive2D(alignLive2DToSpeech(sentence.live2d, durationMs));
-            dispatchCharacterState('speaking', {
-              holdMs: Math.max(durationMs || 0, 1200),
-              emotion: sentence.emotion,
-              emotionHoldMs: Math.max(durationMs || 0, 1800),
-              attention: 0.88,
-              arousal: sentence.emotion === 'sad' || sentence.emotion === 'crying' ? 0.5 : 0.72
-            });
-          }
+          onStart: ({ durationMs }) => showCaption(durationMs)
         }).catch((error) => {
           if (error?.name === 'AbortError') return;
           speechState.value = { status: 'error', error: error.message || 'TTS failed' };
@@ -415,23 +432,40 @@ async function performStreamingLiveTurn(message) {
       }
     });
 
-    const visibleReply = visibleYachiyoText(finalResult.reply) || streamedReply || 'OK.';
-    if (!streamedReply && visibleReply) {
-      upsertLogLine(logId, 'yachiyo', visibleReply, {
-        live2d: finalResult.live2d,
-        streaming: false
-      });
-      playbackPromises.push(speechPlayer.enqueue(visibleReply, {
+    const visibleReply = queuedSpeechCount < 1
+      ? visibleYachiyoText(await translateLive2DReplyToChinese(finalResult.reply).catch(() => '')) || 'OK.'
+      : streamedReply;
+    if (queuedSpeechCount < 1 && visibleReply) {
+      const finalSpeech = visibleYachiyoText(finalResult.reply) || visibleReply;
+      const finalCaptionPromise = translateLive2DReplyToChinese(finalSpeech)
+        .then((caption) => visibleYachiyoText(caption))
+        .catch(() => visibleReply);
+      playbackPromises.push(speechPlayer.enqueue(finalSpeech, {
         emotion: finalResult.live2d?.emotion || finalResult.live2d?.expression || 'neutral',
         speechStyle: finalResult.live2d?.speechStyle || null,
         onStart: ({ durationMs }) => {
+          finalCaptionPromise.then((caption) => {
+            if (!caption) return;
+            streamedReply = caption;
+            upsertLogLine(logId, 'yachiyo', caption, {
+              live2d: finalResult.live2d,
+              streaming: false
+            });
+            llmState.value = {
+              loading: false,
+              error: '',
+              reply: caption,
+              raw: finalResult.raw,
+              live2d: finalResult.live2d
+            };
+          });
           if (finalResult.live2d) dispatchRoomLive2D(alignLive2DToSpeech(finalResult.live2d, durationMs));
         }
       }).catch((error) => {
         if (error?.name === 'AbortError') return;
         speechState.value = { status: 'error', error: error.message || 'TTS failed' };
       }));
-    } else {
+    } else if (visibleReply) {
       upsertLogLine(logId, 'yachiyo', visibleReply, {
         live2d: finalResult.live2d,
         streaming: true
@@ -441,7 +475,7 @@ async function performStreamingLiveTurn(message) {
     llmState.value = {
       loading: false,
       error: '',
-      reply: visibleReply,
+      reply: streamedReply || visibleReply || llmState.value.reply,
       raw: finalResult.raw,
       live2d: finalResult.live2d
     };

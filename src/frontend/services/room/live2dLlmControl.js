@@ -33,6 +33,7 @@ const SPEECH_STYLE_BY_EMOTION = {
   fire: { speed: 1.12, pitch: 0.02, pause: 'energetic' },
   neutral: { speed: 1, pitch: 0, pause: 'natural' }
 };
+const chineseCaptionTranslationCache = new Map();
 
 const SENTENCE_EMOTION_RULES = [
   { emotion: 'fire', pattern: /(燃|爆发|爆發|热血|熱血|认真|認真|furious|rage|fired up|serious)/iu },
@@ -543,6 +544,90 @@ function openRouterHeaders(apiUrl = '') {
     'HTTP-Referer': window.location.origin,
     'X-OpenRouter-Title': 'Tsukuyomi Space'
   };
+}
+
+function detectCaptionLang(text) {
+  const value = String(text || '');
+  if (/[\u3040-\u30ff]/u.test(value)) return 'ja';
+  if (/[\u4e00-\u9fff]/u.test(value)) return 'zh';
+  return 'other';
+}
+
+function chineseCaptionTranslatorPrompt() {
+  return [
+    'You translate VTuber spoken Japanese into Simplified Chinese captions.',
+    'Output only the Chinese caption text. Do not use Markdown or explanations.',
+    'Keep the cute livestream tone, short interjections, punctuation, and sentence rhythm.',
+    'Remove stage directions, parenthesized action hints, asterisk actions, pose descriptions, and emotion labels.',
+    'If the input is already Simplified Chinese, return it unchanged.'
+  ].join('\n');
+}
+
+export async function translateLive2DReplyToChinese(text) {
+  const source = cleanReplyForSpeech(text);
+  if (!source) return '';
+  if (detectCaptionLang(source) === 'zh') return source;
+  const cacheKey = source.slice(0, 240);
+  if (chineseCaptionTranslationCache.has(cacheKey)) return chineseCaptionTranslationCache.get(cacheKey);
+
+  const settings = readJson('roomLLMSettings', {});
+  if (!settings.apiKey || !settings.apiUrl) return '';
+  const systemPrompt = chineseCaptionTranslatorPrompt();
+  const promise = (async () => {
+    if (settings.useProxy) {
+      const response = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          message: source,
+          conversation: [],
+          apiKey: settings.apiKey,
+          apiUrl: settings.apiUrl,
+          model: settings.model,
+          systemPrompt
+        })
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok || !result.success) throw new Error(result.message || `Caption translate LLM ${response.status}`);
+      const translated = cleanReplyForSpeech(result.data?.reply || '');
+      return detectCaptionLang(translated) === 'ja' ? '' : translated;
+    }
+
+    const apiUrl = normalizeOpenAIUrl(settings.apiUrl);
+    const model = settings.model || 'gpt-4o-mini';
+    const response = await fetch(apiUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${settings.apiKey}`,
+        ...openRouterHeaders(apiUrl)
+      },
+      body: JSON.stringify(isOpenAIResponsesApi(apiUrl)
+        ? {
+            model: settings.model || 'gpt-5.5',
+            instructions: systemPrompt,
+            input: source,
+            max_output_tokens: 120
+          }
+        : {
+            model,
+            messages: [
+              { role: 'system', content: systemPrompt },
+              { role: 'user', content: source }
+            ],
+            temperature: isKimiChatTarget(apiUrl, model) ? 1 : 0.2,
+            max_tokens: 120
+          })
+    });
+    if (!response.ok) throw new Error(`Caption translate LLM ${response.status}`);
+    const translated = cleanReplyForSpeech(pickReply(await response.json()));
+    return detectCaptionLang(translated) === 'ja' ? '' : translated;
+  })().catch((error) => {
+    chineseCaptionTranslationCache.delete(cacheKey);
+    throw error;
+  });
+  chineseCaptionTranslationCache.set(cacheKey, promise);
+  return promise;
 }
 
 function buildDirectRequestBody(settings, systemPrompt, history, message) {
