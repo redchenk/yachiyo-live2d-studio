@@ -167,7 +167,7 @@ internal static class Live2DStudioLauncher
         return File.Exists(builtIndex);
     }
 
-    private static string FindNodeDirectory(string repoRoot)
+    internal static string FindNodeDirectory(string repoRoot)
     {
         var candidates = new[]
         {
@@ -307,6 +307,7 @@ internal sealed class LocalStudioServer : IDisposable
     public void Dispose()
     {
         shutdown.Cancel();
+        DesktopApiProxy.ShutdownMemoryDataService();
         var current = listener;
         listener = null;
         if (current != null)
@@ -740,12 +741,33 @@ internal static class DesktopApiProxy
     private const int MaxMemorySearchFiles = 800;
     private const string MemoryIndexRelativePath = ".yachiyo-index/memory-index.json";
     private const string DisabledMemoryRelativePath = ".yachiyo-index/disabled-memory.json";
+    private const int MemoryDataServicePort = 3299;
+    private static readonly object MemoryDataServiceLock = new object();
+    private static Process memoryDataServiceProcess;
 
     public static void Configure(string root)
     {
         repoRoot = string.IsNullOrWhiteSpace(root)
             ? string.Empty
             : Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+    }
+
+    public static void ShutdownMemoryDataService()
+    {
+        lock (MemoryDataServiceLock)
+        {
+            var process = memoryDataServiceProcess;
+            memoryDataServiceProcess = null;
+            if (process == null) return;
+            try
+            {
+                if (!process.HasExited) process.Kill();
+            }
+            catch
+            {
+                // Best-effort cleanup for the optional memory sidecar.
+            }
+        }
     }
 
     public static StudioApiResponse Chat(byte[] body)
@@ -868,11 +890,134 @@ internal static class DesktopApiProxy
         }
     }
 
+    private static bool UsesMemoryDataProvider(Dictionary<string, object> input)
+    {
+        var provider = SanitizeMemoryToken(GetString(input, "provider"), "obsidian");
+        return string.Equals(provider, "sqlite_milvus", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(provider, "sqlite-milvus", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(provider, "sqlite", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static StudioApiResponse ProxyMemoryDataService(string route, byte[] body)
+    {
+        try
+        {
+            EnsureMemoryDataServiceStarted();
+            var response = PostBytes("http://127.0.0.1:" + MemoryDataServicePort + route, Encoding.UTF8.GetString(body ?? new byte[0]), new Dictionary<string, string>());
+            return new StudioApiResponse
+            {
+                StatusCode = 200,
+                StatusText = "OK",
+                ContentType = string.IsNullOrWhiteSpace(response.ContentType) ? "application/json; charset=utf-8" : response.ContentType,
+                Body = response.Body
+            };
+        }
+        catch (WebException ex)
+        {
+            var providerResponse = ex.Response as HttpWebResponse;
+            if (providerResponse != null)
+            {
+                var statusCode = (int)providerResponse.StatusCode;
+                var statusText = providerResponse.StatusDescription;
+                var payload = ReadProviderResponse(providerResponse);
+                return new StudioApiResponse
+                {
+                    StatusCode = statusCode,
+                    StatusText = statusText,
+                    ContentType = string.IsNullOrWhiteSpace(payload.ContentType) ? "application/json; charset=utf-8" : payload.ContentType,
+                    Body = payload.Body
+                };
+            }
+            return JsonError(502, ReadWebException(ex));
+        }
+        catch (Exception ex)
+        {
+            return JsonError(502, ex.Message);
+        }
+    }
+
+    private static void EnsureMemoryDataServiceStarted()
+    {
+        if (ProbeMemoryDataService()) return;
+        lock (MemoryDataServiceLock)
+        {
+            if (ProbeMemoryDataService()) return;
+            if (memoryDataServiceProcess != null && !memoryDataServiceProcess.HasExited)
+            {
+                WaitForMemoryDataService();
+                return;
+            }
+
+            var nodeDir = Live2DStudioLauncher.FindNodeDirectory(repoRoot);
+            if (string.IsNullOrWhiteSpace(nodeDir))
+            {
+                throw new InvalidOperationException("Node.js is required for SQLite/Milvus memory provider.");
+            }
+            var nodeExe = Path.Combine(nodeDir, "node.exe");
+            var script = Path.Combine(repoRoot, "tools", "memory", "memory-data-service.mjs");
+            if (!File.Exists(script))
+            {
+                throw new InvalidOperationException("Memory data service script is missing.");
+            }
+
+            var start = new ProcessStartInfo
+            {
+                FileName = nodeExe,
+                Arguments = QuoteArgument(script) + " --port " + MemoryDataServicePort + " --repo-root " + QuoteArgument(repoRoot),
+                WorkingDirectory = repoRoot,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+            start.EnvironmentVariables["YACHIYO_REPO_ROOT"] = repoRoot;
+            memoryDataServiceProcess = Process.Start(start);
+            WaitForMemoryDataService();
+        }
+    }
+
+    private static string QuoteArgument(string value)
+    {
+        return "\"" + (value ?? string.Empty).Replace("\"", "\\\"") + "\"";
+    }
+
+    private static void WaitForMemoryDataService()
+    {
+        for (var i = 0; i < 40; i++)
+        {
+            if (ProbeMemoryDataService()) return;
+            if (memoryDataServiceProcess != null && memoryDataServiceProcess.HasExited)
+            {
+                throw new InvalidOperationException("Memory data service exited before it became ready.");
+            }
+            Thread.Sleep(125);
+        }
+        throw new InvalidOperationException("Memory data service did not become ready.");
+    }
+
+    private static bool ProbeMemoryDataService()
+    {
+        try
+        {
+            var request = (HttpWebRequest)WebRequest.Create("http://127.0.0.1:" + MemoryDataServicePort + "/healthz");
+            request.Method = "GET";
+            request.Timeout = 500;
+            request.ReadWriteTimeout = 500;
+            using (var response = (HttpWebResponse)request.GetResponse())
+            {
+                return (int)response.StatusCode >= 200 && (int)response.StatusCode < 300;
+            }
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
     public static StudioApiResponse MemorySearch(byte[] body)
     {
         try
         {
             var input = ParseObject(body);
+            if (UsesMemoryDataProvider(input)) return ProxyMemoryDataService("/api/memory/search", body);
             var vaultPath = ValidateMemoryVaultPath(GetString(input, "vaultPath"));
             var query = GetObject(input, "query") ?? new Dictionary<string, object>();
             var queryText = GetString(query, "text");
@@ -911,6 +1056,7 @@ internal static class DesktopApiProxy
         try
         {
             var input = ParseObject(body);
+            if (UsesMemoryDataProvider(input)) return ProxyMemoryDataService("/api/memory/write", body);
             var vaultPath = ValidateMemoryVaultPath(GetString(input, "vaultPath"));
             var mode = GetString(input, "mode").ToLowerInvariant();
             if (mode == "off")
@@ -971,6 +1117,7 @@ internal static class DesktopApiProxy
         try
         {
             var input = ParseObject(body);
+            if (UsesMemoryDataProvider(input)) return ProxyMemoryDataService("/api/memory/init", body);
             var vaultPath = ValidateMemoryVaultPath(GetString(input, "vaultPath"), true);
             var created = EnsureMemoryVaultStructure(vaultPath);
             var notes = BuildMemoryIndex(vaultPath);
@@ -996,6 +1143,7 @@ internal static class DesktopApiProxy
         try
         {
             var input = ParseObject(body);
+            if (UsesMemoryDataProvider(input)) return ProxyMemoryDataService("/api/memory/reindex", body);
             var vaultPath = ValidateMemoryVaultPath(GetString(input, "vaultPath"));
             var notes = BuildMemoryIndex(vaultPath);
             var indexPath = SafeCombineMemoryPath(vaultPath, MemoryIndexRelativePath, true);
@@ -1018,6 +1166,7 @@ internal static class DesktopApiProxy
         try
         {
             var input = ParseObject(body);
+            if (UsesMemoryDataProvider(input)) return ProxyMemoryDataService("/api/memory/list", body);
             var vaultPath = ValidateMemoryVaultPath(GetString(input, "vaultPath"));
             var includeDisabled = GetBoolean(input, "includeDisabled", false);
             var maxNotes = (int)Math.Round(GetDouble(input, "maxNotes", 200, 1, 1000));
@@ -1039,6 +1188,7 @@ internal static class DesktopApiProxy
         try
         {
             var input = ParseObject(body);
+            if (UsesMemoryDataProvider(input)) return ProxyMemoryDataService("/api/memory/disable", body);
             var vaultPath = ValidateMemoryVaultPath(GetString(input, "vaultPath"));
             var relativePath = NormalizeMemoryNotePath(vaultPath, GetString(input, "path"), true);
             var disabled = GetBoolean(input, "disabled", true);
@@ -1071,6 +1221,7 @@ internal static class DesktopApiProxy
         try
         {
             var input = ParseObject(body);
+            if (UsesMemoryDataProvider(input)) return ProxyMemoryDataService("/api/memory/delete", body);
             var vaultPath = ValidateMemoryVaultPath(GetString(input, "vaultPath"));
             var relativePath = NormalizeMemoryNotePath(vaultPath, GetString(input, "path"), true);
             var fullPath = SafeCombineMemoryPath(vaultPath, relativePath, false);

@@ -55,6 +55,15 @@ export const DEFAULT_ROOM_MEMORY_SETTINGS = {
   enabled: false,
   provider: 'obsidian',
   vaultPath: '',
+  databasePath: '',
+  milvusEnabled: false,
+  milvusUrl: 'http://127.0.0.1:19530',
+  milvusToken: '',
+  milvusCollection: 'yachiyo_memory',
+  embeddingApiUrl: '',
+  embeddingApiKey: '',
+  embeddingModel: 'text-embedding-3-small',
+  embeddingDimension: 384,
   writeMode: 'inbox-only',
   retrievalMode: 'tags',
   maxNotesPerTurn: 3,
@@ -156,16 +165,28 @@ export function normalizeRoomVTubeStudioSettings(settings = {}) {
 
 export function normalizeRoomMemorySettings(settings = {}) {
   const merged = { ...DEFAULT_ROOM_MEMORY_SETTINGS, ...(settings || {}) };
+  const provider = ['obsidian', 'sqlite-milvus', 'sqlite'].includes(asText(merged.provider))
+    ? asText(merged.provider)
+    : DEFAULT_ROOM_MEMORY_SETTINGS.provider;
   const writeMode = ['off', 'inbox-only', 'auto-approved'].includes(asText(merged.writeMode))
     ? asText(merged.writeMode)
     : DEFAULT_ROOM_MEMORY_SETTINGS.writeMode;
-  const retrievalMode = ['off', 'tags', 'index'].includes(asText(merged.retrievalMode))
+  const retrievalMode = ['off', 'tags', 'index', 'hybrid', 'vector'].includes(asText(merged.retrievalMode))
     ? asText(merged.retrievalMode)
-    : DEFAULT_ROOM_MEMORY_SETTINGS.retrievalMode;
+    : (provider === 'obsidian' ? DEFAULT_ROOM_MEMORY_SETTINGS.retrievalMode : 'hybrid');
   return {
     enabled: asBoolean(merged.enabled),
-    provider: asText(merged.provider) || DEFAULT_ROOM_MEMORY_SETTINGS.provider,
+    provider,
     vaultPath: String(merged.vaultPath || '').trim(),
+    databasePath: String(merged.databasePath || '').trim(),
+    milvusEnabled: asBoolean(merged.milvusEnabled),
+    milvusUrl: asText(merged.milvusUrl) || DEFAULT_ROOM_MEMORY_SETTINGS.milvusUrl,
+    milvusToken: String(merged.milvusToken || '').trim(),
+    milvusCollection: asText(merged.milvusCollection) || DEFAULT_ROOM_MEMORY_SETTINGS.milvusCollection,
+    embeddingApiUrl: asText(merged.embeddingApiUrl),
+    embeddingApiKey: String(merged.embeddingApiKey || '').trim(),
+    embeddingModel: asText(merged.embeddingModel) || DEFAULT_ROOM_MEMORY_SETTINGS.embeddingModel,
+    embeddingDimension: asNumber(merged.embeddingDimension, DEFAULT_ROOM_MEMORY_SETTINGS.embeddingDimension, 32, 4096),
     writeMode,
     retrievalMode,
     maxNotesPerTurn: asNumber(merged.maxNotesPerTurn, DEFAULT_ROOM_MEMORY_SETTINGS.maxNotesPerTurn, 1, 8),

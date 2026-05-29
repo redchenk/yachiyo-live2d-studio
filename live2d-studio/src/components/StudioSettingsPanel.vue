@@ -53,6 +53,11 @@ const providerOptions = [
   { value: 'custom', label: 'Custom Proxy' }
 ];
 
+const memoryProviderOptions = [
+  { value: 'obsidian', label: 'Obsidian Vault' },
+  { value: 'sqlite-milvus', label: 'SQLite + Milvus' }
+];
+
 const renderDprOptions = [
   { value: 1, label: '1x' },
   { value: 1.5, label: '1.5x' },
@@ -79,7 +84,9 @@ const writeModeOptions = [
 const retrievalModeOptions = [
   { value: 'off', label: 'off' },
   { value: 'tags', label: 'tags' },
-  { value: 'index', label: 'index' }
+  { value: 'index', label: 'index' },
+  { value: 'hybrid', label: 'hybrid' },
+  { value: 'vector', label: 'vector' }
 ];
 
 const activeTab = ref('llm');
@@ -98,6 +105,7 @@ const memory = reactive(readRoomMemorySettings());
 let statusTimer = 0;
 
 const localTts = computed(() => tts.provider === 'gpt-sovits');
+const sqliteMemory = computed(() => memory.provider === 'sqlite-milvus' || memory.provider === 'sqlite');
 const memoryStats = computed(() => {
   const notes = Array.isArray(memoryNotes.value) ? memoryNotes.value : [];
   const disabled = notes.filter((note) => note?.disabled).length;
@@ -528,7 +536,7 @@ onUnmounted(() => {
           <div class="studio-memory-toolbar">
             <label class="studio-check-row">
               <input v-model="memory.enabled" type="checkbox">
-              <span>Enable Obsidian memory</span>
+              <span>Enable memory</span>
             </label>
             <div class="studio-memory-stats" aria-label="Memory note counts">
               <span>{{ memoryStats.active }} Active</span>
@@ -538,9 +546,65 @@ onUnmounted(() => {
           </div>
 
           <label>
+            <span>Provider</span>
+            <select v-model="memory.provider">
+              <option v-for="option in memoryProviderOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
+            </select>
+          </label>
+
+          <label v-if="!sqliteMemory">
             <span>Vault Path</span>
             <input v-model="memory.vaultPath" type="text" spellcheck="false" placeholder="D:\Obsidian\YachiyoMemoryVault">
           </label>
+
+          <template v-else>
+            <label>
+              <span>SQLite Path</span>
+              <input v-model="memory.databasePath" type="text" spellcheck="false" placeholder="%LOCALAPPDATA%\YachiyoLive2DStudio\MemoryData\yachiyo-memory.sqlite">
+            </label>
+            <label>
+              <span>Import Vault Path</span>
+              <input v-model="memory.vaultPath" type="text" spellcheck="false" placeholder="Optional Obsidian vault to import">
+            </label>
+            <div class="studio-memory-switches">
+              <label class="studio-check-row">
+                <input v-model="memory.milvusEnabled" type="checkbox">
+                <span>Milvus vector index</span>
+              </label>
+            </div>
+            <div class="studio-memory-grid">
+              <label>
+                <span>Milvus URL</span>
+                <input v-model="memory.milvusUrl" type="text" spellcheck="false" placeholder="http://127.0.0.1:19530">
+              </label>
+              <label>
+                <span>Collection</span>
+                <input v-model="memory.milvusCollection" type="text" spellcheck="false" placeholder="yachiyo_memory">
+              </label>
+              <label>
+                <span>Vector Dim</span>
+                <input v-model.number="memory.embeddingDimension" type="number" min="32" max="4096">
+              </label>
+            </div>
+            <label>
+              <span>Milvus Token</span>
+              <input v-model="memory.milvusToken" type="password" spellcheck="false" placeholder="Optional, e.g. root:Milvus">
+            </label>
+            <div class="studio-memory-grid">
+              <label>
+                <span>Embedding URL</span>
+                <input v-model="memory.embeddingApiUrl" type="text" spellcheck="false" placeholder="Optional OpenAI-compatible embeddings endpoint">
+              </label>
+              <label>
+                <span>Embedding Model</span>
+                <input v-model="memory.embeddingModel" type="text" spellcheck="false" placeholder="text-embedding-3-small">
+              </label>
+            </div>
+            <label>
+              <span>Embedding Key</span>
+              <input v-model="memory.embeddingApiKey" type="password" spellcheck="false" placeholder="Optional API key">
+            </label>
+          </template>
 
           <div class="studio-memory-grid">
             <label>

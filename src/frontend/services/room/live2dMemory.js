@@ -1,8 +1,8 @@
 import { readRoomMemorySettings } from './roomSettings';
 import { readJson, writeJson } from './roomStorage';
 
-const MEMORY_PROMPT_MAX_CHARS = 900;
-const NOTE_SUMMARY_MAX_CHARS = 280;
+const MEMORY_PROMPT_MAX_CHARS = 1600;
+const NOTE_SUMMARY_MAX_CHARS = 360;
 const MEMORY_WRITE_MAX_CHARS = 2000;
 const SESSION_MEMORY_BUFFER_KEY = 'live2dMemorySessionBuffer';
 const SESSION_MEMORY_LAST_SUMMARY_KEY = 'live2dMemoryLastSummaryAt';
@@ -70,12 +70,28 @@ function inferMemoryTags(text) {
 }
 
 function memorySettingsReady(settings) {
-  return Boolean(
-    settings.enabled &&
-    settings.provider === 'obsidian' &&
-    settings.vaultPath &&
-    settings.retrievalMode !== 'off'
-  );
+  if (!settings.enabled || settings.retrievalMode === 'off') return false;
+  if (settings.provider === 'obsidian') return Boolean(settings.vaultPath);
+  return settings.provider === 'sqlite-milvus' || settings.provider === 'sqlite';
+}
+
+function memoryApiSettings(settings) {
+  return {
+    provider: settings.provider,
+    vaultPath: settings.vaultPath,
+    databasePath: settings.databasePath,
+    milvusEnabled: settings.milvusEnabled,
+    milvusUrl: settings.milvusUrl,
+    milvusToken: settings.milvusToken,
+    milvusCollection: settings.milvusCollection,
+    embeddingApiUrl: settings.embeddingApiUrl,
+    embeddingApiKey: settings.embeddingApiKey,
+    embeddingModel: settings.embeddingModel,
+    embeddingDimension: settings.embeddingDimension,
+    writeMode: settings.writeMode,
+    retrievalMode: settings.retrievalMode,
+    maxNotesPerTurn: settings.maxNotesPerTurn
+  };
 }
 
 export async function searchLive2DMemory(inputText, options = {}) {
@@ -88,14 +104,14 @@ export async function searchLive2DMemory(inputText, options = {}) {
   ];
   const preferredTypes = Array.isArray(options.preferredTypes) && options.preferredTypes.length
     ? options.preferredTypes
-    : ['viewer', 'scene', 'sample', 'joke', 'session', 'style', 'policy'];
+    : ['profile', 'style', 'lore', 'policy', 'viewer', 'scene', 'sample', 'joke', 'session'];
 
   try {
     const response = await fetch('/api/memory/search', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        vaultPath: settings.vaultPath,
+        ...memoryApiSettings(settings),
         query: {
           text: String(inputText || ''),
           keywords: textKeywords(inputText),
@@ -180,7 +196,8 @@ export function sanitizeMemoryWrites(memoryWrites) {
 
 export async function writePendingLive2DMemories(memoryWrites = []) {
   const settings = readRoomMemorySettings();
-  if (!settings.enabled || !settings.vaultPath || settings.writeMode === 'off') return [];
+  if (!settings.enabled || settings.writeMode === 'off') return [];
+  if (settings.provider === 'obsidian' && !settings.vaultPath) return [];
 
   const memories = sanitizeMemoryWrites(memoryWrites)
     .filter((memory) => {
@@ -197,7 +214,7 @@ export async function writePendingLive2DMemories(memoryWrites = []) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          vaultPath: settings.vaultPath,
+          ...memoryApiSettings(settings),
           mode: settings.writeMode,
           memory
         })
@@ -212,13 +229,9 @@ export async function writePendingLive2DMemories(memoryWrites = []) {
 }
 
 function sessionMemoryReady(settings) {
-  return Boolean(
-    settings.enabled &&
-    settings.provider === 'obsidian' &&
-    settings.vaultPath &&
-    settings.writeMode !== 'off' &&
-    settings.allowSessionMemory
-  );
+  if (!settings.enabled || settings.writeMode === 'off' || !settings.allowSessionMemory) return false;
+  if (settings.provider === 'obsidian') return Boolean(settings.vaultPath);
+  return settings.provider === 'sqlite-milvus' || settings.provider === 'sqlite';
 }
 
 function readSessionMemoryBuffer() {
@@ -383,8 +396,8 @@ function configuredMemorySettings(overrides = {}) {
     ...readRoomMemorySettings(),
     ...(overrides || {})
   };
-  if (settings.provider !== 'obsidian') throw new Error('Only Obsidian memory is supported.');
-  if (!settings.vaultPath) throw new Error('Obsidian vault path is required.');
+  if (!['obsidian', 'sqlite-milvus', 'sqlite'].includes(settings.provider)) throw new Error('Unsupported memory provider.');
+  if (settings.provider === 'obsidian' && !settings.vaultPath) throw new Error('Obsidian vault path is required.');
   return settings;
 }
 
@@ -393,7 +406,7 @@ async function postMemoryTool(path, settingsOverrides = {}) {
   const response = await fetch(path, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ vaultPath: settings.vaultPath })
+    body: JSON.stringify(memoryApiSettings(settings))
   });
   const result = await response.json().catch(() => ({}));
   if (!response.ok || !result.success) {
@@ -408,7 +421,7 @@ async function postMemoryAction(path, payload = {}, settingsOverrides = {}) {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      vaultPath: settings.vaultPath,
+      ...memoryApiSettings(settings),
       ...(payload || {})
     })
   });
