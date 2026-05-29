@@ -1533,14 +1533,27 @@ export function mountVTubeStudioBridge() {
   }
 
   function parameterAlreadyExists(error) {
-    return /already exists|exists|duplicate|taken/i.test(String(error?.message || ''));
+    return /already exists|exists|duplicate|taken|another plugin/i.test(String(error?.message || ''));
+  }
+
+  function inputParameterId(item) {
+    return String(item?.id || item?.Id || item?.name || item?.Name || '').trim();
+  }
+
+  function inputParameterIds(response) {
+    const defaults = Array.isArray(response?.data?.defaultParameters) ? response.data.defaultParameters : [];
+    const custom = Array.isArray(response?.data?.customParameters) ? response.data.customParameters : [];
+    return new Set([...defaults, ...custom].map(inputParameterId).filter(Boolean));
   }
 
   async function ensureYachiyoParameters() {
     if (yachiyoDirectInputsReady) return true;
     if (yachiyoParameterCreationPromise) return yachiyoParameterCreationPromise;
     yachiyoParameterCreationPromise = (async () => {
-      for (const item of yachiyoVTubeStudioCustomParameterSettings()) {
+      const existingInputs = inputParameterIds(await request('InputParameterListRequest'));
+      const missingInputs = yachiyoVTubeStudioCustomParameterSettings()
+        .filter((item) => !existingInputs.has(item.input));
+      for (const item of missingInputs) {
         await sendPayload('ParameterCreationRequest', {
           parameterName: item.input,
           explanation: `Yachiyo model input for ${item.outputLive2D}`,
