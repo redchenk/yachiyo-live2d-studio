@@ -571,6 +571,10 @@ onUnmounted(() => {
                 <input v-model="memory.milvusEnabled" type="checkbox">
                 <span>Milvus vector index</span>
               </label>
+              <label class="studio-check-row">
+                <input v-model="memory.milvusManaged" type="checkbox">
+                <span>Managed Milvus</span>
+              </label>
             </div>
             <div class="studio-memory-grid">
               <label>
@@ -586,6 +590,10 @@ onUnmounted(() => {
                 <input v-model.number="memory.embeddingDimension" type="number" min="32" max="4096">
               </label>
             </div>
+            <label>
+              <span>Milvus Image</span>
+              <input v-model="memory.milvusImage" type="text" spellcheck="false" placeholder="milvusdb/milvus:latest">
+            </label>
             <label>
               <span>Milvus Token</span>
               <input v-model="memory.milvusToken" type="password" spellcheck="false" placeholder="Optional, e.g. root:Milvus">

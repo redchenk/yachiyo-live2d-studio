@@ -1,16 +1,22 @@
 import crypto from 'node:crypto';
+import { execFile } from 'node:child_process';
 import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
+import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import Database from 'better-sqlite3';
 
 const DEFAULT_PORT = 3299;
 const DEFAULT_COLLECTION = 'yachiyo_memory';
 const DEFAULT_DIMENSION = 384;
+const DEFAULT_MILVUS_IMAGE = 'milvusdb/milvus:latest';
+const MANAGED_MILVUS_CONTAINER = 'yachiyo-milvus-standalone';
 const MAX_MEMORY_ROWS = 2000;
 const MAX_NOTE_BYTES = 256 * 1024;
 const MAX_WRITE_CHARS = 2400;
+const execFileAsync = promisify(execFile);
+let managedMilvusPromise = null;
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const defaultRepoRoot = path.resolve(scriptDir, '..', '..');
@@ -150,9 +156,11 @@ function normalizeSettings(input = {}) {
     writeMode: asText(input.mode || settings.writeMode || 'auto-approved', 40).toLowerCase(),
     maxNotes: Math.round(asNumber(input.query?.maxNotes || settings.maxNotesPerTurn, 4, 1, 12)),
     milvusEnabled: asBoolean(settings.milvusEnabled || settings.useMilvus),
+    milvusManaged: asBoolean(settings.milvusManaged || settings.manageMilvus),
     milvusUrl: asText(settings.milvusUrl || settings.milvusEndpoint || 'http://127.0.0.1:19530', 300).replace(/\/+$/, ''),
     milvusToken: asText(settings.milvusToken || '', 1000),
     milvusCollection: asText(settings.milvusCollection || DEFAULT_COLLECTION, 80).replace(/[^a-zA-Z0-9_]/g, '_') || DEFAULT_COLLECTION,
+    milvusImage: asText(settings.milvusImage || DEFAULT_MILVUS_IMAGE, 200),
     embeddingApiUrl: asText(settings.embeddingApiUrl || '', 300),
     embeddingApiKey: asText(settings.embeddingApiKey || '', 1000),
     embeddingModel: asText(settings.embeddingModel || 'text-embedding-3-small', 120),
@@ -511,8 +519,17 @@ async function importSources(db, settings) {
   return imported;
 }
 
-async function milvusRequest(settings, apiPath, body) {
-  if (!settings.milvusEnabled) return null;
+function milvusHostPort(settings, fallback = 19530) {
+  try {
+    const url = new URL(settings.milvusUrl || 'http://127.0.0.1:19530');
+    if (url.port) return Number(url.port) || fallback;
+    return url.protocol === 'https:' ? 443 : 19530;
+  } catch (_) {
+    return fallback;
+  }
+}
+
+async function rawMilvusRequest(settings, apiPath, body) {
   const response = await fetch(`${settings.milvusUrl}${apiPath}`, {
     method: 'POST',
     headers: {
@@ -526,6 +543,85 @@ async function milvusRequest(settings, apiPath, body) {
     throw new Error(payload.message || payload.msg || `Milvus ${response.status}`);
   }
   return payload;
+}
+
+async function milvusRequest(settings, apiPath, body) {
+  if (!settings.milvusEnabled) return null;
+  await ensureManagedMilvus(settings);
+  return rawMilvusRequest(settings, apiPath, body);
+}
+
+async function isMilvusReady(settings) {
+  try {
+    await rawMilvusRequest(settings, '/v2/vectordb/collections/list', {});
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
+async function runDocker(args, timeout = 60000) {
+  return execFileAsync('docker', args, {
+    timeout,
+    windowsHide: true,
+    maxBuffer: 1024 * 1024
+  });
+}
+
+async function ensureManagedMilvus(settings) {
+  if (!settings.milvusEnabled || !settings.milvusManaged) return;
+  if (await isMilvusReady(settings)) return;
+  if (managedMilvusPromise) return managedMilvusPromise;
+  managedMilvusPromise = startManagedMilvus(settings)
+    .finally(() => {
+      managedMilvusPromise = null;
+    });
+  return managedMilvusPromise;
+}
+
+async function startManagedMilvus(settings) {
+  const hostPort = milvusHostPort(settings, 19530);
+  const healthPort = hostPort === 9091 ? 9092 : 9091;
+  const volumePath = path.join(appDataDir(), 'managed-milvus');
+  fs.mkdirSync(volumePath, { recursive: true });
+
+  let exists = false;
+  let running = false;
+  try {
+    const inspect = await runDocker(['inspect', '-f', '{{.State.Running}}', MANAGED_MILVUS_CONTAINER], 8000);
+    exists = true;
+    running = String(inspect.stdout || '').trim().toLowerCase() === 'true';
+  } catch (_) {
+    exists = false;
+  }
+
+  if (exists && !running) {
+    await runDocker(['start', MANAGED_MILVUS_CONTAINER], 120000);
+  } else if (!exists) {
+    await runDocker([
+      'run',
+      '-d',
+      '--name',
+      MANAGED_MILVUS_CONTAINER,
+      '-p',
+      `${hostPort}:19530`,
+      '-p',
+      `${healthPort}:9091`,
+      '-v',
+      `${volumePath}:/var/lib/milvus`,
+      settings.milvusImage || DEFAULT_MILVUS_IMAGE,
+      'milvus',
+      'run',
+      'standalone'
+    ], 10 * 60 * 1000);
+  }
+
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < 90000) {
+    if (await isMilvusReady(settings)) return;
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+  }
+  throw new Error('Managed Milvus container started but did not become ready.');
 }
 
 async function ensureMilvusCollection(settings) {
