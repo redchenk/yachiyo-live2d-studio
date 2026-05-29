@@ -4,7 +4,10 @@ function parameter(id, min, max, domain, options = {}) {
     min,
     max,
     domain,
-    defaultValue: options.defaultValue ?? 0
+    defaultValue: options.defaultValue ?? 0,
+    smoothing: options.smoothing,
+    outputMin: options.outputMin,
+    outputMax: options.outputMax
   };
 }
 
@@ -30,6 +33,46 @@ function axis(prefix, axisName, count, domain, options = {}) {
 }
 
 export const YACHIYO_MODEL_PARAMETERS = [
+  parameter('ParamSwitchCtrl_BodyX', 0, 1, 'body-switch', { smoothing: 0, defaultValue: 1 }),
+  parameter('ParamSwitchCtrl_BodyY', 0, 1, 'body-switch', { smoothing: 0, defaultValue: 1 }),
+  parameter('ParamSwitchCtrl_BodyZ', 0, 1, 'body-switch', { smoothing: 0, defaultValue: 1 }),
+  parameter('ParamSwitchCtrl_ChestZ', 0, 1, 'body-switch', { smoothing: 0, defaultValue: 1 }),
+  parameter('ParamSwitchCtrl_HipZ', 0, 1, 'body-switch', { smoothing: 0, defaultValue: 1 }),
+  parameter('ParamBodyInput_BodyX', -10, 10, 'body-input', { smoothing: 6 }),
+  parameter('ParamBodyInput_BodyY', -10, 10, 'body-input', { smoothing: 6 }),
+  parameter('ParamBodyInput_BodyZ', -10, 10, 'body-input', { smoothing: 6 }),
+  parameter('ParamBodyInput_ChestZ', -10, 10, 'body-input', { smoothing: 6 }),
+  parameter('ParamBodyInput_HipZ', -10, 10, 'body-input', { smoothing: 6 }),
+  parameter('ParamOutput_BodyX', -10, 10, 'body-output', { smoothing: 8 }),
+  parameter('ParamOutput_BodyY', -10, 10, 'body-output', { smoothing: 8 }),
+  parameter('ParamOutput_BodyZ', -10, 10, 'body-output', { smoothing: 8 }),
+  parameter('ParamOutput_ChestZ', -10, 10, 'body-output', { smoothing: 8 }),
+  parameter('ParamOutput_HipZ', -10, 10, 'body-output', { smoothing: 8 }),
+  parameter('ParamPhysicsRAM_BodyY', -10, 10, 'body-output', { smoothing: 10 }),
+  parameter('ParamPosition_Z', -10, 10, 'body-depth', { smoothing: 8 }),
+  parameter('ParamAngle_BodyX', -10, 10, 'upper-body', { smoothing: 8 }),
+  parameter('ParamAngle_BodyX2', -10, 10, 'upper-body', { smoothing: 8 }),
+  parameter('ParamAngle_BodyX3', -10, 10, 'upper-body', { smoothing: 8 }),
+  parameter('ParamAngle_BodyY', -10, 10, 'upper-body', { smoothing: 8 }),
+  parameter('ParamAngle_BodyY2', -10, 10, 'upper-body', { smoothing: 8 }),
+  parameter('ParamAngle_BodyZ', -10, 10, 'upper-body', { smoothing: 8 }),
+  parameter('ParamAngle_BodyZ2', -10, 10, 'upper-body', { smoothing: 8 }),
+  parameter('ParamAngle_ChestZ', -10, 10, 'upper-body', { smoothing: 8 }),
+  parameter('ParamAngle_HipZ', -10, 10, 'upper-body', { smoothing: 8 }),
+  parameter('ParamAngle_ShoulderL', -10, 10, 'upper-body', { smoothing: 8 }),
+  parameter('ParamAngle_ShoulderR', -10, 10, 'upper-body', { smoothing: 8 }),
+  parameter('ParamAngle_HipUp', -10, 10, 'upper-body', { smoothing: 8 }),
+  parameter('ParamAngle_HipDown', -10, 10, 'upper-body', { smoothing: 8 }),
+  parameter('ParamHairFront', -10, 10, 'secondary-physics', { smoothing: 14 }),
+  parameter('ParamHairSide', -10, 10, 'secondary-physics', { smoothing: 14 }),
+  parameter('ParamHairBack', -10, 10, 'secondary-physics', { smoothing: 14 }),
+  parameter('ParamEyeBallX2', -1, 1, 'eye-detail', { smoothing: 8 }),
+  parameter('ParamEyeBallY2', -1, 1, 'eye-detail', { smoothing: 8 }),
+  parameter('ParamEyeBallX3', -1, 1, 'eye-detail', { smoothing: 8 }),
+  parameter('ParamEyeBallY3', -1, 1, 'eye-detail', { smoothing: 8 }),
+  parameter('ParamMouthX2', -1, 1, 'mouth-detail', { smoothing: 0 }),
+  parameter('ParamMouthShape', -1, 1, 'mouth-detail', { smoothing: 8 }),
+  parameter('ParamCheekPuff2', 0, 1, 'mouth-detail', { smoothing: 8 }),
   ...paired('ParamEarShape', 3, 'ear-shape', { min: -1, max: 1 }),
   ...paired('ParamEarPhysics', 4, 'ear-physics', { min: -70, max: 70 }),
   ...paired('ParamEarPhysicsBS', 2, 'ear-physics', { min: -70, max: 70 }),
@@ -55,6 +98,17 @@ export function yachiyoVTubeStudioParameterSettings() {
     outputLive2D: item.id,
     min: item.min,
     max: item.max,
-    defaultValue: item.defaultValue
+    inputRangeLower: item.min,
+    inputRangeUpper: item.max,
+    outputRangeLower: item.outputMin ?? item.min,
+    outputRangeUpper: item.outputMax ?? item.max,
+    defaultValue: item.defaultValue,
+    createInput: true,
+    smoothing: item.smoothing,
+    domain: item.domain
   }));
+}
+
+export function yachiyoVTubeStudioCustomParameterSettings() {
+  return yachiyoVTubeStudioParameterSettings().filter((item) => item.createInput !== false);
 }

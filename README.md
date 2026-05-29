@@ -348,6 +348,20 @@ ws://127.0.0.1:8001
 npm run install:yachiyo-vts-parameters
 ```
 
+VTS 参数控制审计：
+
+```powershell
+npm run audit:yachiyo-vts-control
+```
+
+连接正在运行的 VTube Studio 做运行时探查：
+
+```powershell
+npm run audit:yachiyo-vts-control -- --probe
+```
+
+当前控制层会为八千代模型安装并注入 98 个 Direct Control 参数，覆盖上半身 BodyInput/Output、Body/Chest/Hip/Shoulder、眼球细节、嘴型细节、兽耳、帽子耳朵、翅膀、旗袍、舌头和玩偶耳朵。`ParamExpression_*`、`ParamHide_*` 和左右眼开合仍由 VTS 表情文件/眨眼逻辑管理，避免眯眯眼、泪珠等表情和睁眼状态叠在一起。
+
 ## 本地 Cubism 预览
 
 位置：

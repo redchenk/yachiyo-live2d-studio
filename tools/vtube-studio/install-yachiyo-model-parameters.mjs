@@ -2,16 +2,13 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { yachiyoVTubeStudioParameterSettings } from '../../src/frontend/constants/room/yachiyoModelParameterRegistry.js';
 
-const targetArg = process.argv[2] || process.env.YACHIYO_VTUBE_JSON;
-
-if (!targetArg) {
-  console.error('Usage: npm run install:yachiyo-vts-parameters -- <path-to-model.vtube.json>');
-  process.exit(1);
-}
+const defaultTarget = path.resolve('models/tsukimi-yachiyo/tsukimi-yachiyo.vtube.json');
+const targetArg = process.argv[2] || process.env.YACHIYO_VTUBE_JSON || defaultTarget;
 
 const targetPath = path.resolve(targetArg);
 
 function smoothingFor(setting) {
+  if (Number.isFinite(Number(setting.smoothing))) return Number(setting.smoothing);
   if (setting.input.startsWith('ParamSwitchCtrl_')) return 0;
   if (setting.input.startsWith('ParamBreath')) return 25;
   if (setting.input.startsWith('ParamBody') || setting.input.startsWith('ParamAngle_')) return 12;
@@ -21,17 +18,17 @@ function smoothingFor(setting) {
 
 function toVTubeParameterSetting(setting) {
   return {
-    Folder: 'Yachiyo Direct Control',
+    Folder: setting.folder || 'Yachiyo Direct Control',
     Name: setting.name,
     Input: setting.input,
-    InputRangeLower: setting.min,
-    InputRangeUpper: setting.max,
-    OutputRangeLower: setting.min,
-    OutputRangeUpper: setting.max,
-    ClampInput: false,
-    ClampOutput: false,
-    UseBlinking: false,
-    UseBreathing: false,
+    InputRangeLower: setting.inputRangeLower ?? setting.min,
+    InputRangeUpper: setting.inputRangeUpper ?? setting.max,
+    OutputRangeLower: setting.outputRangeLower ?? setting.min,
+    OutputRangeUpper: setting.outputRangeUpper ?? setting.max,
+    ClampInput: Boolean(setting.clampInput),
+    ClampOutput: Boolean(setting.clampOutput),
+    UseBlinking: Boolean(setting.useBlinking),
+    UseBreathing: Boolean(setting.useBreathing),
     OutputLive2D: setting.outputLive2D,
     Smoothing: smoothingFor(setting),
     Minimized: false

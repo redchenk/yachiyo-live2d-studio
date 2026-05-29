@@ -12,8 +12,9 @@ import {
 } from '../../constants/room/yachiyoExpressionPresetRegistry';
 import {
   YACHIYO_MODEL_PARAMETER_RANGES,
-  yachiyoVTubeStudioParameterSettings
+  yachiyoVTubeStudioCustomParameterSettings
 } from '../../constants/room/yachiyoModelParameterRegistry';
+import { mapTrackingFrameToYachiyoCubismParameters } from './live2dTrackingFrameMapper';
 import {
   activeBehaviorSamples as sampleActiveBehaviorActions,
   createLive2DBehaviorPlan,
@@ -140,6 +141,25 @@ const EYE_INJECTION_IDS = new Set([
   'EyeRightY'
 ]);
 
+const DIRECT_EYE_DETAIL_PARAMETER_IDS = new Set([
+  'ParamEyeLOpen',
+  'ParamEyeROpen',
+  'ParamEyeBallX',
+  'ParamEyeBallY',
+  'ParamEyeBallX2',
+  'ParamEyeBallY2',
+  'ParamEyeBallX3',
+  'ParamEyeBallY3',
+  'ParamEyeLSmile',
+  'ParamEyeRSmile',
+  'ParamEyeLSquint',
+  'ParamEyeRSquint',
+  'ParamEyeSmile_Happy_L',
+  'ParamEyeSmile_Happy_R',
+  'ParamEyeSmile_Angry_L',
+  'ParamEyeSmile_Angry_R'
+]);
+
 const EYE_OWNING_EXPRESSION_TOKENS = new Set([
   'angry',
   'annoyed',
@@ -230,6 +250,14 @@ function clampFallback(value, min, max, fallback) {
 }
 
 function injectionProfile(id) {
+  if (id.startsWith('ParamSwitchCtrl_')) return { alpha: 1, step: 1 };
+  if (id.startsWith('ParamBodyInput_')) return { alpha: 0.58, step: 3.8 };
+  if (id.startsWith('ParamOutput_') || id.startsWith('ParamPhysicsRAM_')) return { alpha: 0.52, step: 3.4 };
+  if (id.startsWith('ParamAngle_Body') || id.startsWith('ParamAngle_Chest') || id.startsWith('ParamAngle_Hip') || id.startsWith('ParamAngle_Shoulder')) return { alpha: 0.52, step: 3.6 };
+  if (id.startsWith('ParamHair')) return { alpha: 0.46, step: 2.8 };
+  if (id.startsWith('ParamEyeBall')) return { alpha: 0.36, step: 0.18 };
+  if (id === 'ParamMouthX2' || id === 'ParamMouthShape' || id === 'ParamCheekPuff2') return { alpha: 0.58, step: 0.28 };
+  if (id === 'ParamPosition_Z') return { alpha: 0.46, step: 2.2 };
   if (id.startsWith('ParamEarShape')) return { alpha: 0.42, step: 0.16 };
   if (id.startsWith('ParamEarPhysics')) return { alpha: 0.5, step: 8.5 };
   if (id.startsWith('ParamHatEar')) return { alpha: 0.5, step: 6.8 };
@@ -251,6 +279,7 @@ function injectionProfile(id) {
 
 function lockInjectionWeight(id, weight) {
   if (MOTION_INJECTION_IDS.has(id) || EYE_INJECTION_IDS.has(id)) return 1;
+  if (YACHIYO_MODEL_PARAMETER_RANGES[id]) return clamp(weight, 0.12, 1);
   return clamp(weight, 0.01, 1);
 }
 
@@ -1511,7 +1540,7 @@ export function mountVTubeStudioBridge() {
     if (yachiyoDirectInputsReady) return true;
     if (yachiyoParameterCreationPromise) return yachiyoParameterCreationPromise;
     yachiyoParameterCreationPromise = (async () => {
-      for (const item of yachiyoVTubeStudioParameterSettings()) {
+      for (const item of yachiyoVTubeStudioCustomParameterSettings()) {
         await sendPayload('ParameterCreationRequest', {
           parameterName: item.input,
           explanation: `Yachiyo model input for ${item.outputLive2D}`,
@@ -1732,9 +1761,15 @@ export function mountVTubeStudioBridge() {
     if (!settings.enabled || !Array.isArray(values) || !values.length) return;
     const suppressEyes = activeExpressionOwnsEyeOpen();
     if (suppressEyes) releaseInjectedEyes();
-    values.forEach((item) => {
+    const baseValues = values.filter((item) => item?.id && !(suppressEyes && EYE_INJECTION_IDS.has(item.id)));
+    const directValues = yachiyoDirectInputsReady
+      ? mapTrackingFrameToYachiyoCubismParameters(baseValues)
+          .filter((item) => YACHIYO_MODEL_PARAMETER_RANGES[item.id])
+          .filter((item) => !(suppressEyes && DIRECT_EYE_DETAIL_PARAMETER_IDS.has(item.id)))
+      : [];
+    [...baseValues, ...directValues].forEach((item) => {
       if (!item?.id || !Number.isFinite(Number(item.value))) return;
-      if (suppressEyes && EYE_INJECTION_IDS.has(item.id)) return;
+      if (suppressEyes && (EYE_INJECTION_IDS.has(item.id) || DIRECT_EYE_DETAIL_PARAMETER_IDS.has(item.id))) return;
       addWeighted(pendingInjection, item.id, Number(item.value), Number(item.weight ?? 1));
     });
     if (flushTimer) return;
