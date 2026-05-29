@@ -13,6 +13,12 @@ import {
   mapTrackingFrameToYachiyoCubismParameters,
   TRACKING_PARAMETER_RANGES
 } from './live2dTrackingFrameMapper';
+import {
+  activeBehaviorSamples as sampleActiveBehaviorActions,
+  createLive2DBehaviorPlan,
+  pickDominantMotion as pickBehaviorDominantMotion,
+  shouldInterruptLive2DBehaviorPlan
+} from './live2dBehaviorOrchestrator';
 
 const ROOM_ACT_EVENT = 'tsukuyomi:room-act';
 const FACE_CAPTURE_EVENT = 'tsukuyomi:live2d-face';
@@ -675,13 +681,19 @@ export function mountCubismBehaviorBridge(options = {}) {
   }
 
   function startBehaviorPlan(actions, durationMs, options = {}) {
-    const enriched = enrichBehaviorActions(actions);
-    behaviorPlan = {
-      actions: enriched,
-      durationMs: normalizePlanDuration(enriched, durationMs),
-      startedAt: performance.now(),
-      expression: options.expression || ''
-    };
+    const now = performance.now();
+    const nextPlan = createLive2DBehaviorPlan(actions, durationMs, {
+      now,
+      expression: options.expression || '',
+      emotion: options.emotion,
+      intensity: options.intensity,
+      priority: options.priority,
+      source: options.source || 'cubism',
+      interruptPolicy: options.interruptPolicy || options.interrupt,
+      speechStyle: options.speechStyle
+    });
+    if (!shouldInterruptLive2DBehaviorPlan(behaviorPlan, nextPlan, now)) return;
+    behaviorPlan = nextPlan;
   }
 
   function sample(now = performance.now()) {
@@ -697,8 +709,8 @@ export function mountCubismBehaviorBridge(options = {}) {
 
     const expression = behaviorPlan?.expression || character.emotion;
     const suppressEyeOpen = expressionOwnsEyeOpen(expression);
-    const samples = behaviorPlan ? activeBehaviorSamples(behaviorPlan.actions, elapsedMs) : [];
-    const dominant = pickDominantMotion(samples);
+    const samples = behaviorPlan ? sampleActiveBehaviorActions(behaviorPlan.actions, elapsedMs, { intensityScale: 1.62 }) : [];
+    const dominant = pickBehaviorDominantMotion(samples);
     const frame = createFrame({ suppressEyeOpen });
 
     applyCharacterState(frame, character, behaviorPlan && dominant ? 0.66 : 1, { suppressEyeOpen });
@@ -720,7 +732,17 @@ export function mountCubismBehaviorBridge(options = {}) {
     const expression = expressionFromDetail(detail);
     characterState.onRoomAct(detail);
     const actions = actionsFromDetail(detail);
-    if (actions.length) startBehaviorPlan(actions, detail.durationMs || detail.duration, { expression });
+    if (actions.length) {
+      startBehaviorPlan(actions, detail.durationMs || detail.duration, {
+        expression,
+        emotion: detail.emotion || detail.mood,
+        intensity: detail.intensity,
+        priority: detail.priority,
+        source: detail.source || 'room-act',
+        interruptPolicy: detail.interruptPolicy || detail.interrupt,
+        speechStyle: detail.speechStyle || detail.speech_style
+      });
+    }
     if (isMomentaryExpression(expression)) {
       momentaryPulse = {
         startedAt: performance.now() + 80,

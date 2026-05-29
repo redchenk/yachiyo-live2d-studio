@@ -14,6 +14,12 @@ import {
   YACHIYO_MODEL_PARAMETER_RANGES,
   yachiyoVTubeStudioParameterSettings
 } from '../../constants/room/yachiyoModelParameterRegistry';
+import {
+  activeBehaviorSamples as sampleActiveBehaviorActions,
+  createLive2DBehaviorPlan,
+  pickDominantMotion as pickBehaviorDominantMotion,
+  shouldInterruptLive2DBehaviorPlan
+} from './live2dBehaviorOrchestrator';
 import { createLive2DCharacterStateMachine } from './live2dCharacterStateMachine';
 
 const ROOM_ACT_EVENT = 'tsukuyomi:room-act';
@@ -1301,13 +1307,13 @@ function applyAutoBlink(frame, samples, nowMs, baseOpen = 0.92, options = {}) {
 }
 
 function sampleVTSBehaviorActions(actions, elapsedMs, nowMs = performance.now(), character = null, expression = '', options = {}) {
-  const samples = activeBehaviorSamples(actions, elapsedMs);
+  const samples = sampleActiveBehaviorActions(actions, elapsedMs, { intensityScale: 1.7 });
   if (samples.some((sample) => sample.action.type === 'reset' && sample.energy > 0.5)) return behaviorResetFrame();
 
   const suppressEyeOpen = Boolean(options.suppressEyeOpen || expressionOwnsEyeOpen(expression));
   const frame = createDirectTrackingFrame({ suppressEyeOpen });
   const speaking = character?.mode === 'speaking';
-  const dominant = pickDominantMotion(samples);
+  const dominant = pickBehaviorDominantMotion(samples);
   applyCharacterStateFrame(frame, character, speaking && dominant ? 0.42 : (speaking ? 0.82 : 0.68));
   applySemanticExpressionOverlay(frame, expression || character?.emotion, speaking ? 0.68 : 0.82);
   applyDirectMotion(frame, dominant);
@@ -1828,23 +1834,25 @@ export function mountVTubeStudioBridge() {
 
   function startBehaviorPlan(actions, durationMs, options = {}) {
     if (!Array.isArray(actions) || !actions.length) return;
-    const enrichedActions = enrichBehaviorActions(actions);
-    const planDurationMs = Math.max(
-      Number(durationMs) || 0,
-      ...enrichedActions.map((action) => (Number(action.delayMs) || 0) + (Number(action.durationMs) || 0)),
-      800
-    );
+    const now = performance.now();
+    const expression = options.expression || semanticExpressionFromEmotion(options.emotion);
+    const nextPlan = createLive2DBehaviorPlan(actions, durationMs, {
+      now,
+      expression,
+      emotion: options.emotion,
+      intensity: options.intensity,
+      priority: options.priority,
+      source: options.source || 'vts',
+      interruptPolicy: options.interruptPolicy || options.interrupt,
+      suppressEyeOpen: expressionOwnsEyeOpen(expression || options.emotion),
+      speechStyle: options.speechStyle
+    });
+    if (!shouldInterruptLive2DBehaviorPlan(behaviorPlan, nextPlan, now)) return;
     bodyMotion = null;
     stopBodyFrame();
-    behaviorPlan = {
-      actions: enrichedActions,
-      durationMs: planDurationMs,
-      startedAt: performance.now(),
-      expression: options.expression || semanticExpressionFromEmotion(options.emotion),
-      suppressEyeOpen: expressionOwnsEyeOpen(options.expression || options.emotion)
-    };
+    behaviorPlan = nextPlan;
     characterState.setMode('acting', {
-      holdMs: planDurationMs + 420,
+      holdMs: nextPlan.durationMs + 420,
       attention: 0.86,
       arousal: 0.72
     });
@@ -1862,7 +1870,12 @@ export function mountVTubeStudioBridge() {
     if (behaviorActions.length) {
       startBehaviorPlan(behaviorActions, detail.durationMs || detail.duration, {
         expression,
-        emotion: detail.emotion || detail.mood
+        emotion: detail.emotion || detail.mood,
+        intensity: detail.intensity,
+        priority: detail.priority,
+        source: detail.source || 'room-act',
+        interruptPolicy: detail.interruptPolicy || detail.interrupt,
+        speechStyle: detail.speechStyle || detail.speech_style
       });
     }
     if (settings.injectFace) {
@@ -1883,7 +1896,13 @@ export function mountVTubeStudioBridge() {
         const durationMs = clamp(Math.round(Number(detail.durationMs || detail.duration) || 2400), 650, 8000);
         const intensity = clamp(Math.max(Number(detail.intensity) || 0, 0.86), 0.65, 1);
         stopBodyFrame();
-        startBehaviorPlan([{ type: pose, intensity, durationMs, delayMs: 0 }], durationMs);
+        startBehaviorPlan([{ type: pose, intensity, durationMs, delayMs: 0 }], durationMs, {
+          emotion: detail.emotion || detail.mood,
+          intensity,
+          priority: detail.priority,
+          source: detail.source || 'body-pose',
+          interruptPolicy: detail.interruptPolicy || detail.interrupt
+        });
       }
     }
   }

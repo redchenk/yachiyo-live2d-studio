@@ -14,6 +14,10 @@ import {
   semanticExpressionBehaviorActions,
   semanticExpressionFromEmotion
 } from '../../constants/room/yachiyoExpressionPresetRegistry';
+import {
+  behaviorPlanPriority,
+  normalizeLive2DInterruptPolicy
+} from './live2dBehaviorOrchestrator';
 
 function clamp(value, min, max, fallback = min) {
   const numeric = Number(value);
@@ -176,6 +180,16 @@ export function compileBehaviorIntent(payload = {}) {
   const speechStyle = payload.speech_style || payload.speechStyle || nested.speech_style || nested.speechStyle || null;
   const parameters = actions.flatMap((action) => behaviorActionParameterTargets(action));
   const bodyAction = actions.find((action) => behaviorActionBodyPose(action.type));
+  const intensity = clamp(payload.intensity ?? nested.intensity, 0.05, 1, 0.72);
+  const priority = behaviorPlanPriority(actions, {
+    expression,
+    intensity,
+    priority: payload.priority ?? nested.priority
+  });
+  const interruptPolicy = normalizeLive2DInterruptPolicy(
+    payload.interruptPolicy || payload.interrupt || nested.interruptPolicy || nested.interrupt,
+    { priority }
+  );
   const durationMs = Math.max(
     1200,
     ...actions.map((action) => action.delayMs + action.durationMs),
@@ -189,8 +203,10 @@ export function compileBehaviorIntent(payload = {}) {
     expression: expression || null,
     expressionMix: expression ? [{ expression, weight: 1 }] : [],
     bodyPose: bodyAction ? behaviorActionBodyPose(bodyAction.type) : null,
-    intensity: clamp(payload.intensity ?? nested.intensity, 0.05, 1, 0.72),
+    intensity,
     durationMs,
+    priority,
+    interruptPolicy,
     parameters,
     behaviorActions: actions,
     speechStyle

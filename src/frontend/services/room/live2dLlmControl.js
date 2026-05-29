@@ -345,6 +345,8 @@ function normalizeStreamingBeat(rawBeat = {}, sentence = '', fallbackEmotion = '
     emotion,
     mood: emotion,
     intensity: beat.intensity ?? nested.intensity ?? (emotion === 'neutral' ? 0.58 : 0.72),
+    priority: beat.priority ?? nested.priority,
+    interruptPolicy: beat.interruptPolicy || beat.interrupt || nested.interruptPolicy || nested.interrupt || null,
     actions,
     speech_style: speechStyleForEmotion(emotion, speechStyle)
   };
@@ -624,6 +626,8 @@ function mergeInferredLive2DIntent(explicitIntent, inferredIntent) {
     bodyPose: explicitHasBody ? explicitIntent.bodyPose : inferredIntent.bodyPose,
     intensity: strongerIntensity || explicitIntent.intensity || inferredIntent.intensity,
     durationMs: explicitIntent.durationMs || inferredIntent.durationMs,
+    priority: Math.max(Number(explicitIntent.priority) || 0, Number(inferredIntent.priority) || 0) || explicitIntent.priority || inferredIntent.priority,
+    interruptPolicy: explicitIntent.interruptPolicy || inferredIntent.interruptPolicy || null,
     behaviorActions: mergeBehaviorActions(explicitIntent.behaviorActions, explicitHasBehavior ? [] : inferredIntent.behaviorActions),
     speechStyle: explicitIntent.speechStyle || inferredIntent.speechStyle || null,
     parameters: mergeParameterTargets(
@@ -644,6 +648,8 @@ function mergeInferredLive2DIntent(explicitIntent, inferredIntent) {
           motion: step.motion || inferredIntent.motion,
           intensity: Math.max(Number(step.intensity) || 0, Number(inferredIntent.intensity) || 0) || step.intensity || inferredIntent.intensity,
           durationMs: step.durationMs || inferredIntent.durationMs,
+          priority: Math.max(Number(step.priority) || 0, Number(inferredIntent.priority) || 0) || step.priority || inferredIntent.priority,
+          interruptPolicy: step.interruptPolicy || inferredIntent.interruptPolicy || null,
           parameters: mergeParameterTargets(step.parameters, inferredIntent.parameters)
         };
       });
@@ -678,6 +684,8 @@ function mergeBehaviorAndExplicitIntent(behaviorIntent, explicitIntent) {
     bodyPose: explicitIntent.bodyPose || behaviorIntent.bodyPose,
     intensity: Math.max(Number(explicitIntent.intensity) || 0, Number(behaviorIntent.intensity) || 0) || behaviorIntent.intensity,
     durationMs: Math.max(Number(explicitIntent.durationMs) || 0, Number(behaviorIntent.durationMs) || 0) || behaviorIntent.durationMs,
+    priority: Math.max(Number(explicitIntent.priority) || 0, Number(behaviorIntent.priority) || 0) || behaviorIntent.priority,
+    interruptPolicy: explicitIntent.interruptPolicy || behaviorIntent.interruptPolicy,
     parameters: mergeParameterTargets(behaviorIntent.parameters, explicitIntent.parameters),
     behaviorActions: mergeBehaviorActions(explicitIntent.behaviorActions, behaviorIntent.behaviorActions),
     speechStyle: behaviorIntent.speechStyle
@@ -896,13 +904,14 @@ export function live2DControlSystemPrompt() {
     'Yachiyo is being tested as an autonomous AI VTuber streamer: keep her present, reactive, playful, and concise.',
     'Return exactly one JSON object. Do not use Markdown. Do not add prose outside JSON.',
     'JSON schema:',
-    `{"reply":"short visible reply","emotion":"${SEMANTIC_EMOTION_ID_LIST}","intensity":0.72,"actions":[{"type":"look_at_chat","duration":1.2},{"type":"smirk","duration":2.0},{"type":"head_tilt","side":"right","duration":1.5}],"speech_style":{"speed":1.05,"pitch":0.08,"pause":"playful"},"memory_writes":[]}`,
+    `{"reply":"short visible reply","emotion":"${SEMANTIC_EMOTION_ID_LIST}","intensity":0.72,"actions":[{"type":"look_at_chat","duration":1.2},{"type":"smirk","duration":2.0},{"type":"head_tilt","side":"right","duration":1.5}],"interruptPolicy":{"mode":"blend","priority":4},"speech_style":{"speed":1.05,"pitch":0.08,"pause":"playful"},"memory_writes":[]}`,
     'The reply field must contain only natural dialogue. Never put stage directions, parenthesized action hints, asterisk actions, action labels, or pose descriptions in reply.',
     'The actions field is required and must contain at least 2 semantic actions. If the moment is calm, use look_at_chat + breathe.',
     'Actions must match the reply meaning and mood. Vary action combos between turns; do not repeat the same body action unless the dialogue specifically calls for it.',
     'Use only semantic emotion ids and semantic actions. Do not output raw Live2D parameters, VTube Studio parameter ids, expression file names, live2d.parameters, parameterTargets, or pose descriptions.',
     `Choose 2-5 actions per live-stream turn. Good combos: ${behaviorActionComboPrompt()}.`,
     'Use intensity 0.45-0.85 for normal talking, 0.85-1.0 for punchlines or surprise.',
+    'Optional interruptPolicy controls action orchestration: use mode blend for normal replies, replace for urgent reactions, protect for moments that should finish; priority is 0-10.',
     'Use duration in seconds. Overlapping actions are allowed by repeating similar delay values; omit delay for a natural staggered performance.',
     'Only when a durable, low-risk memory is clearly confirmed, include memory_writes items with scope, type, title, text, importance, confidence, and tags. Otherwise use an empty array.',
     'Never propose secrets, API keys, sensitive personal data, raw chat dumps, guesses about a user, or negative personality labels as memory.',
@@ -923,7 +932,7 @@ export function live2DStreamingControlSystemPrompt() {
     'For TTS stability, do not use tiny fragments; the first VOICE should include at least one short phrase, not only a filler.',
     'VOICE: next natural Japanese clause or short sentence, normally about 18-32 Japanese characters.',
     'VOICE: combine tiny comma clauses instead of making every comma its own TTS chunk; prefer one stable phrase over many tiny fragments.',
-    `CONTROL: {"reply":"same Japanese spoken text without VOICE labels","emotion":"${SEMANTIC_EMOTION_ID_LIST}","intensity":0.72,"actions":[{"type":"look_at_chat","duration":1.2},{"type":"smirk","duration":2.0}],"speech_style":{"speed":1.05,"pitch":0.08,"pause":"playful"},"memory_writes":[]}`,
+    `CONTROL: {"reply":"same Japanese spoken text without VOICE labels","emotion":"${SEMANTIC_EMOTION_ID_LIST}","intensity":0.72,"actions":[{"type":"look_at_chat","duration":1.2},{"type":"smirk","duration":2.0}],"interruptPolicy":{"mode":"blend","priority":4},"speech_style":{"speed":1.05,"pitch":0.08,"pause":"playful"},"memory_writes":[]}`,
     'Each BEAT must be a single-line JSON object and must appear immediately before the VOICE it controls.',
     'BEAT contains only semantic fields: emotion, intensity, actions, and speech_style. Keep it short so the first VOICE can start quickly.',
     'The VOICE lines must come before CONTROL. Emit the first BEAT and VOICE before planning the full answer. Do not wait for CONTROL before speaking.',
@@ -935,6 +944,7 @@ export function live2DStreamingControlSystemPrompt() {
     'Use only semantic emotion ids and semantic actions. Do not output raw Live2D parameters, VTube Studio parameter ids, expression file names, live2d.parameters, parameterTargets, or pose descriptions.',
     `Good action combos: ${behaviorActionComboPrompt()}.`,
     'Use intensity 0.45-0.85 for normal talking, 0.85-1.0 for punchlines or surprise.',
+    'Optional interruptPolicy controls action orchestration: mode blend for normal replies, replace for urgent reactions, protect for a beat that should complete; priority is 0-10.',
     'Only when a durable, low-risk memory is clearly confirmed, include memory_writes items with scope, type, title, text, importance, confidence, and tags. Otherwise use an empty array.',
     'Never propose secrets, API keys, sensitive personal data, raw chat dumps, guesses about a user, or negative personality labels as memory.',
     semanticExpressionPromptCatalog(),

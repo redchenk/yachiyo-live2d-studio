@@ -534,6 +534,8 @@ function normalizeLive2DStep(input, manifest = roomLive2DManifest) {
     parameters,
     behaviorActions,
     speechStyle: input.speechStyle || input.speech_style || null,
+    priority: Number.isFinite(Number(input.priority)) ? Number(input.priority) : null,
+    interruptPolicy: input.interruptPolicy || input.interrupt || null,
     intensity,
     durationMs,
     delayMs: normalizeDelay(input.delayMs || input.delay)

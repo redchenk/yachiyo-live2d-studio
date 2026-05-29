@@ -101,6 +101,40 @@ VTube Studio Bridge 每帧采样动作并注入 VTS 参数
 - TTS 和动作是并行流水线，避免等完整回复结束后才发声。
 - 长期人格和记忆不整篇塞进 prompt，每轮只检索少量相关摘要。
 
+## 动作系统分层
+
+动作控制按四层拆开，避免 LLM、编排规则和 Live2D 参数曲线互相污染：
+
+```text
+用户输入 / 弹幕 / 剧情事件
+  ↓
+LLM 对话层
+  - 生成自然回复
+  - 输出 emotion / actions / intensity / interruptPolicy
+  ↓
+语义动作输出层
+  - 只保留语义动作意图
+  - 归一化表情、动作、强度、持续时间
+  ↓
+动作编排执行层
+  - 生成 BehaviorPlan
+  - 处理 priority、blend/replace/protect 打断规则
+  - 给动作加入相位、幅度、节奏和随机变体
+  ↓
+Live2D 参数控制层
+  - VTS Bridge 注入 VTube Studio 参数
+  - Cubism Bridge 写入本地 Cubism 参数
+  - 同步表情、呼吸、眨眼、口型、身体摆动和配件物理
+```
+
+核心模块：
+
+- `src/frontend/services/room/live2dLlmControl.js`: LLM 对话层和流式控制协议。
+- `src/frontend/services/room/live2dBehaviorController.js`: 语义动作输出层，把 LLM JSON 编译成统一 intent。
+- `src/frontend/services/room/live2dBehaviorOrchestrator.js`: 动作编排执行层，生成带打断规则和动作变体的 `BehaviorPlan`。
+- `src/frontend/services/room/live2dVTubeStudioBridge.js`: VTube Studio 参数控制 Adapter。
+- `src/frontend/services/room/live2dCubismBehaviorBridge.js`: 本地 Cubism 参数控制 Adapter。
+
 ## 前端模块
 
 ### Studio Shell
