@@ -360,6 +360,14 @@ npm run audit:yachiyo-vts-control
 npm run audit:yachiyo-vts-control -- --probe
 ```
 
+如果运行时缺少自定义输入参数，可以让工具只创建缺失项后再复查：
+
+```powershell
+npm run audit:yachiyo-vts-control -- --ensure-inputs
+```
+
+审计报告会列出 `Desired Input Owner Groups`。如果同一批八千代 Direct Control 输入分散在多个 owner 下，说明 VTS 里存在旧插件身份留下的同名自定义输入。先确认这些参数确实来自旧的审计插件，再用 `--delete-inputs --plugin-name <old-name> --plugin-developer <old-developer>` 清理旧归属，随后重新执行 `--ensure-inputs` 让当前应用身份接管。
+
 当前控制层会为八千代模型安装并注入 98 个 Direct Control 参数，覆盖上半身 BodyInput/Output、Body/Chest/Hip/Shoulder、眼球细节、嘴型细节、兽耳、帽子耳朵、翅膀、旗袍、舌头和玩偶耳朵。`ParamExpression_*`、`ParamHide_*` 和左右眼开合仍由 VTS 表情文件/眨眼逻辑管理，避免眯眯眼、泪珠等表情和睁眼状态叠在一起。
 
 ## 本地 Cubism 预览

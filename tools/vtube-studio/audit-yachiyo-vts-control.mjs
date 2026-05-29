@@ -9,6 +9,8 @@ const DEFAULT_MODEL_DIR = path.resolve('models/tsukimi-yachiyo');
 const DEFAULT_CDI = path.join(DEFAULT_MODEL_DIR, 'tsukimi-yachiyo.cdi3.json');
 const DEFAULT_VTUBE = path.join(DEFAULT_MODEL_DIR, 'tsukimi-yachiyo.vtube.json');
 const DEFAULT_VTS_URL = 'ws://127.0.0.1:8001';
+const DEFAULT_PLUGIN_NAME = 'Yachiyo Live2D Studio';
+const DEFAULT_PLUGIN_DEVELOPER = 'redchenk';
 const API_NAME = 'VTubeStudioPublicAPI';
 const API_VERSION = '1.0';
 
@@ -18,6 +20,10 @@ function readArgs(argv) {
     vtube: DEFAULT_VTUBE,
     url: DEFAULT_VTS_URL,
     probe: false,
+    ensureInputs: false,
+    deleteInputs: false,
+    pluginName: DEFAULT_PLUGIN_NAME,
+    pluginDeveloper: DEFAULT_PLUGIN_DEVELOPER,
     token: process.env.VTS_AUTH_TOKEN || '',
     write: ''
   };
@@ -29,7 +35,17 @@ function readArgs(argv) {
     else if (arg === '--vtube') args.vtube = path.resolve(next());
     else if (arg === '--url') args.url = next() || DEFAULT_VTS_URL;
     else if (arg === '--probe') args.probe = true;
+    else if (arg === '--ensure-inputs') {
+      args.probe = true;
+      args.ensureInputs = true;
+    }
+    else if (arg === '--delete-inputs') {
+      args.probe = true;
+      args.deleteInputs = true;
+    }
     else if (arg === '--token') args.token = next();
+    else if (arg === '--plugin-name') args.pluginName = next() || DEFAULT_PLUGIN_NAME;
+    else if (arg === '--plugin-developer') args.pluginDeveloper = next() || DEFAULT_PLUGIN_DEVELOPER;
     else if (arg === '--write') args.write = path.resolve(next());
     else if (arg === '--help' || arg === '-h') args.help = true;
   }
@@ -46,6 +62,10 @@ function usage() {
     '  --cdi <path>       Live2D display-info file. Defaults to project model cdi3.',
     '  --vtube <path>     VTube Studio model config. Defaults to project vtube.json.',
     '  --probe            Also query a running VTube Studio Public API.',
+    '  --ensure-inputs    Ensure Yachiyo custom input parameters exist in VTS, then audit.',
+    '  --delete-inputs    Delete Yachiyo custom inputs owned by the selected plugin, then audit.',
+    '  --plugin-name      VTS plugin name. Defaults to the app plugin identity.',
+    '  --plugin-developer VTS plugin developer. Defaults to the app plugin identity.',
     '  --token <token>    Existing VTS auth token. Can also use VTS_AUTH_TOKEN.',
     '  --write <path>     Write the markdown report.'
   ].join('\n');
@@ -57,6 +77,26 @@ function readJson(filePath) {
 
 function idOf(item) {
   return String(item?.Id || item?.id || item?.name || '').trim();
+}
+
+function ownerOf(item) {
+  return String(
+    item?.addedBy ||
+    item?.AddedBy ||
+    item?.pluginName ||
+    item?.PluginName ||
+    item?.createdBy ||
+    item?.CreatedBy ||
+    item?.owner ||
+    item?.Owner ||
+    ''
+  ).trim();
+}
+
+function extractInputParameters(response) {
+  return Array.isArray(response?.data?.defaultParameters)
+    ? [...response.data.defaultParameters, ...(response.data.customParameters || [])]
+    : [];
 }
 
 function extractCdiParameters(cdi) {
@@ -179,11 +219,12 @@ function encodeFrame(text) {
 }
 
 function decodeFrames(buffer) {
-  const messages = [];
+  const frames = [];
   let offset = 0;
   while (buffer.length - offset >= 2) {
     const first = buffer[offset];
     const second = buffer[offset + 1];
+    const fin = Boolean(first & 0x80);
     const opcode = first & 0x0f;
     const masked = Boolean(second & 0x80);
     let length = second & 0x7f;
@@ -206,10 +247,10 @@ function decodeFrames(buffer) {
         payload[index] ^= mask[index % 4];
       }
     }
-    if (opcode === 1) messages.push(payload.toString('utf8'));
+    if (opcode === 1 || opcode === 0) frames.push({ fin, opcode, text: payload.toString('utf8') });
     offset = cursor + length;
   }
-  return { messages, rest: buffer.subarray(offset) };
+  return { frames, rest: buffer.subarray(offset) };
 }
 
 function createVtsClient(rawUrl) {
@@ -219,6 +260,7 @@ function createVtsClient(rawUrl) {
   const resource = `${url.pathname || '/'}${url.search || ''}`;
   let socket = null;
   let buffer = Buffer.alloc(0);
+  let fragmentedText = '';
   let requestCounter = 0;
   const pending = new Map();
 
@@ -305,7 +347,18 @@ function createVtsClient(rawUrl) {
     buffer = Buffer.concat([buffer, chunk]);
     const decoded = decodeFrames(buffer);
     buffer = decoded.rest;
-    for (const message of decoded.messages) {
+    for (const frame of decoded.frames) {
+      let message = frame.text;
+      if (frame.opcode === 1 && !frame.fin) {
+        fragmentedText = message;
+        continue;
+      }
+      if (frame.opcode === 0) {
+        fragmentedText += message;
+        if (!frame.fin) continue;
+        message = fragmentedText;
+        fragmentedText = '';
+      }
       const payload = JSON.parse(message);
       const item = pending.get(payload.requestID);
       if (!item) continue;
@@ -325,16 +378,71 @@ async function probeVts(args, local) {
     const state = await client.request('APIStateRequest');
     if (!state?.data?.currentSessionAuthenticated) {
       const token = args.token || String((await client.request('AuthenticationTokenRequest', {
-        pluginName: 'Yachiyo Live2D Studio Audit',
-        pluginDeveloper: 'redchenk'
+        pluginName: args.pluginName,
+        pluginDeveloper: args.pluginDeveloper
       }, 60000))?.data?.authenticationToken || '');
       if (!token) throw new Error('VTube Studio did not return an authentication token.');
       const auth = await client.request('AuthenticationRequest', {
-        pluginName: 'Yachiyo Live2D Studio Audit',
-        pluginDeveloper: 'redchenk',
+        pluginName: args.pluginName,
+        pluginDeveloper: args.pluginDeveloper,
         authenticationToken: token
       });
       if (!auth?.data?.authenticated) throw new Error(auth?.data?.reason || 'VTube Studio authentication failed.');
+    }
+
+    let initialInputs = await client.request('InputParameterListRequest').catch((error) => ({ error: error.message }));
+    let initialInputParams = extractInputParameters(initialInputs);
+    let initialInputIds = new Set(initialInputParams.map(idOf).filter(Boolean));
+
+    const deletedInputs = [];
+    const deletionSkipped = [];
+    const deletionErrors = [];
+    if (args.deleteInputs) {
+      for (const item of local.desiredSettings.filter((setting) => setting.createInput !== false)) {
+        await client.request('ParameterDeletionRequest', {
+          parameterName: item.input
+        }).then(() => {
+          deletedInputs.push(item.input);
+        }).catch((error) => {
+          const message = String(error?.message || '');
+          if (/not found|does not exist|different plugin|other plugin|not created/i.test(message)) {
+            deletionSkipped.push(item.input);
+            return;
+          }
+          deletionErrors.push(`${item.input}: ${error.message || error}`);
+        });
+      }
+      initialInputs = await client.request('InputParameterListRequest').catch((error) => ({ error: error.message }));
+      initialInputParams = extractInputParameters(initialInputs);
+      initialInputIds = new Set(initialInputParams.map(idOf).filter(Boolean));
+    }
+
+    const ensuredInputs = [];
+    const ensureErrors = [];
+    const ownedByOtherPlugin = [];
+    if (args.ensureInputs) {
+      const missingInputs = local.desiredSettings
+        .filter((setting) => setting.createInput !== false)
+        .filter((setting) => !initialInputIds.has(setting.input));
+      for (const item of missingInputs) {
+        await client.request('ParameterCreationRequest', {
+          parameterName: item.input,
+          explanation: `Yachiyo model input for ${item.outputLive2D}`,
+          min: item.min,
+          max: item.max,
+          defaultValue: item.defaultValue
+        }).then(() => {
+          ensuredInputs.push(item.input);
+        }).catch((error) => {
+          const message = String(error?.message || '');
+          if (/another plugin/i.test(message)) {
+            ownedByOtherPlugin.push(item.input);
+            return;
+          }
+          if (/already exists|already created|exists|duplicate|taken/i.test(message)) return;
+          ensureErrors.push(`${item.input}: ${error.message || error}`);
+        });
+      }
     }
 
     const [currentModel, inputs, live2d, expressions, hotkeys] = await Promise.all([
@@ -347,10 +455,19 @@ async function probeVts(args, local) {
 
     const live2dParams = Array.isArray(live2d?.data?.parameters) ? live2d.data.parameters : [];
     const live2dIds = new Set(live2dParams.map(idOf).filter(Boolean));
-    const inputParams = Array.isArray(inputs?.data?.defaultParameters)
-      ? [...inputs.data.defaultParameters, ...(inputs.data.customParameters || [])]
-      : [];
+    const inputParams = extractInputParameters(inputs);
     const inputIds = new Set(inputParams.map(idOf).filter(Boolean));
+    const customInputParams = Array.isArray(inputs?.data?.customParameters) ? inputs.data.customParameters : [];
+    const customInputById = new Map(customInputParams.map((item) => [idOf(item), item]).filter(([id]) => id));
+    const desiredInputOwners = local.desiredSettings
+      .map((item) => ({
+        input: item.input,
+        outputLive2D: item.outputLive2D,
+        domain: item.domain,
+        owner: ownerOf(customInputById.get(item.input))
+      }))
+      .filter((item) => item.owner);
+    const desiredInputOwnerGroups = byCount(desiredInputOwners, (item) => item.owner);
 
     return {
       currentModel,
@@ -360,6 +477,14 @@ async function probeVts(args, local) {
       hotkeys,
       live2dCount: live2dParams.length,
       inputCount: inputParams.length,
+      deletedInputs,
+      deletionSkipped,
+      deletionErrors,
+      ensuredInputs,
+      ensureErrors,
+      ownedByOtherPlugin,
+      desiredInputOwners,
+      desiredInputOwnerGroups,
       missingLive2DOutputs: local.desiredSettings.filter((item) => !live2dIds.has(item.outputLive2D)),
       missingInputParameters: local.desiredSettings.filter((item) => !inputIds.has(item.input))
     };
@@ -440,7 +565,52 @@ function renderReport(local, live = null, liveError = null) {
     lines.push(`- Current model: ${live.currentModel?.data?.modelName || live.currentModel?.data?.modelID || 'unknown'}`);
     lines.push(`- VTS input parameters visible: ${live.inputCount}`);
     lines.push(`- VTS Live2D parameters visible: ${live.live2dCount}`);
+    if (
+      live.deletedInputs?.length ||
+      live.deletionSkipped?.length ||
+      live.deletionErrors?.length ||
+      live.ensuredInputs?.length ||
+      live.ensureErrors?.length ||
+      live.ownedByOtherPlugin?.length
+    ) {
+      lines.push(`- Deleted custom inputs for selected plugin: ${live.deletedInputs?.length || 0}`);
+      lines.push(`- Skipped deletes not owned by selected plugin: ${live.deletionSkipped?.length || 0}`);
+      lines.push(`- Custom input deletion errors: ${live.deletionErrors?.length || 0}`);
+      lines.push(`- Created missing custom inputs for selected plugin: ${live.ensuredInputs?.length || 0}`);
+      lines.push(`- Existing custom inputs owned by another plugin: ${live.ownedByOtherPlugin?.length || 0}`);
+      lines.push(`- Custom input creation errors: ${live.ensureErrors?.length || 0}`);
+    }
     lines.push('');
+    if (live.ownedByOtherPlugin?.length) {
+      lines.push('### Custom Inputs Owned By Another Plugin');
+      lines.push('');
+      lines.push(renderTable(
+        ['Input'],
+        live.ownedByOtherPlugin.slice(0, 120).map((item) => [item])
+      ));
+      lines.push('');
+    }
+    if (live.desiredInputOwnerGroups?.length) {
+      lines.push('### Desired Input Owner Groups');
+      lines.push('');
+      lines.push(renderTable(
+        ['Owner', 'Count'],
+        live.desiredInputOwnerGroups.map(([owner, count]) => [owner, count])
+      ));
+      lines.push('');
+    }
+    if (live.deletionErrors?.length) {
+      lines.push('### Custom Input Deletion Errors');
+      lines.push('');
+      lines.push(live.deletionErrors.map((item) => `- ${item}`).join('\n'));
+      lines.push('');
+    }
+    if (live.ensureErrors?.length) {
+      lines.push('### Custom Input Creation Errors');
+      lines.push('');
+      lines.push(live.ensureErrors.map((item) => `- ${item}`).join('\n'));
+      lines.push('');
+    }
     lines.push('### Missing Live2D Outputs In Running VTS');
     lines.push('');
     lines.push(renderTable(

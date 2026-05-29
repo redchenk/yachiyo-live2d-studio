@@ -1,6 +1,6 @@
 # Yachiyo VTube Studio Control Audit
 
-Generated: 2026-05-29T14:33:01.608Z
+Generated: 2026-05-29T15:09:33.126Z
 
 ## VTS Control Contract
 
@@ -61,6 +61,27 @@ _None._
 - Direct expression/eye-open mappings in registry: 0
 - Expression files should remain the owner of ParamExpression_* and eye-hide parameters to avoid overlapping eyes.
 - Direct registry focuses on upper-body, secondary eye/mouth detail, accessories, and physics helpers.
+
+## Live VTS Probe
+
+- Current model: 八千代辉夜姬
+- VTS input parameters visible: 225
+- VTS Live2D parameters visible: 796
+
+### Desired Input Owner Groups
+
+| Owner | Count |
+| --- | --- |
+| Yachiyo Live2D Studio | 58 |
+| Yachiyo Live2D Studio Audit | 40 |
+
+### Missing Live2D Outputs In Running VTS
+
+_None._
+
+### Missing VTS Input Parameters In Running VTS
+
+_None._
 
 ## Recommended Fix Flow
 
