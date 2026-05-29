@@ -596,6 +596,26 @@ const textExpressionMatchers = [
     emotion: 'dizzy'
   },
   {
+    expression: 'closed_smile',
+    pattern: /(\u7b11\u54aa\u54aa|\u7b11\u772f\u772f|\u772f\u773c\u7b11|giggle|closed[- ]eye smile|smiling eyes)/iu,
+    emotion: 'closed_smile'
+  },
+  {
+    expression: 'closed_eyes',
+    pattern: /(\u772f\u772f\u773c|\u772f\u773c|\u95ed\u773c|\u9589\u773c|content|satisfied|closed eyes|squint)/iu,
+    emotion: 'closed_eyes'
+  },
+  {
+    expression: 'tear_drop',
+    pattern: /(\u6cea\u73e0|\u6dda\u73e0|single tear|teardrop|tear drop)/iu,
+    emotion: 'tear_drop'
+  },
+  {
+    expression: 'watery_eyes',
+    pattern: /(\u6cea\u773c|\u6dda\u773c|\u6d99\u76ee|watery eyes|teary eyes)/iu,
+    emotion: 'watery_eyes'
+  },
+  {
     expression: 'tears',
     pattern: /(\u5927\u54ed|\u54ed\u6ce3|\u6d41\u6cea|\u6d41\u6dda|\u75db\u54ed|crying|tears|sob|weeping|\u6ce3\u304f|\u6ce3\u3044\u3066)/iu,
     emotion: 'crying'

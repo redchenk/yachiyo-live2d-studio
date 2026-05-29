@@ -8,7 +8,10 @@ import {
 } from './live2dBehaviorController';
 import { behaviorActionComboPrompt } from '../../constants/room/behaviorActionRegistry';
 import { yachiyoCorePersonalityPrompt } from '../../constants/room/yachiyoPersonalityPrompt';
-import { semanticExpressionPromptCatalog } from '../../constants/room/yachiyoExpressionPresetRegistry';
+import {
+  semanticExpressionIds,
+  semanticExpressionPromptCatalog
+} from '../../constants/room/yachiyoExpressionPresetRegistry';
 import {
   cleanLive2DReply,
   extractLive2DStageDirections
@@ -31,9 +34,16 @@ const FIRST_SOFT_CHUNK_UNIT_LIMIT = 12;
 const FOLLOWUP_SOFT_CHUNK_UNIT_LIMIT = 30;
 const FIRST_MAX_CHUNK_UNIT_LIMIT = 16;
 const FOLLOWUP_MAX_CHUNK_UNIT_LIMIT = 42;
+const SEMANTIC_EMOTION_ID_LIST = [
+  ...semanticExpressionIds().filter((id) => id !== 'bsmile'),
+  'happy',
+  'sad'
+].filter((id, index, all) => all.indexOf(id) === index).join('|');
 const SPEECH_STYLE_BY_EMOTION = {
   happy: { speed: 1.08, pitch: 0.08, pause: 'bright' },
   smile: { speed: 1.06, pitch: 0.07, pause: 'warm' },
+  closed_smile: { speed: 1.07, pitch: 0.08, pause: 'bright' },
+  closed_eyes: { speed: 0.98, pitch: 0.04, pause: 'warm' },
   smug: { speed: 1.04, pitch: 0.05, pause: 'teasing' },
   shy: { speed: 0.96, pitch: 0.07, pause: 'soft' },
   surprised: { speed: 1.12, pitch: 0.11, pause: 'startled' },
@@ -41,6 +51,8 @@ const SPEECH_STYLE_BY_EMOTION = {
   puff: { speed: 1.02, pitch: 0.03, pause: 'pouting' },
   tongue: { speed: 1.07, pitch: 0.08, pause: 'playful' },
   dizzy: { speed: 0.92, pitch: -0.02, pause: 'confused' },
+  tear_drop: { speed: 0.9, pitch: -0.05, pause: 'tender' },
+  watery_eyes: { speed: 0.92, pitch: -0.04, pause: 'tender' },
   sad: { speed: 0.9, pitch: -0.06, pause: 'tender' },
   crying: { speed: 0.88, pitch: -0.08, pause: 'tearful' },
   fire: { speed: 1.12, pitch: 0.02, pause: 'energetic' },
@@ -55,6 +67,10 @@ const SENTENCE_EMOTION_RULES = [
   { emotion: 'puff', pattern: /(鼓脸|鼓臉|撅嘴|不服|哼|pout|puff|sulk|cheek puff)/iu },
   { emotion: 'tongue', pattern: /(吐舌|调皮|調皮|捣蛋|搗蛋|恶作剧|惡作劇|tongue|blep|cheeky|mischief|teasing)/iu },
   { emotion: 'dizzy', pattern: /(晕|暈|困惑|慌|糊涂|糊塗|dizzy|confused|dazed|overwhelmed|panic)/iu },
+  { emotion: 'closed_smile', pattern: /(笑咪咪|笑眯眯|眯眼笑|えへへ|ふふ|giggle|closed[- ]eye smile|smiling eyes)/iu },
+  { emotion: 'closed_eyes', pattern: /(眯眯眼|眯眼|闭眼|閉眼|满足|滿足|content|satisfied|closed eyes|squint)/iu },
+  { emotion: 'tear_drop', pattern: /(泪珠|淚珠|单颗眼泪|單顆眼淚|single tear|teardrop|tear drop)/iu },
+  { emotion: 'watery_eyes', pattern: /(泪眼|淚眼|涙目|眼泪汪汪|眼淚汪汪|watery eyes|teary eyes)/iu },
   { emotion: 'crying', pattern: /(大哭|哭泣|流泪|流淚|痛哭|crying|tears|sob|weeping|泣く|泣いて)/iu },
   { emotion: 'sad', pattern: /(难过|難過|悲伤|悲傷|伤心|傷心|寂寞|眼泪|眼淚|sad|sorrow|lonely|悲しい)/iu },
   { emotion: 'smug', pattern: /(得意|坏笑|壞笑|小坏|小壞|smug|smirk|sly|confident)/iu },
@@ -65,6 +81,8 @@ const SENTENCE_EMOTION_RULES = [
 const SENTENCE_ACTIONS_BY_EMOTION = {
   happy: [{ type: 'smile', duration: 1.2 }, { type: 'bounce', duration: 1.1, delay: 0.1 }, { type: 'ear_wiggle', duration: 1.1, delay: 0.14, intensity: 0.62 }, { type: 'nod', duration: 1.15, delay: 0.22 }],
   smile: [{ type: 'smile', duration: 1.25 }, { type: 'sway', duration: 1.25, delay: 0.12 }, { type: 'ear_perk', duration: 1.1, delay: 0.18, intensity: 0.54 }, { type: 'look_at_chat', duration: 0.9, delay: 0.28 }],
+  closed_smile: [{ type: 'smile', duration: 1.2 }, { type: 'bounce', duration: 1.0, delay: 0.08 }, { type: 'ear_wiggle', duration: 1.05, delay: 0.16, intensity: 0.56 }],
+  closed_eyes: [{ type: 'breathe', duration: 1.3 }, { type: 'sway', duration: 1.15, delay: 0.12 }, { type: 'look_at_chat', duration: 0.85, delay: 0.24 }],
   smug: [{ type: 'smirk', duration: 1.25 }, { type: 'lean_in', duration: 1.2, delay: 0.12 }, { type: 'head_tilt', side: 'random', duration: 1.1, delay: 0.22 }],
   shy: [{ type: 'smile', duration: 1.1 }, { type: 'blink', duration: 0.34, delay: 0.1 }, { type: 'sway', duration: 1.25, delay: 0.24 }],
   surprised: [{ type: 'surprised', duration: 0.95 }, { type: 'ear_perk', duration: 1.05, delay: 0.05, intensity: 0.72 }, { type: 'lean_in', duration: 1.1, delay: 0.08 }, { type: 'bounce', duration: 1, delay: 0.22 }],
@@ -72,6 +90,8 @@ const SENTENCE_ACTIONS_BY_EMOTION = {
   puff: [{ type: 'shake_head', duration: 0.95 }, { type: 'sway', duration: 1.2, delay: 0.12 }, { type: 'look_at_chat', duration: 0.9, delay: 0.26 }],
   tongue: [{ type: 'tongue_out', duration: 0.72 }, { type: 'smirk', duration: 1.1, delay: 0.08 }, { type: 'ear_wiggle', duration: 1.08, delay: 0.14, intensity: 0.64 }, { type: 'wink', side: 'random', duration: 0.52, delay: 0.18 }, { type: 'lean_in', duration: 1.05, delay: 0.24 }],
   dizzy: [{ type: 'shake_head', duration: 1.05 }, { type: 'sway', duration: 1.25, delay: 0.12 }, { type: 'blink', duration: 0.34, delay: 0.5 }],
+  tear_drop: [{ type: 'breathe', duration: 1.3 }, { type: 'nod', duration: 1.05, delay: 0.16 }, { type: 'look_at_chat', duration: 0.85, delay: 0.34 }],
+  watery_eyes: [{ type: 'nod', duration: 1.05 }, { type: 'breathe', duration: 1.35, delay: 0.16 }, { type: 'look_at_chat', duration: 0.85, delay: 0.32 }],
   sad: [{ type: 'breathe', duration: 1.4 }, { type: 'nod', duration: 1.15, delay: 0.16 }, { type: 'look_at_chat', duration: 0.9, delay: 0.34 }],
   crying: [{ type: 'shiver', duration: 1.05 }, { type: 'breathe', duration: 1.25, delay: 0.2 }, { type: 'nod', duration: 1.1, delay: 0.36 }],
   fire: [{ type: 'lean_in', duration: 1.15 }, { type: 'emphasis', duration: 0.95, delay: 0.12 }, { type: 'bounce', duration: 0.95, delay: 0.28 }],
@@ -876,7 +896,7 @@ export function live2DControlSystemPrompt() {
     'Yachiyo is being tested as an autonomous AI VTuber streamer: keep her present, reactive, playful, and concise.',
     'Return exactly one JSON object. Do not use Markdown. Do not add prose outside JSON.',
     'JSON schema:',
-    '{"reply":"short visible reply","emotion":"smug|happy|shy|surprised|angry|puff|tongue|dizzy|sad|crying|fire|neutral","intensity":0.72,"actions":[{"type":"look_at_chat","duration":1.2},{"type":"smirk","duration":2.0},{"type":"head_tilt","side":"right","duration":1.5}],"speech_style":{"speed":1.05,"pitch":0.08,"pause":"playful"},"memory_writes":[]}',
+    `{"reply":"short visible reply","emotion":"${SEMANTIC_EMOTION_ID_LIST}","intensity":0.72,"actions":[{"type":"look_at_chat","duration":1.2},{"type":"smirk","duration":2.0},{"type":"head_tilt","side":"right","duration":1.5}],"speech_style":{"speed":1.05,"pitch":0.08,"pause":"playful"},"memory_writes":[]}`,
     'The reply field must contain only natural dialogue. Never put stage directions, parenthesized action hints, asterisk actions, action labels, or pose descriptions in reply.',
     'The actions field is required and must contain at least 2 semantic actions. If the moment is calm, use look_at_chat + breathe.',
     'Actions must match the reply meaning and mood. Vary action combos between turns; do not repeat the same body action unless the dialogue specifically calls for it.',
@@ -903,7 +923,7 @@ export function live2DStreamingControlSystemPrompt() {
     'For TTS stability, do not use tiny fragments; the first VOICE should include at least one short phrase, not only a filler.',
     'VOICE: next natural Japanese clause or short sentence, normally about 18-32 Japanese characters.',
     'VOICE: combine tiny comma clauses instead of making every comma its own TTS chunk; prefer one stable phrase over many tiny fragments.',
-    'CONTROL: {"reply":"same Japanese spoken text without VOICE labels","emotion":"smug|happy|shy|surprised|angry|puff|tongue|dizzy|sad|crying|fire|neutral","intensity":0.72,"actions":[{"type":"look_at_chat","duration":1.2},{"type":"smirk","duration":2.0}],"speech_style":{"speed":1.05,"pitch":0.08,"pause":"playful"},"memory_writes":[]}',
+    `CONTROL: {"reply":"same Japanese spoken text without VOICE labels","emotion":"${SEMANTIC_EMOTION_ID_LIST}","intensity":0.72,"actions":[{"type":"look_at_chat","duration":1.2},{"type":"smirk","duration":2.0}],"speech_style":{"speed":1.05,"pitch":0.08,"pause":"playful"},"memory_writes":[]}`,
     'Each BEAT must be a single-line JSON object and must appear immediately before the VOICE it controls.',
     'BEAT contains only semantic fields: emotion, intensity, actions, and speech_style. Keep it short so the first VOICE can start quickly.',
     'The VOICE lines must come before CONTROL. Emit the first BEAT and VOICE before planning the full answer. Do not wait for CONTROL before speaking.',

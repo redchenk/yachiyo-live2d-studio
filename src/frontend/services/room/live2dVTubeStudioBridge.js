@@ -30,6 +30,12 @@ const VTS_EXPRESSION_ALIASES = {
   happy: ['happy', 'smile'],
   joy: ['happy', 'smile'],
   smile: ['smile', 'happy'],
+  closed_smile: ['closed_smile', '笑咪咪', '笑眯眯', 'happy_closed', 'smiling_eyes'],
+  happy_closed: ['closed_smile', '笑咪咪', '笑眯眯', 'happy_closed', 'smiling_eyes'],
+  smiling_eyes: ['closed_smile', '笑咪咪', '笑眯眯', 'happy_closed', 'smiling_eyes'],
+  closed_eyes: ['closed_eyes', '眯眯眼', 'mimi_eye', 'closed_eye'],
+  closed_eye: ['closed_eyes', '眯眯眼', 'mimi_eye', 'closed_eye'],
+  mimi_eye: ['closed_eyes', '眯眯眼', 'mimi_eye', 'closed_eye'],
   bsmile: ['bsmile', 'blush', 'shy', 'smug'],
   blush: ['shy', 'blush', 'bsmile'],
   shy: ['shy', 'blush', 'bsmile'],
@@ -45,6 +51,12 @@ const VTS_EXPRESSION_ALIASES = {
   dizzy: ['dizzy', 'confused'],
   confused: ['dizzy', 'confused'],
   fire: ['fire', 'rage'],
+  tear_drop: ['tear_drop', 'teardrop', 'single_tear', '泪珠'],
+  teardrop: ['tear_drop', 'teardrop', 'single_tear', '泪珠'],
+  single_tear: ['tear_drop', 'teardrop', 'single_tear', '泪珠'],
+  watery_eyes: ['watery_eyes', 'eye_tears', 'teary_eyes', '眼泪'],
+  eye_tears: ['watery_eyes', 'eye_tears', 'teary_eyes', '眼泪'],
+  teary_eyes: ['watery_eyes', 'eye_tears', 'teary_eyes', '眼泪'],
   namida: ['namida', 'sad', 'tear', '泪珠', '眼泪'],
   sad: ['namida', 'sad', 'tear', '泪珠', '眼泪'],
   tear: ['namida', 'sad', 'tear', '泪珠', '眼泪'],
@@ -127,26 +139,44 @@ const EYE_OWNING_EXPRESSION_TOKENS = new Set([
   'annoyed',
   'bsmile',
   'blush',
+  'closed_eye',
+  'closed_eyes',
+  'closed_smile',
   'crying',
   'dizzy',
   'fire',
   'happy',
+  'happy_closed',
+  'laughing_closed',
+  'mimi_eye',
+  'mimi_eyes',
   'namida',
   'sad',
   'shy',
   'smile',
+  'smiling_eyes',
   'smug',
   'surprised',
   'surprise',
+  'tear_drop',
+  'teardrop',
   'tears',
   'tongue',
   'tongue_out',
   'tear',
+  'teary_eyes',
+  'watery_eyes',
   'cry',
   '眯眯眼',
+  '眯眼',
+  '闭眼',
+  '閉眼',
   '笑咪咪',
+  '笑眯眯',
   '泪珠',
-  '眼泪'
+  '淚珠',
+  '眼泪',
+  '眼淚'
 ]);
 
 const MOMENTARY_EXPRESSION_TOKENS = new Set(['blep', 'tongue', 'tongue_out']);
@@ -1662,21 +1692,26 @@ export function mountVTubeStudioBridge() {
         if (!file) return;
         const momentaryExpression = expressionIsMomentary(expression) || expressionIsMomentary(file);
         const ownsEyes = expressionOwnsEyeOpen(expression) || expressionOwnsEyeOpen(file);
-        deactivateOtherExpressions(file, { fadeTime: ownsEyes ? 0.02 : 0.06 });
+        if (ownsEyes) activeExpressionFiles.add(file);
+        deactivateOtherExpressions(file, { fadeTime: ownsEyes ? 0 : 0.06 });
         clearExpressionActivationTimer(file);
         clearExpressionTimer(file);
-        const activationTimer = window.setTimeout(() => {
-          expressionActivationTimers.delete(file);
-          setVTSExpression(file, true, ownsEyes ? 0.12 : 0.18);
-        }, ownsEyes ? 120 : 70);
-        expressionActivationTimers.set(file, activationTimer);
-        activeExpressionFiles.add(file);
-        if (ownsEyes) releaseInjectedEyes();
+        if (ownsEyes) {
+          releaseInjectedEyes();
+          setVTSExpression(file, true, 0.04);
+        } else {
+          const activationTimer = window.setTimeout(() => {
+            expressionActivationTimers.delete(file);
+            setVTSExpression(file, true, 0.18);
+          }, 70);
+          expressionActivationTimers.set(file, activationTimer);
+          activeExpressionFiles.add(file);
+        }
         const holdMs = momentaryExpression
           ? clamp(Math.min(Math.round(Number(durationMs) || MOMENTARY_EXPRESSION_PULSE_MS), MOMENTARY_EXPRESSION_PULSE_MS), 420, MOMENTARY_EXPRESSION_PULSE_MS)
           : clamp(Math.round(Number(durationMs) || 2600), 900, 9000);
         const timer = window.setTimeout(() => {
-          setVTSExpression(file, false, 0.45);
+          setVTSExpression(file, false, ownsEyes ? 0.18 : 0.45);
           activeExpressionFiles.delete(file);
           expressionTimers.delete(file);
           if (!activeExpressionOwnsEyeOpen()) releaseInjectedEyes();

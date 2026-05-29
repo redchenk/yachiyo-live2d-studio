@@ -54,6 +54,47 @@ export const YACHIYO_EXPRESSION_PRESETS = [
     ]
   },
   {
+    id: 'closed_smile',
+    label: 'Closed Smile',
+    emotion: 'closed_smile',
+    prompt: 'delighted closed-eye smile, giggle, amused laugh, or happy crescent eyes',
+    aliases: ['happy_closed', 'smiling_eyes', 'laughing_closed', 'laugh_closed', 'giggle', 'grin_closed', '笑咪咪', '笑眯眯', '眯眼笑'],
+    expression: 'closed_smile',
+    files: ['笑咪咪', 'closed_smile', 'smiling_eyes', 'happy_closed', 'expression_closed_smile'],
+    actions: [
+      action('look_at_chat', 0.9),
+      action('smile', 1.35, 0.04),
+      action('bounce', 1.0, 0.14, { intensity: 0.58 }),
+      action('ear_wiggle', 1.05, 0.18, { intensity: 0.56 })
+    ],
+    vts: [
+      vts('MouthSmile', 0.9, 0.76),
+      vts('Brows', 0.64, 0.46),
+      vts('BrowLeftY', 0.64, 0.42),
+      vts('BrowRightY', 0.64, 0.42)
+    ]
+  },
+  {
+    id: 'closed_eyes',
+    label: 'Closed Eyes',
+    emotion: 'closed_eyes',
+    prompt: 'peaceful closed eyes, satisfied reaction, content sigh, or relaxed eyes-closed pause',
+    aliases: ['mimi_eye', 'mimi_eyes', 'closed_eye', 'closed_eyes_soft', 'squint', 'squinting', 'content', 'satisfied', '眯眯眼', '眯眼', '闭眼', '閉眼'],
+    expression: 'closed_eyes',
+    files: ['眯眯眼', 'closed_eyes', 'mimi_eye', 'expression_closed_eyes'],
+    actions: [
+      action('look_at_chat', 0.85),
+      action('breathe', 1.5, 0.08),
+      action('sway', 1.25, 0.18, { intensity: 0.48 })
+    ],
+    vts: [
+      vts('MouthSmile', 0.7, 0.54),
+      vts('Brows', 0.58, 0.38),
+      vts('BrowLeftY', 0.58, 0.34),
+      vts('BrowRightY', 0.58, 0.34)
+    ]
+  },
+  {
     id: 'bsmile',
     label: 'Soft Shy Smile',
     emotion: 'shy',
@@ -230,6 +271,46 @@ export const YACHIYO_EXPRESSION_PRESETS = [
     ]
   },
   {
+    id: 'tear_drop',
+    label: 'Tear Drop',
+    emotion: 'tear_drop',
+    prompt: 'single tear drop, quietly moved, vulnerable, touched, or about to cry but restrained',
+    aliases: ['teardrop', 'single_tear', 'small_tear', 'one_tear', '泪珠', '淚珠'],
+    expression: 'tear_drop',
+    files: ['泪珠', 'tear_drop', 'teardrop', 'single_tear', 'expression_tear_drop'],
+    actions: [
+      action('look_at_chat', 0.85),
+      action('breathe', 1.45, 0.08, { intensity: 0.5 }),
+      action('nod', 1.1, 0.24, { intensity: 0.44 })
+    ],
+    vts: [
+      vts('MouthSmile', 0.28, 0.56),
+      vts('Brows', 0.3, 0.56),
+      vts('BrowLeftY', 0.3, 0.5),
+      vts('BrowRightY', 0.3, 0.5)
+    ]
+  },
+  {
+    id: 'watery_eyes',
+    label: 'Watery Eyes',
+    emotion: 'watery_eyes',
+    prompt: 'watery eyes, eyes full of tears, emotional but still speaking, or soft teary look',
+    aliases: ['eye_tears', 'teary_eyes', 'watery', 'teary', 'tearful_eyes', '眼泪', '眼淚', '泪眼', '淚眼'],
+    expression: 'watery_eyes',
+    files: ['眼泪', 'watery_eyes', 'eye_tears', 'teary_eyes', 'expression_watery_eyes'],
+    actions: [
+      action('look_at_chat', 0.85),
+      action('nod', 1.15, 0.1, { intensity: 0.46 }),
+      action('breathe', 1.55, 0.28, { intensity: 0.5 })
+    ],
+    vts: [
+      vts('MouthSmile', 0.26, 0.58),
+      vts('Brows', 0.28, 0.58),
+      vts('BrowLeftY', 0.28, 0.52),
+      vts('BrowRightY', 0.28, 0.52)
+    ]
+  },
+  {
     id: 'namida',
     label: 'Tearful',
     emotion: 'sad',
@@ -329,6 +410,16 @@ const EXPRESSION_ACTION_VARIANTS = {
     [action('smile', 1.4), action('bounce', 1.05, 0.12, { intensity: 0.6 }), action('look_at_chat', 1.0, 0.28)],
     [action('look_at_chat', 0.9), action('sway', 1.45, 0.08, { intensity: 0.58 }), action('smile', 1.5, 0.18)]
   ],
+  closed_smile: [
+    [action('look_at_chat', 0.9), action('smile', 1.35, 0.04), action('bounce', 1.0, 0.14, { intensity: 0.58 }), action('ear_wiggle', 1.05, 0.18, { intensity: 0.56 })],
+    [action('smile', 1.25), action('sway', 1.25, 0.1, { intensity: 0.52 }), action('nod', 1.05, 0.24, { intensity: 0.5 })],
+    [action('look_at_chat', 0.85), action('bounce', 0.95, 0.08, { intensity: 0.54 }), action('smile', 1.3, 0.2), action('hat_ear_wiggle', 1.0, 0.28, { intensity: 0.5 })]
+  ],
+  closed_eyes: [
+    [action('look_at_chat', 0.85), action('breathe', 1.5, 0.08), action('sway', 1.25, 0.18, { intensity: 0.48 })],
+    [action('breathe', 1.45), action('nod', 1.05, 0.18, { intensity: 0.42 }), action('smile', 1.1, 0.28)],
+    [action('sway', 1.3, 0.06, { intensity: 0.46 }), action('look_at_chat', 0.8, 0.22), action('breathe', 1.4, 0.34)]
+  ],
   bsmile: [
     [action('look_at_chat', 1.0), action('smile', 1.45, 0.08), action('head_tilt', 1.2, 0.24, { side: 'random' })],
     [action('smile', 1.35), action('blink', 0.34, 0.12), action('sway', 1.35, 0.25, { intensity: 0.52 })],
@@ -368,6 +459,16 @@ const EXPRESSION_ACTION_VARIANTS = {
     [action('look_at_chat', 0.8), action('shake_head', 1.2, 0.05, { intensity: 0.55 }), action('sway', 1.6, 0.16, { intensity: 0.62 }), action('blink', 0.34, 0.9)],
     [action('sway', 1.55), action('blink', 0.34, 0.12), action('shake_head', 1.05, 0.28, { intensity: 0.46 })],
     [action('look_at_chat', 0.85), action('head_tilt', 1.25, 0.08, { side: 'random', intensity: 0.56 }), action('sway', 1.45, 0.24, { intensity: 0.58 })]
+  ],
+  tear_drop: [
+    [action('look_at_chat', 0.85), action('breathe', 1.45, 0.08, { intensity: 0.5 }), action('nod', 1.1, 0.24, { intensity: 0.44 })],
+    [action('breathe', 1.5), action('sway', 1.2, 0.18, { intensity: 0.38 }), action('look_at_chat', 0.82, 0.36)],
+    [action('nod', 1.1, 0.08, { intensity: 0.44 }), action('breathe', 1.45, 0.24), action('smile', 1.0, 0.38)]
+  ],
+  watery_eyes: [
+    [action('look_at_chat', 0.85), action('nod', 1.15, 0.1, { intensity: 0.46 }), action('breathe', 1.55, 0.28, { intensity: 0.5 })],
+    [action('breathe', 1.45), action('look_at_chat', 0.82, 0.12), action('sway', 1.2, 0.32, { intensity: 0.4 })],
+    [action('nod', 1.12, 0.08, { intensity: 0.42 }), action('breathe', 1.5, 0.22), action('look_at_chat', 0.8, 0.42)]
   ],
   namida: [
     [action('look_at_chat', 0.9), action('nod', 1.25, 0.1, { intensity: 0.54 }), action('breathe', 1.8, 0.18)],
