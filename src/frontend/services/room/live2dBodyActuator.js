@@ -3,9 +3,9 @@ import { readRoomModelSettings } from './roomSettings';
 
 const ROOM_ACT_EVENT = 'tsukuyomi:room-act';
 const STAGE_ACTUATOR_STATE_KEY = '__TSUKUYOMI_LIVE2D_STAGE_BODY_ACTUATOR_STATE__';
-const DEFAULT_STAGE_MOTION_SCALE = 0.86;
-const DEFAULT_STAGE_IDLE_SCALE = 1;
-const RUNTIME_STAGE_POSE_SCALE = 0.35;
+const DEFAULT_STAGE_MOTION_SCALE = 0.75;
+const DEFAULT_STAGE_IDLE_SCALE = 0.9;
+const RUNTIME_STAGE_POSE_SCALE = 0.08;
 const BODY_PARAMETER_HINTS = [
   'ParamBodyInput_BodyX',
   'ParamBodyInput_BodyY',
@@ -255,58 +255,58 @@ export function sampleLive2DStagePose(motion, progress, scale = DEFAULT_STAGE_MO
     case 'nod':
       return {
         x: 0,
-        y: 18 * beat * e,
-        rotate: -0.9 * fast * e,
-        scale: 1 + 0.01 * beat * e
+        y: 4 * beat * e,
+        rotate: -0.28 * fast * e,
+        scale: 1 + 0.003 * beat * e
       };
     case 'shake_head':
       return {
-        x: 22 * fast * e,
-        y: 2 * beat * e,
-        rotate: 3.6 * fast * e,
+        x: 15 * fast * e,
+        y: 1.2 * beat * e,
+        rotate: 2.4 * fast * e,
         scale: 1
       };
     case 'lean_in':
       return {
         x: 0,
-        y: -24 * e,
-        rotate: 0.8 * slow * e,
-        scale: 1 + 0.045 * e
+        y: -12 * e,
+        rotate: 0.36 * slow * e,
+        scale: 1 + 0.018 * e
       };
     case 'lean_left':
       return {
-        x: -38 * e,
-        y: 7 * e,
-        rotate: -4.8 * e,
-        scale: 1 + 0.012 * e
+        x: -24 * e,
+        y: 3.5 * e,
+        rotate: -3 * e,
+        scale: 1 + 0.006 * e
       };
     case 'lean_right':
       return {
-        x: 38 * e,
-        y: 7 * e,
-        rotate: 4.8 * e,
-        scale: 1 + 0.012 * e
+        x: 24 * e,
+        y: 3.5 * e,
+        rotate: 3 * e,
+        scale: 1 + 0.006 * e
       };
     case 'sway':
       return {
-        x: 34 * slow * e,
-        y: 5 * absPulse(t, 2) * e,
-        rotate: 4.2 * slow * e,
-        scale: 1 + 0.006 * Math.abs(slow) * e
+        x: 20 * slow * e,
+        y: 2.6 * absPulse(t, 2) * e,
+        rotate: 2.4 * slow * e,
+        scale: 1 + 0.003 * Math.abs(slow) * e
       };
     case 'bounce':
       return {
-        x: 3 * slow * e,
-        y: -34 * beat * e,
-        rotate: 1.2 * slow * e,
-        scale: 1 + 0.026 * beat * e
+        x: 2 * slow * e,
+        y: -18 * beat * e,
+        rotate: 0.58 * slow * e,
+        scale: 1 + 0.012 * beat * e
       };
     case 'emphasis':
       return {
-        x: 18 * fast * e,
-        y: -18 * absPulse(t, 1) * e,
-        rotate: -4.2 * fast * e,
-        scale: 1 + 0.032 * absPulse(t, 1) * e
+        x: 10 * fast * e,
+        y: -9 * absPulse(t, 1) * e,
+        rotate: -2.2 * fast * e,
+        scale: 1 + 0.014 * absPulse(t, 1) * e
       };
     default:
       return { x: 0, y: 0, rotate: 0, scale: 1 };
@@ -321,10 +321,10 @@ export function sampleLive2DIdleStagePose(nowMs = performance.now(), scale = DEF
   const drift = Math.sin(seconds * 0.47 + 1.35);
   const side = Math.sin(seconds * 0.36 + 0.8);
   return {
-    x: 5.5 * side * amount,
-    y: (22 * slow + 8 * drift) * amount,
-    rotate: 0.42 * Math.sin(seconds * 0.43 + 2.1) * amount,
-    scale: 1 + 0.006 * Math.sin(seconds * 0.72 + 0.4) * amount
+    x: 3.5 * side * amount,
+    y: (13 * slow + 4 * drift) * amount,
+    rotate: 0.22 * Math.sin(seconds * 0.43 + 2.1) * amount,
+    scale: 1 + 0.003 * Math.sin(seconds * 0.72 + 0.4) * amount
   };
 }
 

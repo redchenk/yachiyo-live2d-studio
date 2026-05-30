@@ -40,8 +40,8 @@ export const DEFAULT_ROOM_MODEL_SETTINGS = {
   lowQualityModel: false,
   renderDpr: 3,
   stageFloatEnabled: true,
-  stageIdleScale: 1.35,
-  stageMotionScale: 1,
+  stageIdleScale: 0.9,
+  stageMotionScale: 0.75,
   stageVerticalOffset: 0
 };
 
