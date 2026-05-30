@@ -91,6 +91,12 @@ const iconPaths = {
     ['path', { d: 'M18 5v13' }],
     ['path', { d: 'M22 10v3' }]
   ],
+  mic: [
+    ['path', { d: 'M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3Z' }],
+    ['path', { d: 'M19 10v2a7 7 0 0 1-14 0v-2' }],
+    ['path', { d: 'M12 19v3' }],
+    ['path', { d: 'M8 22h8' }]
+  ],
   play: [['path', { d: 'm8 5 11 7-11 7Z' }]],
   pause: [
     ['path', { d: 'M8 5v14' }],

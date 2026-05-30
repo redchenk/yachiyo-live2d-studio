@@ -322,9 +322,16 @@ body.vue-live2d-route {
 .live2d-live-actions,
 .live2d-audience-row {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
     gap: 0.5rem;
     align-items: center;
+}
+
+.live2d-live-actions {
+    grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.live2d-audience-row {
+    grid-template-columns: minmax(0, 1fr) auto auto;
 }
 
 .live2d-toggle {
@@ -353,6 +360,21 @@ body.vue-live2d-route {
     color: #ffb4c4;
     font-size: 0.74rem;
     line-height: 1.45;
+}
+
+.live2d-inline-status {
+    margin: 0;
+    color: rgba(158, 232, 255, 0.86);
+    font-size: 0.74rem;
+    font-weight: 800;
+    line-height: 1.45;
+}
+
+.live2d-mic-btn.active {
+    border-color: rgba(255, 120, 150, 0.58);
+    color: #ffd7df;
+    background: rgba(255, 120, 150, 0.18);
+    box-shadow: 0 0 18px rgba(255, 120, 150, 0.18);
 }
 
 .live2d-llm-actions {

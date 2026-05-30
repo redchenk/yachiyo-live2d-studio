@@ -597,3 +597,18 @@ npm run install:yachiyo-vts-parameters
 - Obsidian memory 默认关闭，需要用户手动配置 vault path。
 - 详细人格 seed 来自本地语料提炼文件，后续如果语料更新，需要重新生成 seed 并重新初始化或手动同步 vault。
 - LLM 输出质量仍依赖模型本身，需要使用支持稳定 JSON/流式输出的模型。
+
+
+## Local Vosk ASR
+
+The room can run endpoint-side speech recognition through `alphacep/vosk-api`.
+The browser records microphone audio, converts it to mono 16 kHz PCM WAV, posts it to `/api/asr`, and the launcher starts `tools/asr/vosk-asr-service.mjs` on `127.0.0.1`.
+
+Setup:
+
+1. Install project dependencies so the local `vosk` Node binding is available.
+2. Put a Vosk model directory under `models/vosk/`, for example `models/vosk/vosk-model-small-cn-0.22`.
+3. Open Settings -> ASR, enable ASR, and confirm the model path.
+4. Use the microphone button beside the Audience line input.
+
+The ASR result enters the same audience queue as typed chat, so the existing LLM, semantic action, TTS, VTS, and Cubism layers continue to work unchanged.

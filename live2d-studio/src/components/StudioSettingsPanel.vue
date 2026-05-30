@@ -3,6 +3,7 @@ import { computed, onUnmounted, reactive, ref } from 'vue';
 import TsIcon from '@frontend/components/TsIcon.vue';
 import {
   DEFAULT_ROOM_LLM_SETTINGS,
+  DEFAULT_ROOM_ASR_SETTINGS,
   DEFAULT_ROOM_MEMORY_SETTINGS,
   DEFAULT_ROOM_MODEL_SETTINGS,
   DEFAULT_ROOM_TTS_SETTINGS,
@@ -11,16 +12,19 @@ import {
   DEFAULT_MIMO_TTS_MODEL,
   DEFAULT_MIMO_TTS_VOICE,
   normalizeRoomLLMSettings,
+  normalizeRoomASRSettings,
   normalizeRoomMemorySettings,
   normalizeRoomModelSettings,
   normalizeRoomTTSSettings,
   normalizeRoomVTubeStudioSettings,
   readRoomLLMSettings,
+  readRoomASRSettings,
   readRoomMemorySettings,
   readRoomModelSettings,
   readRoomTTSSettings,
   readRoomVTubeStudioSettings,
   writeRoomLLMSettings,
+  writeRoomASRSettings,
   writeRoomMemorySettings,
   writeRoomModelSettings,
   writeRoomTTSSettings,
@@ -40,6 +44,7 @@ defineEmits(['close']);
 const tabs = [
   { id: 'llm', label: 'LLM' },
   { id: 'tts', label: 'TTS' },
+  { id: 'asr', label: 'ASR' },
   { id: 'model', label: 'Model' },
   { id: 'vts', label: 'VTS' },
   { id: 'memory', label: 'Memory' }
@@ -103,6 +108,7 @@ const memoryNotes = ref([]);
 const memoryResultMode = ref('idle');
 const llm = reactive(readRoomLLMSettings());
 const tts = reactive(readRoomTTSSettings());
+const asr = reactive(readRoomASRSettings());
 const model = reactive(readRoomModelSettings());
 const vts = reactive(readRoomVTubeStudioSettings());
 const memory = reactive(readRoomMemorySettings());
@@ -144,6 +150,7 @@ function setStatus(text) {
 function reloadSettings() {
   Object.assign(llm, readRoomLLMSettings());
   Object.assign(tts, readRoomTTSSettings());
+  Object.assign(asr, readRoomASRSettings());
   Object.assign(model, readRoomModelSettings());
   Object.assign(vts, readRoomVTubeStudioSettings());
   Object.assign(memory, readRoomMemorySettings());
@@ -155,6 +162,8 @@ function resetCurrentTab() {
     Object.assign(llm, normalizeRoomLLMSettings(DEFAULT_ROOM_LLM_SETTINGS));
   } else if (activeTab.value === 'tts') {
     Object.assign(tts, normalizeRoomTTSSettings(DEFAULT_ROOM_TTS_SETTINGS));
+  } else if (activeTab.value === 'asr') {
+    Object.assign(asr, normalizeRoomASRSettings(DEFAULT_ROOM_ASR_SETTINGS));
   } else if (activeTab.value === 'model') {
     Object.assign(model, normalizeRoomModelSettings(DEFAULT_ROOM_MODEL_SETTINGS));
   } else if (activeTab.value === 'vts') {
@@ -213,17 +222,19 @@ function saveSettings() {
     ...tts,
     useProxy: tts.provider === 'gpt-sovits' ? false : true
   });
+  const savedASR = writeRoomASRSettings(asr);
   const savedModel = writeRoomModelSettings(model);
   const savedVTS = writeRoomVTubeStudioSettings(vts);
   const savedMemory = writeRoomMemorySettings(memory);
 
   Object.assign(llm, savedLLM);
   Object.assign(tts, savedTTS);
+  Object.assign(asr, savedASR);
   Object.assign(model, savedModel);
   Object.assign(vts, savedVTS);
   Object.assign(memory, savedMemory);
   window.dispatchEvent(new CustomEvent('tsukuyomi:studio-settings-saved', {
-    detail: { llm: savedLLM, tts: savedTTS, model: savedModel, vts: savedVTS, memory: savedMemory }
+    detail: { llm: savedLLM, tts: savedTTS, asr: savedASR, model: savedModel, vts: savedVTS, memory: savedMemory }
   }));
   setStatus('Saved');
 }
@@ -490,6 +501,39 @@ onUnmounted(() => {
             <input v-model="tts.sovitsWeightPath" type="text" spellcheck="false" placeholder="SoVITS_weights_v2ProPlus/yachiyo-v2pro_e8_s456.pth">
           </label>
         </template>
+      </section>
+
+      <section v-else-if="activeTab === 'asr'" class="studio-settings-section">
+        <label class="studio-check-row">
+          <input v-model="asr.enabled" type="checkbox">
+          <span>Enable ASR</span>
+        </label>
+        <label>
+          <span>Provider</span>
+          <select v-model="asr.provider">
+            <option value="vosk">Vosk local</option>
+          </select>
+        </label>
+        <label class="studio-wide-field">
+          <span>Model Path</span>
+          <input v-model="asr.modelPath" type="text" spellcheck="false" placeholder="models/vosk/vosk-model-small-cn-0.22">
+        </label>
+        <label>
+          <span>Sample Rate</span>
+          <input v-model.number="asr.sampleRate" type="number" min="8000" max="48000" step="1000">
+        </label>
+        <label>
+          <span>Max Record</span>
+          <input v-model.number="asr.maxRecordMs" type="number" min="1500" max="60000" step="500">
+        </label>
+        <label>
+          <span>Endpoint</span>
+          <input v-model="asr.endpoint" type="text" spellcheck="false" placeholder="/api/asr">
+        </label>
+        <label class="studio-check-row">
+          <input v-model="asr.words" type="checkbox">
+          <span>Word timestamps</span>
+        </label>
       </section>
 
       <section v-else-if="activeTab === 'model'" class="studio-settings-section">

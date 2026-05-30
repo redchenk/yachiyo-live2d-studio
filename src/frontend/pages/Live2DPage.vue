@@ -13,6 +13,7 @@ import {
   ROOM_LIVE2D_DEBUG_EVENT,
   readRoomLive2DDebugState
 } from '../services/room/live2dDebug';
+import { createLive2DAsrRecorder } from '../services/room/live2dAsr';
 import { createLive2DSpeechPlayer } from '../services/room/live2dSpeech';
 import { cleanLive2DReply } from '../services/room/live2dText';
 import {
@@ -45,6 +46,11 @@ const speechState = ref({
   status: 'idle',
   error: ''
 });
+const asrState = ref({
+  status: 'idle',
+  error: '',
+  text: ''
+});
 const debugPanelOpen = ref(
   typeof localStorage !== 'undefined'
     ? localStorage.getItem('roomLive2DDebugPanelOpen') === 'true'
@@ -55,6 +61,7 @@ const live2dDebug = ref(readRoomLive2DDebugState());
 let liveTimer = 0;
 let liveTurnInFlight = false;
 let speechPlayer = null;
+let asrRecorder = null;
 const CHARACTER_STATE_EVENT = 'tsukuyomi:live2d-character-state';
 const SETTINGS_SAVED_EVENT = 'tsukuyomi:studio-settings-saved';
 
@@ -294,6 +301,19 @@ async function init() {
       } else if (patch.status === 'error') {
         dispatchCharacterState('idle', { holdMs: 1000, arousal: 0.28 });
       }
+    }
+  });
+  asrRecorder = createLive2DAsrRecorder({
+    onState: (patch) => {
+      asrState.value = { ...asrState.value, ...patch };
+      if (patch.status === 'listening') {
+        dispatchCharacterState('listening', { holdMs: 1600, attention: 0.9, arousal: 0.44 });
+      } else if (patch.status === 'transcribing') {
+        dispatchCharacterState('thinking', { holdMs: 1400, attention: 0.72, arousal: 0.42 });
+      }
+    },
+    onResult: ({ text }) => {
+      submitAudienceLine(text, { source: 'asr' });
     }
   });
   await live2d.init();
@@ -683,14 +703,35 @@ function stopLiveDirector() {
   pushLog('system', 'Live director stopped.');
 }
 
-function sendAudienceLine() {
-  const value = audienceInput.value.trim();
+function submitAudienceLine(text, meta = {}) {
+  const value = String(text || '').trim();
   if (!value) return;
-  audienceInput.value = '';
+  if (!meta.keepInput) audienceInput.value = '';
   audienceQueue.value.push(value);
-  pushLog('audience', value);
+  pushLog('audience', value, meta);
   dispatchCharacterState('listening', { holdMs: 1800, attention: 0.88, arousal: 0.48 });
   if (liveDirector.running && !liveTurnInFlight) scheduleLiveTurn(450);
+}
+
+function sendAudienceLine() {
+  submitAudienceLine(audienceInput.value);
+}
+
+async function toggleAudienceAsr() {
+  if (!asrRecorder) return;
+  try {
+    if (asrRecorder.isRecording()) {
+      await asrRecorder.stop();
+      return;
+    }
+    await asrRecorder.start();
+  } catch (error) {
+    asrState.value = {
+      ...asrState.value,
+      status: 'error',
+      error: error.message || 'ASR failed'
+    };
+  }
 }
 
 function handleStudioSettingsSaved() {
@@ -713,7 +754,9 @@ onUnmounted(() => {
   window.removeEventListener(ROOM_LIVE2D_DEBUG_EVENT, handleLive2DDebugEvent);
   stopLiveDirector();
   speechPlayer?.destroy();
+  asrRecorder?.destroy();
   speechPlayer = null;
+  asrRecorder = null;
   delete window.TSUKUYOMI_LIVE2D_DISABLE_POINTER;
 });
 </script>
@@ -782,12 +825,27 @@ onUnmounted(() => {
         </div>
         <div class="live2d-audience-row">
           <input v-model="audienceInput" type="text" spellcheck="false" placeholder="Audience line" @keydown.enter="sendAudienceLine">
+          <button
+            class="live2d-icon-btn live2d-mic-btn"
+            :class="{ active: asrState.status === 'listening' }"
+            type="button"
+            :title="asrState.status === 'listening' ? 'Stop voice input' : 'Start voice input'"
+            :aria-label="asrState.status === 'listening' ? 'Stop voice input' : 'Start voice input'"
+            :aria-pressed="asrState.status === 'listening' ? 'true' : 'false'"
+            :disabled="asrState.status === 'transcribing'"
+            @click="toggleAudienceAsr"
+          >
+            <TsIcon :name="asrState.status === 'transcribing' ? 'loader' : 'mic'" :size="17" />
+          </button>
           <button class="live2d-icon-btn" type="button" title="Send audience line" aria-label="Send audience line" @click="sendAudienceLine">
             <TsIcon name="send" :size="17" />
           </button>
         </div>
-        <p v-if="liveDirector.error || speechState.error" class="live2d-inline-error">
-          {{ liveDirector.error || speechState.error }}
+        <p v-if="liveDirector.error || speechState.error || asrState.error" class="live2d-inline-error">
+          {{ liveDirector.error || speechState.error || asrState.error }}
+        </p>
+        <p v-else-if="asrState.status === 'listening' || asrState.status === 'transcribing'" class="live2d-inline-status">
+          {{ asrState.status === 'listening' ? 'Listening...' : 'Recognizing...' }}
         </p>
       </section>
 

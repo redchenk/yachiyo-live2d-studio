@@ -5,6 +5,7 @@ export const ROOM_TTS_SETTINGS_KEY = 'roomTTSSettings';
 export const ROOM_MODEL_SETTINGS_KEY = 'roomModelSettings';
 export const ROOM_VTS_SETTINGS_KEY = 'roomVTubeStudioSettings';
 export const ROOM_MEMORY_SETTINGS_KEY = 'roomMemorySettings';
+export const ROOM_ASR_SETTINGS_KEY = 'roomASRSettings';
 const ROOM_MODEL_STAGE_DEFAULTS_MIGRATION_KEY = 'roomModelStageDefaultsMigratedV2';
 const ROOM_MODEL_RENDER_DEFAULTS_MIGRATION_KEY = 'roomModelRenderDefaultsMigratedV2';
 const LEGACY_ROOM_MODEL_STAGE_IDLE_SCALE = 0.9;
@@ -39,6 +40,16 @@ export const DEFAULT_ROOM_TTS_SETTINGS = {
   gptWeightPath: DEFAULT_GPT_SOVITS_GPT_WEIGHT,
   sovitsWeightPath: DEFAULT_GPT_SOVITS_SOVITS_WEIGHT,
   useProxy: false
+};
+
+export const DEFAULT_ROOM_ASR_SETTINGS = {
+  enabled: false,
+  provider: 'vosk',
+  modelPath: 'models/vosk/vosk-model-small-cn-0.22',
+  sampleRate: 16000,
+  maxRecordMs: 12000,
+  endpoint: '/api/asr',
+  words: false
 };
 
 export const DEFAULT_ROOM_MODEL_SETTINGS = {
@@ -153,6 +164,20 @@ export function normalizeRoomTTSSettings(settings = {}) {
   };
 }
 
+export function normalizeRoomASRSettings(settings = {}) {
+  const merged = { ...DEFAULT_ROOM_ASR_SETTINGS, ...(settings || {}) };
+  const provider = asText(merged.provider) || DEFAULT_ROOM_ASR_SETTINGS.provider;
+  return {
+    enabled: asBoolean(merged.enabled),
+    provider: provider === 'vosk' ? provider : DEFAULT_ROOM_ASR_SETTINGS.provider,
+    modelPath: String(merged.modelPath || '').trim() || DEFAULT_ROOM_ASR_SETTINGS.modelPath,
+    sampleRate: Math.round(asNumber(merged.sampleRate, DEFAULT_ROOM_ASR_SETTINGS.sampleRate, 8000, 48000)),
+    maxRecordMs: Math.round(asNumber(merged.maxRecordMs, DEFAULT_ROOM_ASR_SETTINGS.maxRecordMs, 1500, 60000)),
+    endpoint: asText(merged.endpoint) || DEFAULT_ROOM_ASR_SETTINGS.endpoint,
+    words: asBoolean(merged.words)
+  };
+}
+
 export function normalizeRoomModelSettings(settings = {}) {
   const merged = { ...DEFAULT_ROOM_MODEL_SETTINGS, ...(settings || {}) };
   return {
@@ -257,6 +282,10 @@ export function readRoomTTSSettings() {
   return normalizeRoomTTSSettings(readJson(ROOM_TTS_SETTINGS_KEY, clone(DEFAULT_ROOM_TTS_SETTINGS)));
 }
 
+export function readRoomASRSettings() {
+  return normalizeRoomASRSettings(readJson(ROOM_ASR_SETTINGS_KEY, clone(DEFAULT_ROOM_ASR_SETTINGS)));
+}
+
 export function readRoomModelSettings() {
   return upgradeLegacyRoomModelStageDefaults(
     normalizeRoomModelSettings(readJson(ROOM_MODEL_SETTINGS_KEY, clone(DEFAULT_ROOM_MODEL_SETTINGS)))
@@ -283,6 +312,12 @@ export function writeRoomTTSSettings(settings) {
   return normalized;
 }
 
+export function writeRoomASRSettings(settings) {
+  const normalized = normalizeRoomASRSettings(settings);
+  writeJson(ROOM_ASR_SETTINGS_KEY, normalized);
+  return normalized;
+}
+
 export function writeRoomModelSettings(settings) {
   const normalized = normalizeRoomModelSettings(settings);
   writeJson(ROOM_MODEL_SETTINGS_KEY, normalized);
@@ -305,6 +340,7 @@ export function readRoomStudioSettings() {
   return {
     llm: readRoomLLMSettings(),
     tts: readRoomTTSSettings(),
+    asr: readRoomASRSettings(),
     model: readRoomModelSettings(),
     vts: readRoomVTubeStudioSettings(),
     memory: readRoomMemorySettings()

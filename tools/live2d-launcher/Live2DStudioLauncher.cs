@@ -308,6 +308,7 @@ internal sealed class LocalStudioServer : IDisposable
     {
         shutdown.Cancel();
         DesktopApiProxy.ShutdownMemoryDataService();
+        DesktopApiProxy.ShutdownAsrService();
         var current = listener;
         listener = null;
         if (current != null)
@@ -377,6 +378,12 @@ internal sealed class LocalStudioServer : IDisposable
             if (method == "POST" && string.Equals(path, "/api/tts", StringComparison.OrdinalIgnoreCase))
             {
                 WriteApiResponse(stream, DesktopApiProxy.Tts(request.Body));
+                return;
+            }
+
+            if (method == "POST" && string.Equals(path, "/api/asr", StringComparison.OrdinalIgnoreCase))
+            {
+                WriteApiResponse(stream, DesktopApiProxy.Asr(request.Body));
                 return;
             }
 
@@ -742,8 +749,11 @@ internal static class DesktopApiProxy
     private const string MemoryIndexRelativePath = ".yachiyo-index/memory-index.json";
     private const string DisabledMemoryRelativePath = ".yachiyo-index/disabled-memory.json";
     private const int MemoryDataServicePort = 3299;
+    private const int AsrServicePort = 3301;
     private static readonly object MemoryDataServiceLock = new object();
+    private static readonly object AsrServiceLock = new object();
     private static Process memoryDataServiceProcess;
+    private static Process asrServiceProcess;
 
     public static void Configure(string root)
     {
@@ -766,6 +776,24 @@ internal static class DesktopApiProxy
             catch
             {
                 // Best-effort cleanup for the optional memory sidecar.
+            }
+        }
+    }
+
+    public static void ShutdownAsrService()
+    {
+        lock (AsrServiceLock)
+        {
+            var process = asrServiceProcess;
+            asrServiceProcess = null;
+            if (process == null) return;
+            try
+            {
+                if (!process.HasExited) process.Kill();
+            }
+            catch
+            {
+                // Best-effort cleanup for the optional ASR sidecar.
             }
         }
     }
@@ -887,6 +915,142 @@ internal static class DesktopApiProxy
         catch (Exception ex)
         {
             return JsonError(500, ex.Message);
+        }
+    }
+
+    public static StudioApiResponse Asr(byte[] body)
+    {
+        try
+        {
+            var input = ParseObject(body);
+            var provider = GetString(input, "provider");
+            if (!string.IsNullOrWhiteSpace(provider) &&
+                !string.Equals(provider, "vosk", StringComparison.OrdinalIgnoreCase))
+            {
+                return JsonError(400, "Only local Vosk ASR is supported.");
+            }
+            if (string.IsNullOrWhiteSpace(GetString(input, "audioBase64")))
+            {
+                return JsonError(400, "audioBase64 is required.");
+            }
+            return ProxyAsrService(body);
+        }
+        catch (WebException ex)
+        {
+            return JsonError(GetStatusCode(ex, 502), ReadWebException(ex));
+        }
+        catch (Exception ex)
+        {
+            return JsonError(500, ex.Message);
+        }
+    }
+
+    private static StudioApiResponse ProxyAsrService(byte[] body)
+    {
+        try
+        {
+            EnsureAsrServiceStarted();
+            var response = PostBytes("http://127.0.0.1:" + AsrServicePort + "/api/asr", Encoding.UTF8.GetString(body ?? new byte[0]), new Dictionary<string, string>());
+            return new StudioApiResponse
+            {
+                StatusCode = 200,
+                StatusText = "OK",
+                ContentType = string.IsNullOrWhiteSpace(response.ContentType) ? "application/json; charset=utf-8" : response.ContentType,
+                Body = response.Body
+            };
+        }
+        catch (WebException ex)
+        {
+            var providerResponse = ex.Response as HttpWebResponse;
+            if (providerResponse != null)
+            {
+                var statusCode = (int)providerResponse.StatusCode;
+                var statusText = providerResponse.StatusDescription;
+                var payload = ReadProviderResponse(providerResponse);
+                return new StudioApiResponse
+                {
+                    StatusCode = statusCode,
+                    StatusText = statusText,
+                    ContentType = string.IsNullOrWhiteSpace(payload.ContentType) ? "application/json; charset=utf-8" : payload.ContentType,
+                    Body = payload.Body
+                };
+            }
+            return JsonError(502, ReadWebException(ex));
+        }
+        catch (Exception ex)
+        {
+            return JsonError(502, ex.Message);
+        }
+    }
+
+    private static void EnsureAsrServiceStarted()
+    {
+        if (ProbeAsrService()) return;
+        lock (AsrServiceLock)
+        {
+            if (ProbeAsrService()) return;
+            if (asrServiceProcess != null && !asrServiceProcess.HasExited)
+            {
+                WaitForAsrService();
+                return;
+            }
+
+            var nodeDir = Live2DStudioLauncher.FindNodeDirectory(repoRoot);
+            if (string.IsNullOrWhiteSpace(nodeDir))
+            {
+                throw new InvalidOperationException("Node.js is required for local Vosk ASR.");
+            }
+            var nodeExe = Path.Combine(nodeDir, "node.exe");
+            var script = Path.Combine(repoRoot, "tools", "asr", "vosk-asr-service.mjs");
+            if (!File.Exists(script))
+            {
+                throw new InvalidOperationException("Vosk ASR service script is missing.");
+            }
+
+            var start = new ProcessStartInfo
+            {
+                FileName = nodeExe,
+                Arguments = QuoteArgument(script) + " --port " + AsrServicePort + " --repo-root " + QuoteArgument(repoRoot),
+                WorkingDirectory = repoRoot,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+            start.EnvironmentVariables["YACHIYO_REPO_ROOT"] = repoRoot;
+            asrServiceProcess = Process.Start(start);
+            WaitForAsrService();
+        }
+    }
+
+    private static void WaitForAsrService()
+    {
+        for (var i = 0; i < 40; i++)
+        {
+            if (ProbeAsrService()) return;
+            if (asrServiceProcess != null && asrServiceProcess.HasExited)
+            {
+                throw new InvalidOperationException("Vosk ASR service exited before it became ready. Make sure npm install has installed the vosk package.");
+            }
+            Thread.Sleep(125);
+        }
+        throw new InvalidOperationException("Vosk ASR service did not become ready.");
+    }
+
+    private static bool ProbeAsrService()
+    {
+        try
+        {
+            var request = (HttpWebRequest)WebRequest.Create("http://127.0.0.1:" + AsrServicePort + "/healthz");
+            request.Method = "GET";
+            request.Timeout = 500;
+            request.ReadWriteTimeout = 500;
+            using (var response = (HttpWebResponse)request.GetResponse())
+            {
+                return (int)response.StatusCode >= 200 && (int)response.StatusCode < 300;
+            }
+        }
+        catch
+        {
+            return false;
         }
     }
 
