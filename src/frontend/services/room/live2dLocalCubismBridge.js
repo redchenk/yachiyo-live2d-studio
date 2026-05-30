@@ -1,4 +1,5 @@
 import { mountCubismBehaviorBridge } from './live2dCubismBehaviorBridge';
+import { YACHIYO_MODEL_PARAMETER_RANGES } from '../../constants/room/yachiyoModelParameterRegistry';
 
 const FACE_CAPTURE_EVENT = 'tsukuyomi:live2d-face';
 const LOCAL_BRIDGE_STATE_KEY = '__TSUKUYOMI_LOCAL_CUBISM_BRIDGE_STATE__';
@@ -78,8 +79,13 @@ function isLocalCubismPhysicsOutputId(id) {
   return LOCAL_CUBISM_PHYSICS_OUTPUT_PREFIXES.some((prefix) => value.startsWith(prefix));
 }
 
+function isYachiyoModelParameterId(id) {
+  return !!YACHIYO_MODEL_PARAMETER_RANGES[String(id || '')];
+}
+
 function isLocalCubismSuppressedId(id) {
   const value = String(id || '');
+  if (isYachiyoModelParameterId(value)) return false;
   return LOCAL_CUBISM_PHYSICS_MANAGED_IDS.has(value) || isLocalCubismPhysicsOutputId(value);
 }
 
@@ -110,6 +116,18 @@ function normalizeParameterId(item) {
 
 function localFrameSmoothingProfile(id) {
   if (id.startsWith('ParamSwitchCtrl_')) return { alpha: 1, step: 1 };
+  if (id.startsWith('ParamBodyInput_')) return { alpha: 0.24, step: 1.7 };
+  if (id.startsWith('ParamOutput_') || id.startsWith('ParamPhysicsRAM_')) return { alpha: 0.18, step: 1.2 };
+  if (id.startsWith('ParamAngle_Body') || id.startsWith('ParamAngle_Chest') || id.startsWith('ParamAngle_Hip') || id.startsWith('ParamAngle_Shoulder')) return { alpha: 0.18, step: 1.15 };
+  if (id === 'ParamPosition_Z') return { alpha: 0.16, step: 0.85 };
+  if (id.startsWith('ParamHair')) return { alpha: 0.18, step: 0.72 };
+  if (id.startsWith('ParamEarShape')) return { alpha: 0.22, step: 0.08 };
+  if (id.startsWith('ParamEarPhysics')) return { alpha: 0.18, step: 2.8 };
+  if (id.startsWith('ParamHatEar')) return { alpha: 0.2, step: 2.2 };
+  if (id.startsWith('ParamHatPhysics')) return { alpha: 0.18, step: 1.8 };
+  if (id.startsWith('ParamWingPhysics')) return { alpha: 0.16, step: 2.8 };
+  if (id.startsWith('ParamCheongsamPhysics')) return { alpha: 0.16, step: 1.6 };
+  if (id.startsWith('ParamTonguePhysics') || id.startsWith('ParamDollEarPhysics')) return { alpha: 0.2, step: 2.2 };
   if (id.includes('MouthOpen') || id.includes('JawOpen') || id.includes('VoiceVolume')) return { alpha: 0.72, step: 0.36 };
   if (id === 'ParamEyeLOpen' || id === 'ParamEyeROpen' || id.includes('EyeOpen')) return { alpha: 0.58, step: 0.72 };
   if (id.includes('EyeBall')) return { alpha: 0.24, step: 0.1 };
@@ -149,7 +167,7 @@ function smoothLocalCubismFrame(parameters, now = nowMs()) {
       ...item,
       id,
       value: Math.abs(nextValue) < 0.0005 ? 0 : nextValue,
-      weight: Number.isFinite(weight) ? Math.min(Math.max(weight, 0.01), 0.92) : item?.weight
+      weight: Number.isFinite(weight) ? Math.min(Math.max(weight, 0.01), 1) : item?.weight
     });
   }
 
@@ -169,7 +187,7 @@ function writeLocalCubismFrame(parameters) {
         mounted: true,
         output: 'runtime-direct',
         parameterCount: frameParameters.length,
-        bodyTargetCount: 0
+        bodyTargetCount: frameParameters.filter((item) => /^Param(?:BodyInput|Output|PhysicsRAM|Angle_Body|Angle_Chest|Angle_Hip|Angle_Shoulder)|^PositionZ$|^ParamPosition_Z$/.test(item.id)).length
       });
       return;
     } catch (error) {
