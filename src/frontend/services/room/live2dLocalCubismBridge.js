@@ -61,6 +61,13 @@ const LOCAL_CUBISM_PHYSICS_OUTPUT_PREFIXES = [
 ];
 
 let lastSmoothedFrame = new Map();
+let lastSmoothedAt = 0;
+
+function nowMs() {
+  return typeof performance !== 'undefined' && typeof performance.now === 'function'
+    ? performance.now()
+    : Date.now();
+}
 
 function isLocalCubismBodyDriverId(id) {
   return LOCAL_CUBISM_BODY_DRIVER_IDS.has(String(id || ''));
@@ -101,29 +108,40 @@ function normalizeParameterId(item) {
   return String(item?.id || item?.parameterId || item?.param || item?.key || item?.name || '').trim();
 }
 
-function localFrameSmoothingAlpha(id) {
-  if (id.startsWith('ParamSwitchCtrl_')) return 1;
-  if (id.includes('MouthOpen') || id.includes('JawOpen') || id.includes('VoiceVolume')) return 0.7;
-  if (id.includes('EyeOpen')) return 0.5;
-  if (id.includes('EyeBall') || id.includes('Brow') || id.includes('Mouth') || id.includes('Cheek')) return 0.34;
-  if (isLocalCubismBodyDriverId(id)) return 0.22;
-  if (id.includes('Angle') || id.includes('Position')) return 0.24;
-  return 0.3;
+function localFrameSmoothingProfile(id) {
+  if (id.startsWith('ParamSwitchCtrl_')) return { alpha: 1, step: 1 };
+  if (id.includes('MouthOpen') || id.includes('JawOpen') || id.includes('VoiceVolume')) return { alpha: 0.72, step: 0.36 };
+  if (id === 'ParamEyeLOpen' || id === 'ParamEyeROpen' || id.includes('EyeOpen')) return { alpha: 0.58, step: 0.72 };
+  if (id.includes('EyeBall')) return { alpha: 0.24, step: 0.1 };
+  if (id.includes('Brow') || id.includes('Cheek')) return { alpha: 0.2, step: 0.09 };
+  if (id.includes('Mouth')) return { alpha: 0.34, step: 0.18 };
+  if (isLocalCubismBodyDriverId(id)) return { alpha: 0.16, step: 0.72 };
+  if (id === 'ParamAngleX' || id === 'ParamAngleY' || id === 'ParamAngleZ') return { alpha: 0.16, step: 1.05 };
+  if (id === 'PositionX' || id === 'PositionY' || id === 'PositionZ' || id === 'ParamPosition_Z') return { alpha: 0.14, step: 0.56 };
+  if (id.includes('Angle') || id.includes('Position')) return { alpha: 0.18, step: 0.72 };
+  return { alpha: 0.28, step: 0.12 };
 }
 
-function smoothLocalCubismFrame(parameters) {
+function smoothLocalCubismFrame(parameters, now = nowMs()) {
   if (!Array.isArray(parameters)) return [];
 
   const nextFrameIds = new Set();
   const smoothed = [];
+  const deltaMs = lastSmoothedAt ? Math.min(Math.max(now - lastSmoothedAt, 8), 80) : 16.67;
+  const frameScale = Math.min(Math.max(deltaMs / 16.67, 0.5), 3);
+  lastSmoothedAt = now;
   for (const item of parameters) {
     const id = normalizeParameterId(item);
     const value = Number(item?.value);
     if (!id || !Number.isFinite(value) || isLocalCubismSuppressedId(id)) continue;
 
     const previous = lastSmoothedFrame.get(id);
-    const alpha = localFrameSmoothingAlpha(id);
-    const nextValue = previous === undefined ? value : previous + (value - previous) * alpha;
+    const { alpha, step } = localFrameSmoothingProfile(id);
+    const blendedValue = previous === undefined ? value : previous + (value - previous) * alpha;
+    const maxStep = step * frameScale;
+    const nextValue = previous === undefined
+      ? value
+      : Math.min(Math.max(blendedValue, previous - maxStep), previous + maxStep);
     const weight = Number(item?.weight);
     lastSmoothedFrame.set(id, nextValue);
     nextFrameIds.add(id);
@@ -189,5 +207,6 @@ export function mountLocalCubismBridge() {
     }
     setLocalBridgeState({ mounted: false, output: 'destroyed', parameterCount: 0 });
     lastSmoothedFrame = new Map();
+    lastSmoothedAt = 0;
   };
 }
