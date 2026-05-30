@@ -49,6 +49,7 @@ function resolveBehaviorActions(detail = {}) {
 export function createLive2DPerformanceBrain() {
   const characterState = createLive2DCharacterStateMachine();
   let behaviorPlan = null;
+  let outgoingPlan = null;
   let cachedFrameKey = -1;
   let cachedFrame = null;
   let lastRoomActDetail = null;
@@ -58,6 +59,40 @@ export function createLive2DPerformanceBrain() {
   function invalidateFrameCache() {
     cachedFrameKey = -1;
     cachedFrame = null;
+  }
+
+  function releaseBehaviorPlan(plan, at, fadeOutMs = 0) {
+    if (!plan) return;
+    const elapsedAtRelease = Math.max(0, at - (Number(plan.startedAt) || at));
+    outgoingPlan = {
+      plan,
+      releasedAt: at,
+      elapsedAtRelease,
+      fadeOutMs: clamp(fadeOutMs || plan.interruptPolicy?.blendOutMs, 180, 900, 260)
+    };
+  }
+
+  function sampleOutgoingBehaviorActions(at, intensityScale) {
+    if (!outgoingPlan) return [];
+    const elapsedAfterRelease = Math.max(0, at - outgoingPlan.releasedAt);
+    const fade = 1 - clamp(elapsedAfterRelease / Math.max(outgoingPlan.fadeOutMs, 1), 0, 1, 1);
+    if (fade <= 0.001) {
+      outgoingPlan = null;
+      return [];
+    }
+    const samples = sampleActiveBehaviorActions(
+      outgoingPlan.plan.actions,
+      outgoingPlan.elapsedAtRelease + elapsedAfterRelease,
+      { intensityScale }
+    ).map((sample) => ({
+      ...sample,
+      envelope: sample.envelope * fade,
+      intensity: sample.intensity * fade,
+      energy: sample.energy * fade,
+      outgoing: true
+    }));
+    if (!samples.length) outgoingPlan = null;
+    return samples;
   }
 
   function startBehaviorPlan(actions, durationMs, options = {}) {
@@ -76,6 +111,9 @@ export function createLive2DPerformanceBrain() {
       speechStyle: options.speechStyle
     });
     if (!shouldInterruptLive2DBehaviorPlan(behaviorPlan, nextPlan, now)) return behaviorPlan;
+    if (behaviorPlan) {
+      releaseBehaviorPlan(behaviorPlan, now, nextPlan.interruptPolicy?.blendInMs || behaviorPlan.interruptPolicy?.blendOutMs);
+    }
     behaviorPlan = nextPlan;
     invalidateFrameCache();
     characterState.setMode('acting', {
@@ -147,22 +185,29 @@ export function createLive2DPerformanceBrain() {
     const currentPlan = behaviorPlan;
     const elapsedMs = currentPlan ? now - currentPlan.startedAt : 0;
     if (currentPlan && elapsedMs >= currentPlan.durationMs) {
+      releaseBehaviorPlan(currentPlan, now, currentPlan.interruptPolicy?.blendOutMs);
       behaviorPlan = null;
       characterState.setMode('listening', { now, holdMs: 1400, attention: 0.52 });
     }
     const activePlan = behaviorPlan;
-    const samples = activePlan ? sampleActiveBehaviorActions(activePlan.actions, elapsedMs, {
-      intensityScale: Number(options.intensityScale) || 1.62
+    const intensityScale = Number(options.intensityScale) || 1.62;
+    const outgoingExpression = outgoingPlan?.plan?.expression;
+    const trailingSamples = sampleOutgoingBehaviorActions(now, intensityScale);
+    const activeSamples = activePlan ? sampleActiveBehaviorActions(activePlan.actions, elapsedMs, {
+      intensityScale
     }) : [];
-    const dominant = activePlan ? pickDominantMotion(samples) : null;
+    const samples = [...trailingSamples, ...activeSamples];
+    const dominant = activePlan
+      ? pickDominantMotion(activeSamples.length ? activeSamples : samples)
+      : pickDominantMotion(samples);
     cachedFrame = {
       character,
       behaviorPlan: activePlan,
       elapsedMs,
       samples,
       dominant,
-      expression: activePlan?.expression || character.emotion,
-      active: Boolean(activePlan),
+      expression: activePlan?.expression || outgoingExpression || character.emotion,
+      active: Boolean(activePlan || trailingSamples.length),
       completed: Boolean(currentPlan && !activePlan)
     };
     cachedFrameKey = frameKey;
@@ -178,7 +223,7 @@ export function createLive2DPerformanceBrain() {
   }
 
   function hasBehaviorPlan() {
-    return Boolean(behaviorPlan);
+    return Boolean(behaviorPlan || outgoingPlan);
   }
 
   return {
