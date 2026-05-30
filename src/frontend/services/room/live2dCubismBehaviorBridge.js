@@ -588,15 +588,18 @@ function applyCharacterState(frame, character, strength = 1, options = {}) {
   if (!character) return;
   const amount = clamp(strength, 0, 1, 1);
   const isSpeaking = character.mode === 'speaking';
+  const faceVerticalAmount = isSpeaking ? amount * 0.72 : amount;
+  const bodyVerticalAmount = isSpeaking ? amount * 0.46 : amount;
+  const bodyPositionVerticalAmount = isSpeaking ? amount * 0.34 : amount;
   const bodyWeight = isSpeaking ? 0.98 : 0.8;
   setHead(frame, {
     x: character.faceX * amount,
-    y: character.faceY * amount,
+    y: character.faceY * faceVerticalAmount,
     z: character.faceZ * amount
   }, 0.88);
   setFacePosition(frame, {
     x: character.facePosX * amount,
-    y: character.facePosY * amount
+    y: character.facePosY * faceVerticalAmount
   }, isSpeaking ? 0.78 : 0.64);
   setEyes(frame, character.eyeX * amount, character.eyeY * amount, 0.78);
   if (!options.suppressEyeOpen) setEyeOpen(frame, character.eyeOpen, character.eyeOpen, 0.72);
@@ -605,17 +608,17 @@ function applyCharacterState(frame, character, strength = 1, options = {}) {
   setFrameValue(frame, 'ParamCheek', clamp((character.mouthSmile - 0.58) * 0.45 + character.energy * 0.05, 0, 0.35, 0.02), 0.32);
   setBody(frame, {
     x: character.bodyX * amount,
-    y: character.bodyY * amount,
+    y: character.bodyY * bodyVerticalAmount,
     z: character.bodyZ * amount,
     posX: character.bodyPosX * amount,
-    posY: character.bodyPosY * amount
+    posY: character.bodyPosY * bodyPositionVerticalAmount
   }, bodyWeight);
   addAccessoryFollow(frame, {
     x: character.bodyX * amount,
-    y: character.bodyY * amount,
+    y: character.bodyY * bodyVerticalAmount,
     z: character.bodyZ * amount,
     posX: character.bodyPosX * amount,
-    posY: character.bodyPosY * amount
+    posY: character.bodyPosY * bodyPositionVerticalAmount
   }, bodyWeight, character);
 }
 

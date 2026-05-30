@@ -63,6 +63,7 @@ const LOCAL_CUBISM_PHYSICS_OUTPUT_PREFIXES = [
 ];
 
 let lastSmoothedFrame = new Map();
+let lastVelocityFrame = new Map();
 let lastSmoothedAt = 0;
 let pendingFrame = new Map();
 let flushTimer = 0;
@@ -131,10 +132,10 @@ function normalizeParameterId(item) {
 
 function localFrameSmoothingProfile(id) {
   if (id.startsWith('ParamSwitchCtrl_')) return { alpha: 1, step: 1 };
-  if (id.startsWith('ParamBodyInput_')) return { alpha: 0.32, step: 2.1 };
-  if (id.startsWith('ParamOutput_') || id.startsWith('ParamPhysicsRAM_')) return { alpha: 0.3, step: 2.0 };
-  if (id.startsWith('ParamAngle_Body') || id.startsWith('ParamAngle_Chest') || id.startsWith('ParamAngle_Hip') || id.startsWith('ParamAngle_Shoulder')) return { alpha: 0.3, step: 2.0 };
-  if (id === 'ParamPosition_Z') return { alpha: 0.46, step: 2.2 };
+  if (id.startsWith('ParamBodyInput_')) return { alpha: 0.28, step: 1.8, accel: 0.42 };
+  if (id.startsWith('ParamOutput_') || id.startsWith('ParamPhysicsRAM_')) return { alpha: 0.26, step: 1.65, accel: 0.36 };
+  if (id.startsWith('ParamAngle_Body') || id.startsWith('ParamAngle_Chest') || id.startsWith('ParamAngle_Hip') || id.startsWith('ParamAngle_Shoulder')) return { alpha: 0.26, step: 1.7, accel: 0.38 };
+  if (id === 'ParamPosition_Z') return { alpha: 0.36, step: 1.6, accel: 0.3 };
   if (id.startsWith('ParamHair')) return { alpha: 0.46, step: 2.8 };
   if (id.startsWith('ParamEarShape')) return { alpha: 0.42, step: 0.16 };
   if (id.startsWith('ParamEarPhysics')) return { alpha: 0.5, step: 8.5 };
@@ -149,11 +150,11 @@ function localFrameSmoothingProfile(id) {
   if (id.includes('EyeBall')) return { alpha: 0.36, step: 0.18 };
   if (id.includes('Brow') || id.includes('Cheek')) return { alpha: 0.34, step: 0.12 };
   if (id.includes('Mouth')) return { alpha: 0.34, step: 0.18 };
-  if (isLocalCubismBodyDriverId(id)) return { alpha: 0.32, step: 1.8 };
-  if (id === 'ParamAngleX' || id === 'ParamAngleY' || id === 'ParamAngleZ') return { alpha: 0.38, step: 3.2 };
-  if (id === 'PositionY') return { alpha: 0.28, step: 1.1 };
-  if (id === 'PositionX' || id === 'PositionZ') return { alpha: 0.36, step: 1.8 };
-  if (id.includes('Angle') || id.includes('Position')) return { alpha: 0.34, step: 1.8 };
+  if (isLocalCubismBodyDriverId(id)) return { alpha: 0.28, step: 1.55, accel: 0.34 };
+  if (id === 'ParamAngleX' || id === 'ParamAngleY' || id === 'ParamAngleZ') return { alpha: 0.34, step: 2.65, accel: 0.62 };
+  if (id === 'PositionY') return { alpha: 0.24, step: 0.86, accel: 0.16 };
+  if (id === 'PositionX' || id === 'PositionZ') return { alpha: 0.32, step: 1.45, accel: 0.28 };
+  if (id.includes('Angle') || id.includes('Position')) return { alpha: 0.3, step: 1.45, accel: 0.28 };
   return { alpha: 0.34, step: 0.12 };
 }
 
@@ -171,14 +172,23 @@ function smoothLocalCubismFrame(parameters, now = nowMs()) {
     if (!id || !Number.isFinite(value) || isLocalCubismSuppressedId(id)) continue;
 
     const previous = lastSmoothedFrame.get(id);
-    const { alpha, step } = localFrameSmoothingProfile(id);
+    const { alpha, step, accel } = localFrameSmoothingProfile(id);
     const blendedValue = previous === undefined ? value : previous + (value - previous) * alpha;
     const maxStep = step * frameScale;
-    const nextValue = previous === undefined
-      ? value
-      : Math.min(Math.max(blendedValue, previous - maxStep), previous + maxStep);
+    const previousVelocity = lastVelocityFrame.get(id) || 0;
+    const targetStep = previous === undefined
+      ? 0
+      : Math.min(Math.max(blendedValue - previous, -maxStep), maxStep);
+    const maxAccel = Number(accel) > 0 ? Number(accel) * frameScale : 0;
+    const nextStep = previous === undefined
+      ? 0
+      : (maxAccel
+        ? Math.min(Math.max(targetStep, previousVelocity - maxAccel), previousVelocity + maxAccel)
+        : targetStep);
+    const nextValue = previous === undefined ? value : previous + nextStep;
     const weight = Number(item?.weight);
     lastSmoothedFrame.set(id, nextValue);
+    lastVelocityFrame.set(id, nextStep);
     nextFrameIds.add(id);
     smoothed.push({
       ...item,
@@ -189,7 +199,10 @@ function smoothLocalCubismFrame(parameters, now = nowMs()) {
   }
 
   for (const id of lastSmoothedFrame.keys()) {
-    if (!nextFrameIds.has(id)) lastSmoothedFrame.delete(id);
+    if (!nextFrameIds.has(id)) {
+      lastSmoothedFrame.delete(id);
+      lastVelocityFrame.delete(id);
+    }
   }
   return smoothed;
 }
@@ -288,6 +301,7 @@ export function mountLocalCubismBridge() {
     pendingFrame = new Map();
     flushTimer = 0;
     lastSmoothedFrame = new Map();
+    lastVelocityFrame = new Map();
     lastSmoothedAt = 0;
   };
 }
