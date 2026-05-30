@@ -16,6 +16,32 @@ function ease(value) {
   return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
 }
 
+function smoothBehaviorActionTimeline(actions = []) {
+  let previousEnd = 0;
+  let previousDuration = 0;
+  return actions.map((action, index) => {
+    const next = { ...action };
+    const duration = Math.max(Number(next.durationMs) || 1000, 1);
+    let delay = Math.max(0, Number(next.delayMs) || 0);
+
+    if (index > 0) {
+      const overlapMs = clamp(Math.min(previousDuration || duration, duration) * 0.24, 160, 340, 220);
+      const desiredDelay = Math.max(0, previousEnd - overlapMs);
+      const gapMs = delay - previousEnd;
+      const startsAtOrAfterPreviousEnd = delay >= previousEnd - 24;
+
+      if (startsAtOrAfterPreviousEnd && gapMs <= 900) {
+        delay = Math.min(delay, desiredDelay);
+      }
+    }
+
+    next.delayMs = Math.round(delay);
+    previousDuration = duration;
+    previousEnd = Math.max(previousEnd, next.delayMs + duration);
+    return next;
+  });
+}
+
 export function behaviorActionEnvelope(progress) {
   const t = clamp(progress, 0, 1, 0);
   if (t < 0.28) return ease(t / 0.28);
@@ -75,7 +101,7 @@ export function pickDominantMotion(samples) {
 
 export function enrichBehaviorActions(actions = [], options = {}) {
   const durationScale = clamp(options.durationScale, 0.65, 1.45, 1);
-  return (Array.isArray(actions) ? actions : []).map((action, index) => {
+  const enriched = (Array.isArray(actions) ? actions : []).map((action, index) => {
     const sideSign = action.side === 'left'
       ? -1
       : action.side === 'right'
@@ -95,6 +121,7 @@ export function enrichBehaviorActions(actions = [], options = {}) {
       delayMs: Math.max(0, Math.round((Number(action.delayMs) || 0) + delayJitter))
     };
   });
+  return smoothBehaviorActionTimeline(enriched);
 }
 
 export function normalizeBehaviorPlanDuration(actions = [], durationMs, options = {}) {
@@ -127,8 +154,8 @@ export function normalizeLive2DInterruptPolicy(value = null, fallback = {}) {
     mode,
     priority,
     minHoldMs,
-    blendInMs: clamp(raw.blendInMs ?? raw.blend_in_ms ?? fallback.blendInMs, 0, 1200, fallback.blendInMs ?? 120),
-    blendOutMs: clamp(raw.blendOutMs ?? raw.blend_out_ms ?? fallback.blendOutMs, 0, 1200, fallback.blendOutMs ?? 160),
+    blendInMs: clamp(raw.blendInMs ?? raw.blend_in_ms ?? fallback.blendInMs, 0, 1200, fallback.blendInMs ?? 300),
+    blendOutMs: clamp(raw.blendOutMs ?? raw.blend_out_ms ?? fallback.blendOutMs, 0, 1200, fallback.blendOutMs ?? 520),
     canInterrupt: mode !== 'protect' && mode !== 'ignore',
     queue: mode === 'queue'
   };

@@ -223,6 +223,61 @@ function springStep(value) {
   return clamp(smoothStep(t) + Math.sin(Math.PI * t) * 0.08, 0, 1);
 }
 
+function responseAlpha(deltaMs, responseMs) {
+  return 1 - Math.exp(-Math.max(deltaMs, 1) / Math.max(responseMs, 1));
+}
+
+function characterPoseResponseMs(key, pose) {
+  const speaking = pose?.mode === 'speaking';
+  const vertical = key === 'faceY' || key === 'facePosY' || key === 'bodyY' || key === 'bodyPosY';
+  if (speaking && vertical) {
+    if (key === 'bodyPosY') return 390;
+    if (key === 'bodyY') return 340;
+    if (key === 'facePosY') return 320;
+    return 280;
+  }
+  if (vertical) return key === 'bodyPosY' ? 300 : 240;
+  if (key === 'browLeftY' || key === 'browRightY' || key === 'brows') return speaking ? 260 : 220;
+  if (key === 'eyeX' || key === 'eyeY') return speaking ? 170 : 190;
+  if (key === 'bodyX' || key === 'bodyZ' || key === 'bodyPosX') return speaking ? 240 : 210;
+  if (key === 'faceX' || key === 'faceZ' || key === 'facePosX') return speaking ? 190 : 170;
+  return 180;
+}
+
+function smoothCharacterPose(state, pose, deltaMs) {
+  const previous = state.smoothedPose;
+  if (!previous) {
+    state.smoothedPose = { ...pose };
+    return pose;
+  }
+
+  const smoothed = { ...pose };
+  [
+    'eyeX',
+    'eyeY',
+    'faceX',
+    'faceY',
+    'faceZ',
+    'facePosX',
+    'facePosY',
+    'brows',
+    'browLeftY',
+    'browRightY',
+    'bodyX',
+    'bodyY',
+    'bodyZ',
+    'bodyPosX',
+    'bodyPosY'
+  ].forEach((key) => {
+    const next = Number(pose[key]);
+    const last = Number(previous[key]);
+    if (!Number.isFinite(next) || !Number.isFinite(last)) return;
+    smoothed[key] = lerp(last, next, responseAlpha(deltaMs, characterPoseResponseMs(key, pose)));
+  });
+  state.smoothedPose = { ...smoothed };
+  return smoothed;
+}
+
 function speakingMotionValue(state, at, lagMs = 0) {
   const duration = Math.max(Number(state.motionDurationMs) || 4200, 1);
   const progress = clamp(((Number(at) || 0) - lagMs - state.motionStartedAt) / duration, 0, 1);
@@ -486,6 +541,7 @@ export function createLive2DCharacterStateMachine() {
     lastSpeakingGestureType: 'none',
     lastSpeakingGestureSide: 1,
     speakingGestureRepeatCount: 0,
+    smoothedPose: null,
     seed: Math.random() * 1000
   };
 
@@ -616,7 +672,7 @@ export function createLive2DCharacterStateMachine() {
     const breath = Math.sin(motionSeconds * (1.28 + state.arousal * 0.18));
     const slowFloat = Math.sin(motionSeconds * 1.35 + state.seed * 0.13);
     const bodyFloat = Math.sin(motionSeconds * 1.08 + 1.4 + state.seed * 0.09);
-    const livelyFloat = isSpeaking ? Math.sin(motionSeconds * 1.9 + 0.7 + state.seed * 0.07) : 0;
+    const livelyFloat = isSpeaking ? Math.sin(motionSeconds * 1.36 + 0.7 + state.seed * 0.07) : 0;
     const breathMotion = isSpeaking ? breath * 1.05 : breath;
     const speakingDriftScale = isSpeaking ? 0.08 : 1;
     const headDrift = smoothNoise(motionSeconds, 0.42, 0.77, 1.26) * speakingDriftScale;
@@ -662,7 +718,7 @@ export function createLive2DCharacterStateMachine() {
     const browBase = emotionProfile.brow + modeProfile.brow;
     const softBrow = clamp(lerp(browBase, 0.55, speechEnergy * 0.34), 0.18, 0.82);
 
-    return {
+    const rawPose = {
       mode: state.mode,
       emotion: state.emotion,
       transition,
@@ -672,7 +728,7 @@ export function createLive2DCharacterStateMachine() {
       faceX: (headDrift * 2.8 + speechSway * 13.2) * headScale,
       faceY: (
         isSpeaking
-          ? -0.8 - forwardLean * 5.2 + breathMotion * 1.35 + slowFloat * 1.25 + livelyFloat * 0.82 - speechNod * 12 + thinkingNod + actingLift
+          ? -0.8 - forwardLean * 5.2 + breathMotion * 0.95 + slowFloat * 0.86 + livelyFloat * 0.32 - speechNod * 12 + thinkingNod + actingLift
           : -0.8 - idleForwardLean * 5.2 + breathMotion * (1.35 * IDLE_ACTION_RATIO) + slowFloat * (1.25 * IDLE_ACTION_RATIO) - speechNod * (12 * IDLE_ACTION_RATIO) + thinkingNod + actingLift
       ) * headScale,
       faceZ: (
@@ -682,7 +738,7 @@ export function createLive2DCharacterStateMachine() {
       facePosX: (bodyDrift * 0.52 + speechSway * 4.4) * bodyScale,
       facePosY: (
         isSpeaking
-          ? -0.3 * breathMotion + slowFloat * 0.42 + livelyFloat * 0.24 - speechNod * 0.86
+          ? -0.2 * breathMotion + slowFloat * 0.28 + livelyFloat * 0.08 - speechNod * 0.78
           : -0.3 * IDLE_ACTION_RATIO * breathMotion + slowFloat * (0.42 * IDLE_ACTION_RATIO) - speechNod * (0.86 * IDLE_ACTION_RATIO) - speechLift * (0.58 * IDLE_ACTION_RATIO)
       ) * modeProfile.body,
       mouthSmile: clamp(mouthSmile + Math.max(speechNod, 0) * 0.018, 0.18, 0.84),
@@ -692,7 +748,7 @@ export function createLive2DCharacterStateMachine() {
       bodyX: (bodyDrift * 0.72 + speechCounterSway * 7.2) * bodyScale,
       bodyY: (
         isSpeaking
-          ? -forwardLean * 7.2 + breathMotion * 3.0 + bodyFloat * 3.2 + livelyFloat * 1.45 - speechNod * 7.4 + thinkingNod * 0.24
+          ? -forwardLean * 7.2 + breathMotion * 2.15 + bodyFloat * 2.2 + livelyFloat * 0.55 - speechNod * 7.4 + thinkingNod * 0.24
           : -idleForwardLean * 7.2 + breathMotion * (3.0 * IDLE_ACTION_RATIO) + bodyFloat * (3.2 * IDLE_ACTION_RATIO) - speechNod * (7.4 * IDLE_ACTION_RATIO) + thinkingNod * 0.24
       ) * bodyScale,
       bodyZ: (
@@ -703,11 +759,12 @@ export function createLive2DCharacterStateMachine() {
       bodyPosX: (bodyDrift * 0.022 + speechCounterSway * 0.06) * bodyScale,
       bodyPosY: (
         isSpeaking
-          ? breathMotion * 0.025 + bodyFloat * 0.045 + livelyFloat * 0.025 + speechNod * 0.07
+          ? breathMotion * 0.014 + bodyFloat * 0.026 + livelyFloat * 0.004 + speechNod * 0.052
           : breathMotion * (0.025 * IDLE_ACTION_RATIO) + bodyFloat * (0.045 * IDLE_ACTION_RATIO) + speechNod * (0.07 * IDLE_ACTION_RATIO) + speechLift * (0.095 * IDLE_ACTION_RATIO)
       ) * bodyScale,
       energy: clamp(state.arousal + state.mouthEnergy * 0.3, 0, 1)
     };
+    return smoothCharacterPose(state, rawPose, deltaMs);
   }
 
   return {

@@ -67,6 +67,26 @@ function clamp(value, min, max, fallback = min) {
   return Math.min(Math.max(numeric, min), max);
 }
 
+function isSoftTakeoverFrameId(id) {
+  const value = String(id || '');
+  return (
+    value.startsWith('FaceAngle') ||
+    value.startsWith('FacePosition') ||
+    value.startsWith('Mocopi') ||
+    value === 'EyeLeftX' ||
+    value === 'EyeLeftY' ||
+    value === 'EyeRightX' ||
+    value === 'EyeRightY' ||
+    value.startsWith('ParamEarPhysics') ||
+    value.startsWith('ParamHatPhysics') ||
+    value.startsWith('ParamHatEar') ||
+    value.startsWith('ParamWingPhysics') ||
+    value.startsWith('ParamCheongsamPhysics') ||
+    value.startsWith('ParamDollEarPhysics') ||
+    value.startsWith('ParamTonguePhysics')
+  );
+}
+
 function normalizeExpression(value) {
   return normalizeSemanticExpressionId(value) || semanticExpressionFromEmotion(value) || '';
 }
@@ -86,6 +106,20 @@ function setFrameValue(frame, id, value, weight = 0.72) {
   const nextValue = range ? clamp(value, range[0], range[1], range[0]) : Number(value);
   const nextWeight = clamp(weight, 0.01, 1, 0.72);
   const current = frame.get(id);
+  if (
+    current &&
+    isSoftTakeoverFrameId(id) &&
+    nextWeight < current.weight &&
+    nextWeight >= current.weight * 0.45
+  ) {
+    const amount = clamp((nextWeight / Math.max(current.weight, 0.01)) * 0.74, 0.18, 0.78, 0.42);
+    frame.set(id, {
+      id,
+      value: current.value + (nextValue - current.value) * amount,
+      weight: current.weight
+    });
+    return;
+  }
   if (!current || nextWeight >= current.weight) {
     frame.set(id, {
       id,
@@ -96,8 +130,15 @@ function setFrameValue(frame, id, value, weight = 0.72) {
 }
 
 function addFrameValue(frame, id, value, weight = 0.72) {
+  if (!id || !Number.isFinite(Number(value))) return;
+  const range = TRACKING_PARAMETER_RANGES[id];
   const current = frame.get(id);
-  setFrameValue(frame, id, (current?.value || 0) + Number(value || 0), Math.max(current?.weight || 0, weight));
+  const nextValue = (current?.value || 0) + Number(value || 0);
+  frame.set(id, {
+    id,
+    value: range ? clamp(nextValue, range[0], range[1], range[0]) : nextValue,
+    weight: clamp(Math.max(current?.weight || 0, weight), 0.01, 1, 0.72)
+  });
 }
 
 function setEyes(frame, x = 0, y = 0, weight = 0.78) {
