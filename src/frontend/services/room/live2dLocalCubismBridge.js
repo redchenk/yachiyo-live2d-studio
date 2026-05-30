@@ -5,12 +5,19 @@ const LOCAL_BRIDGE_STATE_KEY = '__TSUKUYOMI_LOCAL_CUBISM_BRIDGE_STATE__';
 const BODY_TARGET_WRITE_INTERVAL_MS = 115;
 const BODY_TARGET_DURATION_MS = 360;
 
-const LOCAL_CUBISM_BODY_TARGET_IDS = new Set([
+const LOCAL_CUBISM_BODY_DRIVER_TARGET_IDS = new Set([
   'ParamSwitchCtrl_BodyX',
   'ParamSwitchCtrl_BodyY',
   'ParamSwitchCtrl_BodyZ',
   'ParamSwitchCtrl_ChestZ',
   'ParamSwitchCtrl_HipZ',
+  'ParamBodyAngleX',
+  'ParamBodyAngleY',
+  'ParamBodyAngleZ'
+]);
+
+const LOCAL_CUBISM_BODY_OWNED_IDS = new Set([
+  ...LOCAL_CUBISM_BODY_DRIVER_TARGET_IDS,
   'ParamBodyInput_BodyX',
   'ParamBodyInput_BodyY',
   'ParamBodyInput_BodyZ',
@@ -46,19 +53,31 @@ const LOCAL_CUBISM_BODY_TARGET_IDS = new Set([
   'ParamPosition_Z'
 ]);
 
+const LOCAL_CUBISM_PHYSICS_OUTPUT_PREFIXES = [
+  'ParamHairPhysics',
+  'ParamEarShape',
+  'ParamEarPhysics',
+  'ParamWingPhysics',
+  'ParamHatPhysics',
+  'ParamHatEar',
+  'ParamCheongsamPhysics'
+];
+
 let lastBodyTargetWriteAt = 0;
 let lastSmoothedFrame = new Map();
 
-function isLocalCubismBodyTargetId(id) {
+function isLocalCubismBodyDriverId(id) {
+  return LOCAL_CUBISM_BODY_DRIVER_TARGET_IDS.has(String(id || ''));
+}
+
+function isLocalCubismPhysicsOutputId(id) {
   const value = String(id || '');
-  return (
-    LOCAL_CUBISM_BODY_TARGET_IDS.has(value) ||
-    value.startsWith('ParamHair') ||
-    value.startsWith('ParamEar') ||
-    value.startsWith('ParamWing') ||
-    value.startsWith('ParamHat') ||
-    value.startsWith('ParamCheongsam')
-  );
+  return LOCAL_CUBISM_PHYSICS_OUTPUT_PREFIXES.some((prefix) => value.startsWith(prefix));
+}
+
+function isLocalCubismBodyOwnedId(id) {
+  const value = String(id || '');
+  return LOCAL_CUBISM_BODY_OWNED_IDS.has(value) || isLocalCubismPhysicsOutputId(value);
 }
 
 function setLocalBridgeState(patch) {
@@ -97,7 +116,7 @@ function localCubismBodyTargets(parameters) {
   for (const item of parameters) {
     const id = normalizeParameterId(item);
     const value = Number(item?.value);
-    if (!isLocalCubismBodyTargetId(id) || !Number.isFinite(value)) continue;
+    if (!isLocalCubismBodyDriverId(id) || !Number.isFinite(value)) continue;
     const weight = Number(item?.weight);
     targets.push({
       id,
@@ -125,7 +144,7 @@ function smoothLocalCubismFrame(parameters) {
   for (const item of parameters) {
     const id = normalizeParameterId(item);
     const value = Number(item?.value);
-    if (!id || !Number.isFinite(value) || isLocalCubismBodyTargetId(id)) continue;
+    if (!id || !Number.isFinite(value) || isLocalCubismBodyOwnedId(id)) continue;
 
     const previous = lastSmoothedFrame.get(id);
     const alpha = localFrameSmoothingAlpha(id);
