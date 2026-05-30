@@ -144,6 +144,9 @@ function setBody(frame, pose = {}, weight = 0.84) {
   setFrameValue(frame, 'MocopiBodyAngleZ', z, weight);
   setFrameValue(frame, 'MocopiBodyPositionX', posX, weight * 0.74);
   setFrameValue(frame, 'MocopiBodyPositionY', posY, weight * 0.74);
+  addFrameValue(frame, 'FaceAngleY', y * 0.58 + posY * 7.5, weight * 0.48);
+  addFrameValue(frame, 'FacePositionY', y * 0.34 + posY * 11.5, weight * 0.52);
+  addFrameValue(frame, 'FacePositionX', x * 0.1 + posX * 5.8, weight * 0.38);
 
   addAccessoryFollow(frame, { x, y, z, posX, posY }, weight);
 }
