@@ -2,8 +2,8 @@ import { mountCubismBehaviorBridge } from './live2dCubismBehaviorBridge';
 
 const FACE_CAPTURE_EVENT = 'tsukuyomi:live2d-face';
 const LOCAL_BRIDGE_STATE_KEY = '__TSUKUYOMI_LOCAL_CUBISM_BRIDGE_STATE__';
-const BODY_TARGET_WRITE_INTERVAL_MS = 85;
-const BODY_TARGET_DURATION_MS = 220;
+const BODY_TARGET_WRITE_INTERVAL_MS = 115;
+const BODY_TARGET_DURATION_MS = 360;
 
 const LOCAL_CUBISM_BODY_TARGET_IDS = new Set([
   'ParamSwitchCtrl_BodyX',
@@ -47,6 +47,19 @@ const LOCAL_CUBISM_BODY_TARGET_IDS = new Set([
 ]);
 
 let lastBodyTargetWriteAt = 0;
+let lastSmoothedFrame = new Map();
+
+function isLocalCubismBodyTargetId(id) {
+  const value = String(id || '');
+  return (
+    LOCAL_CUBISM_BODY_TARGET_IDS.has(value) ||
+    value.startsWith('ParamHair') ||
+    value.startsWith('ParamEar') ||
+    value.startsWith('ParamWing') ||
+    value.startsWith('ParamHat') ||
+    value.startsWith('ParamCheongsam')
+  );
+}
 
 function setLocalBridgeState(patch) {
   if (typeof window === 'undefined') return;
@@ -84,7 +97,7 @@ function localCubismBodyTargets(parameters) {
   for (const item of parameters) {
     const id = normalizeParameterId(item);
     const value = Number(item?.value);
-    if (!LOCAL_CUBISM_BODY_TARGET_IDS.has(id) || !Number.isFinite(value)) continue;
+    if (!isLocalCubismBodyTargetId(id) || !Number.isFinite(value)) continue;
     const weight = Number(item?.weight);
     targets.push({
       id,
@@ -94,6 +107,44 @@ function localCubismBodyTargets(parameters) {
     });
   }
   return targets;
+}
+
+function localFrameSmoothingAlpha(id) {
+  if (id.includes('MouthOpen') || id.includes('JawOpen') || id.includes('VoiceVolume')) return 0.7;
+  if (id.includes('EyeOpen')) return 0.5;
+  if (id.includes('EyeBall') || id.includes('Brow') || id.includes('Mouth') || id.includes('Cheek')) return 0.34;
+  if (id.includes('Angle') || id.includes('Position')) return 0.24;
+  return 0.3;
+}
+
+function smoothLocalCubismFrame(parameters) {
+  if (!Array.isArray(parameters)) return [];
+
+  const nextFrameIds = new Set();
+  const smoothed = [];
+  for (const item of parameters) {
+    const id = normalizeParameterId(item);
+    const value = Number(item?.value);
+    if (!id || !Number.isFinite(value) || isLocalCubismBodyTargetId(id)) continue;
+
+    const previous = lastSmoothedFrame.get(id);
+    const alpha = localFrameSmoothingAlpha(id);
+    const nextValue = previous === undefined ? value : previous + (value - previous) * alpha;
+    const weight = Number(item?.weight);
+    lastSmoothedFrame.set(id, nextValue);
+    nextFrameIds.add(id);
+    smoothed.push({
+      ...item,
+      id,
+      value: Math.abs(nextValue) < 0.0005 ? 0 : nextValue,
+      weight: Number.isFinite(weight) ? Math.min(Math.max(weight, 0.01), 0.92) : item?.weight
+    });
+  }
+
+  for (const id of lastSmoothedFrame.keys()) {
+    if (!nextFrameIds.has(id)) lastSmoothedFrame.delete(id);
+  }
+  return smoothed;
 }
 
 function writeBodyTargets(bridge, parameters) {
@@ -111,12 +162,13 @@ function writeLocalCubismFrame(parameters) {
   const bridge = runtimeLocalBridge();
   if (bridge && typeof bridge.setFrame === 'function') {
     try {
-      bridge.setFrame(parameters);
+      const frameParameters = smoothLocalCubismFrame(parameters);
+      bridge.setFrame(frameParameters);
       const bodyTargetCount = writeBodyTargets(bridge, parameters);
       setLocalBridgeState({
         mounted: true,
         output: 'runtime-direct',
-        parameterCount: Array.isArray(parameters) ? parameters.length : 0,
+        parameterCount: frameParameters.length,
         bodyTargetCount
       });
       return;
@@ -155,5 +207,6 @@ export function mountLocalCubismBridge() {
     }
     setLocalBridgeState({ mounted: false, output: 'destroyed', parameterCount: 0 });
     lastBodyTargetWriteAt = 0;
+    lastSmoothedFrame = new Map();
   };
 }
