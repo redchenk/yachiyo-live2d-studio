@@ -1,24 +1,14 @@
-import {
-  behaviorActionBlocksAutoBlink,
-  behaviorActionPriority,
-  normalizeBehaviorBodyPose
-} from '../../constants/room/behaviorActionRegistry';
+import { behaviorActionBlocksAutoBlink } from '../../constants/room/behaviorActionRegistry';
 import {
   normalizeSemanticExpressionId,
   semanticExpressionFromEmotion,
   semanticExpressionVTSOverlay
 } from '../../constants/room/yachiyoExpressionPresetRegistry';
-import { createLive2DCharacterStateMachine } from './live2dCharacterStateMachine';
 import {
   mapTrackingFrameToYachiyoCubismParameters,
   TRACKING_PARAMETER_RANGES
 } from './live2dTrackingFrameMapper';
-import {
-  activeBehaviorSamples as sampleActiveBehaviorActions,
-  createLive2DBehaviorPlan,
-  pickDominantMotion as pickBehaviorDominantMotion,
-  shouldInterruptLive2DBehaviorPlan
-} from './live2dBehaviorOrchestrator';
+import { getRoomLive2DPerformanceBrain } from './live2dPerformanceBrain';
 
 const ROOM_ACT_EVENT = 'tsukuyomi:room-act';
 const FACE_CAPTURE_EVENT = 'tsukuyomi:live2d-face';
@@ -301,24 +291,6 @@ function applyMomentaryPulse(frame, pulse) {
   setMouthSmile(frame, 0.78, 0.56);
 }
 
-function ease(value) {
-  const t = clamp(value, 0, 1, 0);
-  return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
-}
-
-function actionEnvelope(progress) {
-  const t = clamp(progress, 0, 1, 0);
-  if (t < 0.28) return ease(t / 0.28);
-  if (t > 0.76) return ease((1 - t) / 0.24);
-  return 1;
-}
-
-function actionSideSign(action, fallback = 1) {
-  if (action.side === 'left') return -1;
-  if (action.side === 'right') return 1;
-  return Number(action.sideSign) || fallback;
-}
-
 function actionVariant(action) {
   return Math.abs(Math.round(Number(action?.motionVariant) || 0)) % 4;
 }
@@ -328,38 +300,6 @@ function actionSecondarySign(action, fallback = -1) {
   if (value < 0) return -1;
   if (value > 0) return 1;
   return fallback;
-}
-
-function activeBehaviorSamples(actions, elapsedMs) {
-  return (Array.isArray(actions) ? actions : []).map((action) => {
-    const started = Number(action.delayMs) || 0;
-    const duration = Math.max(Number(action.durationMs) || 1000, 1);
-    const progress = (elapsedMs - started) / duration;
-    if (progress < 0 || progress > 1) return null;
-    const envelope = actionEnvelope(progress);
-    const amplitude = clamp(action.amplitude, 0.72, 1.36, 1);
-    const tempo = clamp(action.tempo, 0.82, 1.22, 1);
-    const phaseOffset = Number(action.phaseOffset) || 0;
-    const intensity = clamp((Number(action.intensity) || 0.92) * 1.62 * amplitude, 0.25, 1.85);
-    return {
-      action,
-      progress,
-      phase: progress * Math.PI * 2 * tempo + phaseOffset,
-      envelope,
-      intensity,
-      energy: envelope * intensity,
-      sign: actionSideSign(action, Number(action.sideSign) || 1)
-    };
-  }).filter(Boolean);
-}
-
-function pickDominantMotion(samples) {
-  return samples
-    .filter((sample) => behaviorActionPriority(sample.action.type) > 0)
-    .sort((left, right) => (
-      behaviorActionPriority(right.action.type) * right.energy -
-      behaviorActionPriority(left.action.type) * left.energy
-    ))[0] || null;
 }
 
 function applyAction(frame, sample, options = {}) {
@@ -600,61 +540,6 @@ function applyCharacterState(frame, character, strength = 1, options = {}) {
   }, bodyWeight, character);
 }
 
-function enrichBehaviorActions(actions = []) {
-  return actions.map((action, index) => {
-    const sideSign = action.side === 'left'
-      ? -1
-      : action.side === 'right'
-        ? 1
-        : (Math.random() > 0.5 ? 1 : -1);
-    return {
-      ...action,
-      sideSign,
-      tempo: 0.9 + Math.random() * 0.22,
-      amplitude: 0.92 + Math.random() * 0.26,
-      durationMs: Math.round((Number(action.durationMs) || 1200) * (0.94 + Math.random() * 0.16)),
-      delayMs: Math.max(0, Math.round((Number(action.delayMs) || 0) + (index > 0 ? (Math.random() - 0.5) * 90 : 0))),
-      motionVariant: Math.floor(Math.random() * 4),
-      motionArc: (Math.random() - 0.5) * 2,
-      secondarySign: Math.random() > 0.5 ? 1 : -1,
-      phaseOffset: Math.random() * Math.PI * 2
-    };
-  });
-}
-
-function expressionFromDetail(detail = {}) {
-  const mix = Array.isArray(detail.expressionMix) ? detail.expressionMix : [];
-  const mixed = mix
-    .map((item) => ({
-      expression: normalizeExpression(item?.expression || item?.key || item?.id),
-      weight: Number(item?.weight)
-    }))
-    .filter((item) => item.expression && Number.isFinite(item.weight))
-    .sort((left, right) => right.weight - left.weight)[0]?.expression;
-  return normalizeExpression(mixed || detail.expression || detail.emotion || detail.mood || '');
-}
-
-function actionsFromDetail(detail = {}) {
-  const explicit = Array.isArray(detail.behaviorActions) ? detail.behaviorActions : [];
-  if (explicit.length) return explicit;
-  const pose = normalizeBehaviorBodyPose(detail.bodyPose || detail.pose || detail.posture || detail.motion || detail.action);
-  if (!pose) return [];
-  return [{
-    type: pose,
-    intensity: clamp(detail.intensity, 0.4, 1, 0.82),
-    durationMs: clamp(detail.durationMs || detail.duration, 650, 8000, 2200),
-    delayMs: 0
-  }];
-}
-
-function normalizePlanDuration(actions, durationMs) {
-  return Math.max(
-    clamp(durationMs, 800, 12000, 2400),
-    ...actions.map((action) => (Number(action.delayMs) || 0) + (Number(action.durationMs) || 0)),
-    900
-  );
-}
-
 function finalizeFrame(frame) {
   return mapTrackingFrameToYachiyoCubismParameters([...frame.values()]);
 }
@@ -663,11 +548,10 @@ export function mountCubismBehaviorBridge(options = {}) {
   if (typeof window === 'undefined') return () => {};
 
   window.TSUKUYOMI_CUBISM_BEHAVIOR_BRIDGE = true;
-  const characterState = createLive2DCharacterStateMachine();
+  const performanceBrain = getRoomLive2DPerformanceBrain();
   const frameSink = typeof options.onFrame === 'function' ? options.onFrame : null;
   const frameSource = String(options.source || 'cubism-behavior');
   let frameId = 0;
-  let behaviorPlan = null;
   let momentaryPulse = null;
 
   function dispatchFrame(parameters) {
@@ -680,37 +564,15 @@ export function mountCubismBehaviorBridge(options = {}) {
     }));
   }
 
-  function startBehaviorPlan(actions, durationMs, options = {}) {
-    const now = performance.now();
-    const nextPlan = createLive2DBehaviorPlan(actions, durationMs, {
-      now,
-      expression: options.expression || '',
-      emotion: options.emotion,
-      intensity: options.intensity,
-      priority: options.priority,
-      source: options.source || 'cubism',
-      interruptPolicy: options.interruptPolicy || options.interrupt,
-      speechStyle: options.speechStyle
-    });
-    if (!shouldInterruptLive2DBehaviorPlan(behaviorPlan, nextPlan, now)) return;
-    behaviorPlan = nextPlan;
-  }
-
   function sample(now = performance.now()) {
-    const character = characterState.sample(now);
-    const elapsedMs = behaviorPlan ? now - behaviorPlan.startedAt : 0;
-    if (behaviorPlan && elapsedMs >= behaviorPlan.durationMs) {
-      behaviorPlan = null;
-      characterState.setMode('listening', { now, holdMs: 1400, attention: 0.52 });
-    }
+    const performanceFrame = performanceBrain.sample(now, { intensityScale: 1.62 });
+    const { behaviorPlan, character, dominant, samples } = performanceFrame;
     if (momentaryPulse && now - momentaryPulse.startedAt > momentaryPulse.durationMs) {
       momentaryPulse = null;
     }
 
-    const expression = behaviorPlan?.expression || character.emotion;
+    const expression = performanceFrame.expression;
     const suppressEyeOpen = expressionOwnsEyeOpen(expression);
-    const samples = behaviorPlan ? sampleActiveBehaviorActions(behaviorPlan.actions, elapsedMs, { intensityScale: 1.62 }) : [];
-    const dominant = pickBehaviorDominantMotion(samples);
     const frame = createFrame({ suppressEyeOpen });
 
     applyCharacterState(frame, character, behaviorPlan && dominant ? 0.66 : 1, { suppressEyeOpen });
@@ -729,20 +591,7 @@ export function mountCubismBehaviorBridge(options = {}) {
 
   function onRoomAct(event) {
     const detail = event.detail || {};
-    const expression = expressionFromDetail(detail);
-    characterState.onRoomAct(detail);
-    const actions = actionsFromDetail(detail);
-    if (actions.length) {
-      startBehaviorPlan(actions, detail.durationMs || detail.duration, {
-        expression,
-        emotion: detail.emotion || detail.mood,
-        intensity: detail.intensity,
-        priority: detail.priority,
-        source: detail.source || 'room-act',
-        interruptPolicy: detail.interruptPolicy || detail.interrupt,
-        speechStyle: detail.speechStyle || detail.speech_style
-      });
-    }
+    const { expression } = performanceBrain.onRoomAct(detail);
     if (isMomentaryExpression(expression)) {
       momentaryPulse = {
         startedAt: performance.now() + 80,
@@ -752,11 +601,11 @@ export function mountCubismBehaviorBridge(options = {}) {
   }
 
   function onMouth(event) {
-    characterState.onMouth(event.detail?.value);
+    performanceBrain.onMouth(event.detail?.value);
   }
 
   function onCharacterState(event) {
-    characterState.onExternalState(event.detail || {});
+    performanceBrain.onExternalState(event.detail || {});
   }
 
   window.addEventListener(ROOM_ACT_EVENT, onRoomAct);
@@ -770,7 +619,6 @@ export function mountCubismBehaviorBridge(options = {}) {
     window.removeEventListener(CHARACTER_STATE_EVENT, onCharacterState);
     if (frameId) window.cancelAnimationFrame(frameId);
     frameId = 0;
-    behaviorPlan = null;
     momentaryPulse = null;
     if (window.TSUKUYOMI_CUBISM_BEHAVIOR_BRIDGE) delete window.TSUKUYOMI_CUBISM_BEHAVIOR_BRIDGE;
   };

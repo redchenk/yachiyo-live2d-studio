@@ -17,11 +17,9 @@ import {
 import { mapTrackingFrameToYachiyoCubismParameters } from './live2dTrackingFrameMapper';
 import {
   activeBehaviorSamples as sampleActiveBehaviorActions,
-  createLive2DBehaviorPlan,
   pickDominantMotion as pickBehaviorDominantMotion,
-  shouldInterruptLive2DBehaviorPlan
 } from './live2dBehaviorOrchestrator';
-import { createLive2DCharacterStateMachine } from './live2dCharacterStateMachine';
+import { getRoomLive2DPerformanceBrain } from './live2dPerformanceBrain';
 
 const ROOM_ACT_EVENT = 'tsukuyomi:room-act';
 const FACE_CAPTURE_EVENT = 'tsukuyomi:live2d-face';
@@ -1336,13 +1334,15 @@ function applyAutoBlink(frame, samples, nowMs, baseOpen = 0.92, options = {}) {
 }
 
 function sampleVTSBehaviorActions(actions, elapsedMs, nowMs = performance.now(), character = null, expression = '', options = {}) {
-  const samples = sampleActiveBehaviorActions(actions, elapsedMs, { intensityScale: 1.7 });
+  const samples = Array.isArray(options.samples)
+    ? options.samples
+    : sampleActiveBehaviorActions(actions, elapsedMs, { intensityScale: 1.7 });
   if (samples.some((sample) => sample.action.type === 'reset' && sample.energy > 0.5)) return behaviorResetFrame();
 
   const suppressEyeOpen = Boolean(options.suppressEyeOpen || expressionOwnsEyeOpen(expression));
   const frame = createDirectTrackingFrame({ suppressEyeOpen });
   const speaking = character?.mode === 'speaking';
-  const dominant = pickBehaviorDominantMotion(samples);
+  const dominant = options.dominant || pickBehaviorDominantMotion(samples);
   applyCharacterStateFrame(frame, character, speaking && dominant ? 0.42 : (speaking ? 0.82 : 0.68));
   applySemanticExpressionOverlay(frame, expression || character?.emotion, speaking ? 0.68 : 0.82);
   applyDirectMotion(frame, dominant);
@@ -1399,10 +1399,9 @@ export function mountVTubeStudioBridge() {
   let bodyMotion = null;
   let behaviorFrameId = 0;
   let idleFrameId = 0;
-  let behaviorPlan = null;
   let expressionFiles = [];
   let expressionsLoadedAt = 0;
-  const characterState = createLive2DCharacterStateMachine();
+  const performanceBrain = getRoomLive2DPerformanceBrain();
   const pendingRequests = new Map();
   const pendingInjection = new Map();
   const smoothedInjection = new Map();
@@ -1837,27 +1836,27 @@ export function mountVTubeStudioBridge() {
   }
 
   function tickBehavior(now = performance.now()) {
-    if (!behaviorPlan) {
+    const performanceFrame = performanceBrain.sample(now, { intensityScale: 1.62 });
+    if (!performanceFrame.behaviorPlan) {
       stopBehaviorFrame();
-      return;
-    }
-    const elapsedMs = now - behaviorPlan.startedAt;
-    if (elapsedMs >= behaviorPlan.durationMs) {
-      behaviorPlan = null;
-      characterState.setMode('listening', { now, holdMs: 1400, attention: 0.52 });
-      queueInjection(sampleVTSIdleFrame(now, characterState.sample(now), {
-        suppressEyeOpen: activeExpressionOwnsEyeOpen()
-      }));
-      stopBehaviorFrame();
+      if (performanceFrame.completed) {
+        queueInjection(sampleVTSIdleFrame(now, performanceFrame.character, {
+          suppressEyeOpen: activeExpressionOwnsEyeOpen()
+        }));
+      }
       return;
     }
     queueInjection(sampleVTSBehaviorActions(
-      behaviorPlan.actions,
-      elapsedMs,
+      performanceFrame.behaviorPlan.actions,
+      performanceFrame.elapsedMs,
       now,
-      characterState.sample(now),
-      behaviorPlan.expression,
-      { suppressEyeOpen: behaviorPlan.suppressEyeOpen || activeExpressionOwnsEyeOpen() }
+      performanceFrame.character,
+      performanceFrame.expression,
+      {
+        dominant: performanceFrame.dominant,
+        samples: performanceFrame.samples,
+        suppressEyeOpen: performanceFrame.behaviorPlan.suppressEyeOpen || activeExpressionOwnsEyeOpen()
+      }
     ));
     behaviorFrameId = window.requestAnimationFrame(tickBehavior);
   }
@@ -1867,8 +1866,9 @@ export function mountVTubeStudioBridge() {
       stopIdleFrame();
       return;
     }
-    if (!behaviorPlan) {
-      queueInjection(sampleVTSIdleFrame(now, characterState.sample(now), {
+    const performanceFrame = performanceBrain.sample(now, { intensityScale: 1.62 });
+    if (!performanceFrame.behaviorPlan) {
+      queueInjection(sampleVTSIdleFrame(now, performanceFrame.character, {
         suppressEyeOpen: activeExpressionOwnsEyeOpen()
       }));
     }
@@ -1880,51 +1880,36 @@ export function mountVTubeStudioBridge() {
     idleFrameId = window.requestAnimationFrame(tickIdle);
   }
 
+  function startBehaviorFrame() {
+    bodyMotion = null;
+    stopBodyFrame();
+    stopBehaviorFrame();
+    behaviorFrameId = window.requestAnimationFrame(tickBehavior);
+  }
+
   function startBehaviorPlan(actions, durationMs, options = {}) {
-    if (!Array.isArray(actions) || !actions.length) return;
-    const now = performance.now();
-    const expression = options.expression || semanticExpressionFromEmotion(options.emotion);
-    const nextPlan = createLive2DBehaviorPlan(actions, durationMs, {
-      now,
-      expression,
+    const nextPlan = performanceBrain.startBehaviorPlan(actions, durationMs, {
+      now: performance.now(),
+      expression: options.expression || semanticExpressionFromEmotion(options.emotion),
       emotion: options.emotion,
       intensity: options.intensity,
       priority: options.priority,
       source: options.source || 'vts',
       interruptPolicy: options.interruptPolicy || options.interrupt,
-      suppressEyeOpen: expressionOwnsEyeOpen(expression || options.emotion),
+      suppressEyeOpen: expressionOwnsEyeOpen((options.expression || semanticExpressionFromEmotion(options.emotion)) || options.emotion),
       speechStyle: options.speechStyle
     });
-    if (!shouldInterruptLive2DBehaviorPlan(behaviorPlan, nextPlan, now)) return;
-    bodyMotion = null;
-    stopBodyFrame();
-    behaviorPlan = nextPlan;
-    characterState.setMode('acting', {
-      holdMs: nextPlan.durationMs + 420,
-      attention: 0.86,
-      arousal: 0.72
-    });
-    stopBehaviorFrame();
-    behaviorFrameId = window.requestAnimationFrame(tickBehavior);
+    if (!nextPlan) return;
+    startBehaviorFrame();
   }
 
   function onRoomAct(event) {
     const detail = event.detail || {};
-    characterState.onRoomAct(detail);
-    const behaviorActions = Array.isArray(detail.behaviorActions) ? detail.behaviorActions : [];
-    const expression = normalizeSemanticExpressionId(
-      detail.expression || detail.expressionMix?.[0]?.expression || detail.emotion || detail.mood
-    ) || semanticExpressionFromEmotion(detail.emotion || detail.mood);
+    const brainEvent = performanceBrain.onRoomAct(detail);
+    const behaviorActions = brainEvent.behaviorActions;
+    const expression = brainEvent.expression;
     if (behaviorActions.length) {
-      startBehaviorPlan(behaviorActions, detail.durationMs || detail.duration, {
-        expression,
-        emotion: detail.emotion || detail.mood,
-        intensity: detail.intensity,
-        priority: detail.priority,
-        source: detail.source || 'room-act',
-        interruptPolicy: detail.interruptPolicy || detail.interrupt,
-        speechStyle: detail.speechStyle || detail.speech_style
-      });
+      startBehaviorFrame();
     }
     if (settings.injectFace) {
       if (expression) activateVTSExpression(expression, detail.durationMs || detail.duration);
@@ -1958,8 +1943,8 @@ export function mountVTubeStudioBridge() {
   function onFaceCapture(event) {
     if (event.detail?.source === 'cubism-behavior') return;
     if (!settings.injectFace && !settings.injectBody) return;
-    if (behaviorPlan) return;
-    if (characterState.getState().mode === 'speaking') return;
+    if (performanceBrain.hasBehaviorPlan()) return;
+    if (performanceBrain.getCharacterState().getState().mode === 'speaking') return;
     queueInjection(mapLive2DParametersToVTS(event.detail?.parameters, {
       face: settings.injectFace,
       body: settings.injectBody
@@ -1969,7 +1954,7 @@ export function mountVTubeStudioBridge() {
   function onMouth(event) {
     if (!settings.injectMouth) return;
     const value = clamp(Number(event.detail?.value), 0, 1);
-    characterState.onMouth(value);
+    performanceBrain.onMouth(value);
     queueInjection([
       { id: 'MouthOpen', value, weight: 0.92 },
       { id: 'VoiceVolumePlusMouthOpen', value, weight: 0.72 },
@@ -1978,7 +1963,7 @@ export function mountVTubeStudioBridge() {
   }
 
   function onCharacterState(event) {
-    characterState.onExternalState(event.detail || {});
+    performanceBrain.onExternalState(event.detail || {});
   }
 
   function reloadSettings() {
