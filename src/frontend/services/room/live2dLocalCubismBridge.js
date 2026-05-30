@@ -92,6 +92,18 @@ function isLocalCubismSuppressedId(id) {
   return LOCAL_CUBISM_PHYSICS_MANAGED_IDS.has(value) || isLocalCubismPhysicsOutputId(value);
 }
 
+function isLocalCubismEyeExpressionId(id) {
+  const value = String(id || '');
+  return (
+    value === 'ParamEyeLSmile' ||
+    value === 'ParamEyeRSmile' ||
+    value.startsWith('ParamEyeSmile_') ||
+    value.startsWith('ParamHide_Eyes') ||
+    value.startsWith('ParamHighLightHide_Eyes') ||
+    value.startsWith('ParamHide_EyeSocket')
+  );
+}
+
 function setLocalBridgeState(patch) {
   if (typeof window === 'undefined') return;
   window[LOCAL_BRIDGE_STATE_KEY] = {
@@ -133,6 +145,7 @@ function localFrameSmoothingProfile(id) {
   if (id.startsWith('ParamTonguePhysics') || id.startsWith('ParamDollEarPhysics')) return { alpha: 0.46, step: 6.5 };
   if (id.includes('MouthOpen') || id.includes('JawOpen') || id.includes('VoiceVolume')) return { alpha: 0.66, step: 0.26 };
   if (id === 'ParamEyeLOpen' || id === 'ParamEyeROpen' || id.includes('EyeOpen')) return { alpha: 0.88, step: 0.72 };
+  if (isLocalCubismEyeExpressionId(id)) return { alpha: 0.82, step: 0.62 };
   if (id.includes('EyeBall')) return { alpha: 0.36, step: 0.18 };
   if (id.includes('Brow') || id.includes('Cheek')) return { alpha: 0.34, step: 0.12 };
   if (id.includes('Mouth')) return { alpha: 0.34, step: 0.18 };

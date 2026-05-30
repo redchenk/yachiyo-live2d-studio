@@ -18,6 +18,8 @@ const CHARACTER_STATE_EVENT = 'tsukuyomi:live2d-character-state';
 const EYE_OWNING_EXPRESSIONS = new Set([
   'angry',
   'bsmile',
+  'closed_eyes',
+  'closed_smile',
   'crying',
   'dizzy',
   'fire',
@@ -32,6 +34,31 @@ const EYE_OWNING_EXPRESSIONS = new Set([
 
 const MOMENTARY_EXPRESSION_IDS = new Set(['tongue']);
 const MOMENTARY_PULSE_MS = 620;
+const EXPRESSION_EYE_OPEN_GUARDS = new Map([
+  ['smile', 0.02],
+  ['closed_smile', 0.015],
+  ['closed_eyes', 0.015]
+]);
+const EXPRESSION_CUBISM_EYE_SHAPES = new Map([
+  ['smile', {
+    happySmile: 0.72,
+    eyeSmile: 0.58,
+    hideOpenEye: 0.68,
+    cheek: 0.24
+  }],
+  ['closed_smile', {
+    happySmile: 0.92,
+    eyeSmile: 0.82,
+    hideOpenEye: 0.9,
+    cheek: 0.3
+  }],
+  ['closed_eyes', {
+    happySmile: 0.64,
+    eyeSmile: 0.72,
+    hideOpenEye: 0.86,
+    cheek: 0.1
+  }]
+]);
 
 function clamp(value, min, max, fallback = min) {
   const numeric = Number(value);
@@ -284,6 +311,24 @@ function applySemanticOverlay(frame, expression, strength = 1, options = {}) {
   }
 }
 
+function applyExpressionEyeGuard(frame, expression) {
+  const normalized = normalizeExpression(expression);
+  const open = EXPRESSION_EYE_OPEN_GUARDS.get(normalized);
+  if (open === undefined) return;
+  setEyeOpen(frame, open, open, 1);
+  const shape = EXPRESSION_CUBISM_EYE_SHAPES.get(normalized);
+  if (!shape) return;
+  setFrameValue(frame, 'ParamEyeSmile_Happy_L', shape.happySmile, 0.96);
+  setFrameValue(frame, 'ParamEyeSmile_Happy_R', shape.happySmile, 0.96);
+  setFrameValue(frame, 'ParamEyeLSmile', shape.eyeSmile, 0.94);
+  setFrameValue(frame, 'ParamEyeRSmile', shape.eyeSmile, 0.94);
+  setFrameValue(frame, 'ParamHide_EyesL1', shape.hideOpenEye, 0.9);
+  setFrameValue(frame, 'ParamHighLightHide_EyesL1', shape.hideOpenEye, 0.86);
+  setFrameValue(frame, 'ParamHide_EyeSocket', shape.hideOpenEye, 0.84);
+  setFrameValue(frame, 'ParamHide_EyeSocket2', shape.hideOpenEye, 0.84);
+  if (shape.cheek) setFrameValue(frame, 'ParamCheek', shape.cheek, 0.46);
+}
+
 function applyMomentaryPulse(frame, pulse) {
   if (!pulse) return;
   const now = performance.now();
@@ -313,7 +358,6 @@ function applyAction(frame, sample, options = {}) {
   const secondarySign = actionSecondarySign(action, -sign);
   const fast = Math.sin(phase * 2);
   const slow = Math.sin(phase);
-  const beat = Math.abs(Math.sin(phase * 2));
 
   switch (action.type) {
     case 'look_at_chat': {
@@ -326,6 +370,15 @@ function applyAction(frame, sample, options = {}) {
       break;
     }
     case 'smile':
+      setHead(frame, {
+        y: (-0.9 * Math.sin(Math.PI * t) - 0.35 * Math.abs(slow)) * e,
+        z: sign * 1.3 * Math.sin(Math.PI * t) * e
+      }, 0.58);
+      setBody(frame, {
+        y: 1.2 * Math.sin(Math.PI * t) * e,
+        z: sign * 1.4 * Math.sin(Math.PI * t) * e,
+        posY: 0.045 * Math.sin(Math.PI * t) * e
+      }, 0.48);
       setMouthSmile(frame, 0.74 + 0.16 * e, 0.84);
       setBrows(frame, 0.56 + 0.08 * e, 0.56 + 0.08 * e, 0.58);
       setFrameValue(frame, 'ParamCheek', 0.08 + 0.16 * e, 0.42);
@@ -351,15 +404,21 @@ function applyAction(frame, sample, options = {}) {
       setMouthSmile(frame, 0.76, 0.62);
       break;
     }
-    case 'nod':
-      setHead(frame, { y: (13 * beat - 4) * e, z: variant === 2 ? sign * 2.4 * slow * e : 0 }, 1);
-      setFacePosition(frame, { y: -2.5 * beat * e }, 0.72);
+    case 'nod': {
+      const dip = Math.sin(Math.PI * t) * e;
+      const rebound = Math.sin(Math.PI * 2 * t) * e;
+      setHead(frame, {
+        y: -4.8 * dip + 1.2 * rebound,
+        z: variant === 2 ? sign * 1.8 * dip : 0
+      }, 1);
+      setFacePosition(frame, { y: -2.2 * dip + 0.45 * rebound }, 0.72);
       setBody(frame, {
-        y: 5.8 * beat * e,
-        z: variant === 2 ? sign * 1.8 * slow * e : 0,
-        posY: 0.22 * beat * e
+        y: 4.4 * dip - 0.7 * rebound,
+        z: variant === 2 ? sign * 1.2 * dip : 0,
+        posY: 0.16 * dip
       }, 0.96);
       break;
+    }
     case 'shake_head':
       setHead(frame, { x: 15 * fast * e, z: (6 * fast + (variant === 1 ? 1.4 * slow * secondarySign : 0)) * e }, 1);
       setEyes(frame, -0.28 * fast * e, 0, 0.72);
@@ -397,12 +456,18 @@ function applyAction(frame, sample, options = {}) {
       break;
     }
     case 'bounce': {
-      const sideLean = variant ? sign * (1 + Math.abs(Number(action.motionArc) || 0) * 0.7) * slow * e : 0;
-      setHead(frame, { y: 4 * beat * e, z: sideLean * 1.4 }, 0.9);
-      setFacePosition(frame, { y: -6.5 * beat * e }, 0.86);
+      const lift = Math.sin(Math.PI * t) * e;
+      const rebound = Math.sin(Math.PI * 2 * t) * e;
+      const sideLean = variant ? sign * (1 + Math.abs(Number(action.motionArc) || 0) * 0.42) * lift : 0;
+      setHead(frame, { y: 3.2 * lift - 0.7 * rebound, z: sideLean * 0.92 }, 0.9);
+      setFacePosition(frame, { y: -5.2 * lift + 0.8 * rebound }, 0.86);
       setMouthSmile(frame, 0.78, 0.8);
       setBrows(frame, 0.62, 0.62, 0.55);
-      setBody(frame, { y: 8.2 * beat * e, z: sideLean * 0.72, posY: 0.36 * beat * e }, 1);
+      setBody(frame, {
+        y: 6.2 * lift - 0.9 * rebound,
+        z: sideLean * 0.52,
+        posY: 0.26 * lift
+      }, 1);
       break;
     }
     case 'shiver': {
@@ -474,10 +539,17 @@ function applyAction(frame, sample, options = {}) {
       }
       break;
     case 'emphasis': {
-      const hit = Math.abs(Math.sin(Math.PI * t)) * e;
-      setHead(frame, { y: -3.2 * hit, z: sign * 10.5 * fast * e }, 0.92);
-      setFacePosition(frame, { y: -4.8 * hit }, 0.78);
-      setBody(frame, { y: -4.6 * hit, z: sign * 8.2 * fast * e }, 1);
+      const hit = Math.sin(Math.PI * t) * e;
+      const rebound = Math.sin(Math.PI * 2 * t) * e;
+      const side = sign * (0.9 * hit + 0.35 * rebound);
+      setHead(frame, { y: -5.8 * hit + 1.1 * rebound, z: 3.2 * side }, 0.94);
+      setFacePosition(frame, { y: -5.6 * hit + 0.8 * rebound, x: 0.9 * side }, 0.84);
+      setBody(frame, {
+        y: 5.2 * hit - 0.8 * rebound,
+        z: 3.8 * side,
+        posX: 0.045 * side,
+        posY: 0.2 * hit
+      }, 1);
       break;
     }
     case 'breathe':
@@ -583,10 +655,11 @@ export function mountCubismBehaviorBridge(options = {}) {
     const frame = createFrame({ suppressEyeOpen });
 
     applyCharacterState(frame, character, behaviorPlan && dominant ? 0.66 : 1, { suppressEyeOpen });
-    applySemanticOverlay(frame, expression, behaviorPlan ? 0.76 : 0.48);
+    applySemanticOverlay(frame, expression, behaviorPlan ? 0.76 : 0.48, { suppressEyeOpen });
     samples.forEach((sample) => applyAction(frame, sample, { dominant: sample === dominant, suppressEyeOpen }));
     applyMomentaryPulse(frame, momentaryPulse);
     applyAutoBlink(frame, samples, now, character.eyeOpen, { suppressEyeOpen });
+    applyExpressionEyeGuard(frame, expression);
 
     return finalizeFrame(frame);
   }
