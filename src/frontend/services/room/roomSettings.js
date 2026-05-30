@@ -38,7 +38,11 @@ export const DEFAULT_ROOM_TTS_SETTINGS = {
 
 export const DEFAULT_ROOM_MODEL_SETTINGS = {
   lowQualityModel: false,
-  renderDpr: 3
+  renderDpr: 3,
+  stageFloatEnabled: true,
+  stageIdleScale: 1.35,
+  stageMotionScale: 1,
+  stageVerticalOffset: 0
 };
 
 export const DEFAULT_ROOM_VTS_SETTINGS = {
@@ -148,7 +152,11 @@ export function normalizeRoomModelSettings(settings = {}) {
   const merged = { ...DEFAULT_ROOM_MODEL_SETTINGS, ...(settings || {}) };
   return {
     lowQualityModel: asBoolean(merged.lowQualityModel),
-    renderDpr: asNumber(merged.renderDpr, DEFAULT_ROOM_MODEL_SETTINGS.renderDpr, 1, 3)
+    renderDpr: asNumber(merged.renderDpr, DEFAULT_ROOM_MODEL_SETTINGS.renderDpr, 1, 3),
+    stageFloatEnabled: asBoolean(merged.stageFloatEnabled),
+    stageIdleScale: asNumber(merged.stageIdleScale, DEFAULT_ROOM_MODEL_SETTINGS.stageIdleScale, 0, 3),
+    stageMotionScale: asNumber(merged.stageMotionScale, DEFAULT_ROOM_MODEL_SETTINGS.stageMotionScale, 0, 3),
+    stageVerticalOffset: asNumber(merged.stageVerticalOffset, DEFAULT_ROOM_MODEL_SETTINGS.stageVerticalOffset, -180, 180)
   };
 }
 

@@ -492,11 +492,27 @@ onUnmounted(() => {
           <input v-model="model.lowQualityModel" type="checkbox">
           <span>Low quality model</span>
         </label>
+        <label class="studio-check-row">
+          <input v-model="model.stageFloatEnabled" type="checkbox">
+          <span>Stage float</span>
+        </label>
         <label>
           <span>Render Scale</span>
           <select v-model.number="model.renderDpr">
             <option v-for="option in renderDprOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
           </select>
+        </label>
+        <label>
+          <span>Idle Float</span>
+          <input v-model.number="model.stageIdleScale" type="number" min="0" max="3" step="0.1">
+        </label>
+        <label>
+          <span>Motion Float</span>
+          <input v-model.number="model.stageMotionScale" type="number" min="0" max="3" step="0.1">
+        </label>
+        <label>
+          <span>Vertical Offset</span>
+          <input v-model.number="model.stageVerticalOffset" type="number" min="-180" max="180" step="1">
         </label>
       </section>
 

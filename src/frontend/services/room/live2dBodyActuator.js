@@ -1,9 +1,11 @@
 import { normalizeBehaviorBodyPose } from '../../constants/room/behaviorActionRegistry';
+import { readRoomModelSettings } from './roomSettings';
 
 const ROOM_ACT_EVENT = 'tsukuyomi:room-act';
 const STAGE_ACTUATOR_STATE_KEY = '__TSUKUYOMI_LIVE2D_STAGE_BODY_ACTUATOR_STATE__';
 const DEFAULT_STAGE_MOTION_SCALE = 0.86;
 const DEFAULT_STAGE_IDLE_SCALE = 1;
+const RUNTIME_STAGE_POSE_SCALE = 0.35;
 const BODY_PARAMETER_HINTS = [
   'ParamBodyInput_BodyX',
   'ParamBodyInput_BodyY',
@@ -102,13 +104,30 @@ function normalizeDuration(value) {
   return Math.min(Math.max(Math.round(numeric), 650), 8000);
 }
 
+function readModelStageSettings() {
+  try {
+    return readRoomModelSettings();
+  } catch (_) {
+    return {
+      stageFloatEnabled: true,
+      stageIdleScale: DEFAULT_STAGE_IDLE_SCALE,
+      stageMotionScale: DEFAULT_STAGE_MOTION_SCALE,
+      stageVerticalOffset: 0
+    };
+  }
+}
+
 function readStageMotionScale() {
   if (typeof window === 'undefined') return DEFAULT_STAGE_MOTION_SCALE;
+  const settings = readModelStageSettings();
+  if (Number.isFinite(Number(settings.stageMotionScale))) {
+    return clamp(settings.stageMotionScale, 0, 3);
+  }
   const globalValue = Number(window.TSUKUYOMI_LIVE2D_STAGE_MOTION_SCALE);
-  if (Number.isFinite(globalValue)) return clamp(globalValue, 0, 2.4);
+  if (Number.isFinite(globalValue)) return clamp(globalValue, 0, 3);
   try {
     const stored = Number(window.localStorage?.getItem('roomLive2DStageMotionScale'));
-    if (Number.isFinite(stored)) return clamp(stored, 0, 2.4);
+    if (Number.isFinite(stored)) return clamp(stored, 0, 3);
   } catch (_) {
     // ignore storage failures in WebView privacy modes
   }
@@ -117,15 +136,28 @@ function readStageMotionScale() {
 
 function readStageIdleScale() {
   if (typeof window === 'undefined') return DEFAULT_STAGE_IDLE_SCALE;
+  const settings = readModelStageSettings();
+  if (Number.isFinite(Number(settings.stageIdleScale))) {
+    return clamp(settings.stageIdleScale, 0, 3);
+  }
   const globalValue = Number(window.TSUKUYOMI_LIVE2D_STAGE_IDLE_SCALE);
-  if (Number.isFinite(globalValue)) return clamp(globalValue, 0, 2.4);
+  if (Number.isFinite(globalValue)) return clamp(globalValue, 0, 3);
   try {
     const stored = Number(window.localStorage?.getItem('roomLive2DStageIdleScale'));
-    if (Number.isFinite(stored)) return clamp(stored, 0, 2.4);
+    if (Number.isFinite(stored)) return clamp(stored, 0, 3);
   } catch (_) {
     // ignore storage failures in WebView privacy modes
   }
   return DEFAULT_STAGE_IDLE_SCALE;
+}
+
+function readStageVerticalOffset() {
+  const settings = readModelStageSettings();
+  return clamp(settings.stageVerticalOffset, -180, 180, 0);
+}
+
+function readStageFloatEnabled() {
+  return readModelStageSettings().stageFloatEnabled !== false;
 }
 
 function easeInOut(value) {
@@ -314,26 +346,45 @@ function setStageActuatorState(patch) {
   };
 }
 
-function findLive2DCanvas(containerSelector) {
+function findLive2DContainer(containerSelector) {
   const container = typeof containerSelector === 'string'
     ? document.querySelector(containerSelector)
     : containerSelector;
+  return container || null;
+}
+
+function findLive2DCanvas(containerSelector) {
+  const container = findLive2DContainer(containerSelector);
   return container?.querySelector?.('canvas') || null;
 }
 
-function applyRuntimeStagePose(pose) {
+function applyRuntimeStagePose(pose, strength = RUNTIME_STAGE_POSE_SCALE) {
   if (typeof window === 'undefined' || typeof window.setLive2DModelSettings !== 'function') return false;
+  const amount = clamp(strength, 0, 1, RUNTIME_STAGE_POSE_SCALE);
   window.setLive2DModelSettings(
-    clamp(pose.scale, 0.86, 1.16, 1),
-    clamp(pose.x, -90, 90, 0),
-    clamp(pose.y, -90, 90, 0)
+    clamp(1 + ((pose.scale || 1) - 1) * amount, 0.92, 1.08, 1),
+    clamp((pose.x || 0) * amount, -90, 90, 0),
+    clamp((pose.y || 0) * amount, -90, 90, 0)
   );
+  return true;
+}
+
+function applyModelContainerPose(container, pose) {
+  if (!container) return false;
+  container.style.transformOrigin = '50% 84%';
+  container.style.willChange = 'transform';
+  container.style.transform = [
+    `translate(calc(-50% + ${pose.x.toFixed(2)}px), ${pose.y.toFixed(2)}px)`,
+    `rotate(${pose.rotate.toFixed(3)}deg)`,
+    `scale(${pose.scale.toFixed(4)})`
+  ].join(' ');
   setStageActuatorState({
     mounted: true,
-    output: 'runtime-view-matrix',
+    output: 'model-container-transform',
     pose: {
       x: Number(pose.x.toFixed(2)),
       y: Number(pose.y.toFixed(2)),
+      rotate: Number(pose.rotate.toFixed(3)),
       scale: Number(pose.scale.toFixed(4))
     }
   });
@@ -363,15 +414,25 @@ function clearCanvasPose(canvas) {
   canvas.style.willChange = '';
 }
 
+function clearContainerPose(container) {
+  if (!container) return;
+  container.style.transform = '';
+  container.style.willChange = '';
+}
+
 function clearRuntimeStagePose() {
   if (typeof window !== 'undefined' && typeof window.setLive2DModelSettings === 'function') {
     window.setLive2DModelSettings(1, 0, 0);
   }
 }
 
-function applyStagePose(canvas, pose) {
-  if (applyRuntimeStagePose(pose)) {
+function applyStagePose(container, canvas, pose) {
+  const runtimeApplied = applyRuntimeStagePose(pose);
+  if (applyModelContainerPose(container, pose)) {
     clearCanvasPose(canvas);
+    setStageActuatorState({
+      output: runtimeApplied ? 'model-container-transform+runtime-view-matrix' : 'model-container-transform'
+    });
     return;
   }
   applyCanvasPose(canvas, pose);
@@ -383,6 +444,7 @@ export function mountLive2DStageBodyActuator(containerSelector = '#live2d-contai
   let startMs = 0;
   let frameId = 0;
   let lastCanvas = null;
+  let lastContainer = null;
 
   function stopFrame() {
     if (frameId) window.cancelAnimationFrame(frameId);
@@ -390,15 +452,24 @@ export function mountLive2DStageBodyActuator(containerSelector = '#live2d-contai
   }
 
   function render(now = performance.now()) {
+    const container = findLive2DContainer(containerSelector);
     const canvas = findLive2DCanvas(containerSelector);
+    lastContainer = container || lastContainer;
     lastCanvas = canvas || lastCanvas;
-    let pose = sampleLive2DIdleStagePose(now, readStageIdleScale());
-    if (activeMotion) {
+    const floatEnabled = readStageFloatEnabled();
+    let pose = floatEnabled
+      ? sampleLive2DIdleStagePose(now, readStageIdleScale())
+      : { x: 0, y: 0, rotate: 0, scale: 1 };
+    if (floatEnabled && activeMotion) {
       const progress = (now - startMs) / activeMotion.durationMs;
       pose = combineCanvasPoses(pose, sampleLive2DStagePose(activeMotion, progress, readStageMotionScale()));
       if (progress >= 1) activeMotion = null;
     }
-    applyStagePose(canvas, pose);
+    pose = {
+      ...pose,
+      y: pose.y + readStageVerticalOffset()
+    };
+    applyStagePose(container, canvas, pose);
     frameId = window.requestAnimationFrame(render);
   }
 
@@ -422,7 +493,9 @@ export function mountLive2DStageBodyActuator(containerSelector = '#live2d-contai
     activeMotion = null;
     stopFrame();
     clearRuntimeStagePose();
+    clearContainerPose(lastContainer || findLive2DContainer(containerSelector));
     clearCanvasPose(lastCanvas || findLive2DCanvas(containerSelector));
+    lastContainer = null;
     lastCanvas = null;
     setStageActuatorState({ mounted: false, output: 'destroyed' });
   };
