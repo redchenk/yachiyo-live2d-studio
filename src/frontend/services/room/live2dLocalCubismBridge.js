@@ -2,10 +2,8 @@ import { mountCubismBehaviorBridge } from './live2dCubismBehaviorBridge';
 
 const FACE_CAPTURE_EVENT = 'tsukuyomi:live2d-face';
 const LOCAL_BRIDGE_STATE_KEY = '__TSUKUYOMI_LOCAL_CUBISM_BRIDGE_STATE__';
-const BODY_TARGET_WRITE_INTERVAL_MS = 115;
-const BODY_TARGET_DURATION_MS = 360;
 
-const LOCAL_CUBISM_BODY_DRIVER_TARGET_IDS = new Set([
+const LOCAL_CUBISM_BODY_DRIVER_IDS = new Set([
   'ParamSwitchCtrl_BodyX',
   'ParamSwitchCtrl_BodyY',
   'ParamSwitchCtrl_BodyZ',
@@ -16,8 +14,7 @@ const LOCAL_CUBISM_BODY_DRIVER_TARGET_IDS = new Set([
   'ParamBodyAngleZ'
 ]);
 
-const LOCAL_CUBISM_BODY_OWNED_IDS = new Set([
-  ...LOCAL_CUBISM_BODY_DRIVER_TARGET_IDS,
+const LOCAL_CUBISM_PHYSICS_MANAGED_IDS = new Set([
   'ParamBodyInput_BodyX',
   'ParamBodyInput_BodyY',
   'ParamBodyInput_BodyZ',
@@ -63,11 +60,10 @@ const LOCAL_CUBISM_PHYSICS_OUTPUT_PREFIXES = [
   'ParamCheongsamPhysics'
 ];
 
-let lastBodyTargetWriteAt = 0;
 let lastSmoothedFrame = new Map();
 
 function isLocalCubismBodyDriverId(id) {
-  return LOCAL_CUBISM_BODY_DRIVER_TARGET_IDS.has(String(id || ''));
+  return LOCAL_CUBISM_BODY_DRIVER_IDS.has(String(id || ''));
 }
 
 function isLocalCubismPhysicsOutputId(id) {
@@ -75,9 +71,9 @@ function isLocalCubismPhysicsOutputId(id) {
   return LOCAL_CUBISM_PHYSICS_OUTPUT_PREFIXES.some((prefix) => value.startsWith(prefix));
 }
 
-function isLocalCubismBodyOwnedId(id) {
+function isLocalCubismSuppressedId(id) {
   const value = String(id || '');
-  return LOCAL_CUBISM_BODY_OWNED_IDS.has(value) || isLocalCubismPhysicsOutputId(value);
+  return LOCAL_CUBISM_PHYSICS_MANAGED_IDS.has(value) || isLocalCubismPhysicsOutputId(value);
 }
 
 function setLocalBridgeState(patch) {
@@ -101,37 +97,16 @@ function dispatchFallbackFrame(parameters) {
   }));
 }
 
-function nowMs() {
-  if (typeof performance !== 'undefined' && typeof performance.now === 'function') return performance.now();
-  return Date.now();
-}
-
 function normalizeParameterId(item) {
   return String(item?.id || item?.parameterId || item?.param || item?.key || item?.name || '').trim();
 }
 
-function localCubismBodyTargets(parameters) {
-  if (!Array.isArray(parameters)) return [];
-  const targets = [];
-  for (const item of parameters) {
-    const id = normalizeParameterId(item);
-    const value = Number(item?.value);
-    if (!isLocalCubismBodyDriverId(id) || !Number.isFinite(value)) continue;
-    const weight = Number(item?.weight);
-    targets.push({
-      id,
-      value,
-      weight: Number.isFinite(weight) ? Math.min(Math.max(weight, 0.52), 1) : 0.86,
-      durationMs: BODY_TARGET_DURATION_MS
-    });
-  }
-  return targets;
-}
-
 function localFrameSmoothingAlpha(id) {
+  if (id.startsWith('ParamSwitchCtrl_')) return 1;
   if (id.includes('MouthOpen') || id.includes('JawOpen') || id.includes('VoiceVolume')) return 0.7;
   if (id.includes('EyeOpen')) return 0.5;
   if (id.includes('EyeBall') || id.includes('Brow') || id.includes('Mouth') || id.includes('Cheek')) return 0.34;
+  if (isLocalCubismBodyDriverId(id)) return 0.22;
   if (id.includes('Angle') || id.includes('Position')) return 0.24;
   return 0.3;
 }
@@ -144,7 +119,7 @@ function smoothLocalCubismFrame(parameters) {
   for (const item of parameters) {
     const id = normalizeParameterId(item);
     const value = Number(item?.value);
-    if (!id || !Number.isFinite(value) || isLocalCubismBodyOwnedId(id)) continue;
+    if (!id || !Number.isFinite(value) || isLocalCubismSuppressedId(id)) continue;
 
     const previous = lastSmoothedFrame.get(id);
     const alpha = localFrameSmoothingAlpha(id);
@@ -166,29 +141,17 @@ function smoothLocalCubismFrame(parameters) {
   return smoothed;
 }
 
-function writeBodyTargets(bridge, parameters) {
-  if (!bridge || typeof bridge.setParameterTargets !== 'function') return 0;
-  const now = nowMs();
-  if (now - lastBodyTargetWriteAt < BODY_TARGET_WRITE_INTERVAL_MS) return 0;
-  const targets = localCubismBodyTargets(parameters);
-  if (!targets.length) return 0;
-  bridge.setParameterTargets(targets);
-  lastBodyTargetWriteAt = now;
-  return targets.length;
-}
-
 function writeLocalCubismFrame(parameters) {
   const bridge = runtimeLocalBridge();
   if (bridge && typeof bridge.setFrame === 'function') {
     try {
       const frameParameters = smoothLocalCubismFrame(parameters);
       bridge.setFrame(frameParameters);
-      const bodyTargetCount = writeBodyTargets(bridge, parameters);
       setLocalBridgeState({
         mounted: true,
         output: 'runtime-direct',
         parameterCount: frameParameters.length,
-        bodyTargetCount
+        bodyTargetCount: 0
       });
       return;
     } catch (error) {
@@ -225,7 +188,6 @@ export function mountLocalCubismBridge() {
       delete window.TSUKUYOMI_LOCAL_CUBISM_BRIDGE_MOUNTED;
     }
     setLocalBridgeState({ mounted: false, output: 'destroyed', parameterCount: 0 });
-    lastBodyTargetWriteAt = 0;
     lastSmoothedFrame = new Map();
   };
 }
