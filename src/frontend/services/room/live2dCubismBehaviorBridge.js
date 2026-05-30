@@ -371,10 +371,14 @@ function applyAction(frame, sample, options = {}) {
       setBody(frame, { z: 8 * sign * e, posX: 0.32 * sign * e }, 0.96);
       break;
     case 'lean_in':
-      setHead(frame, { y: (-5.2 - (variant === 1 ? 0.9 * Math.abs(slow) : 0)) * e, z: variant === 2 ? 2.4 * sign * slow * e : 0 }, 0.88);
-      setFacePosition(frame, { y: -2.8 * e }, 0.72);
+      setHead(frame, { y: (-5.8 - (variant === 1 ? 0.7 * Math.abs(slow) : 0)) * e, z: variant === 2 ? 2.1 * sign * slow * e : 0 }, 0.9);
+      setFacePosition(frame, { y: -3.2 * e }, 0.78);
       setEyes(frame, 0, -0.16 * e, 0.72);
-      setBody(frame, { y: -6.2 * e, z: variant === 2 ? 1.6 * sign * slow * e : 0 }, 1);
+      setBody(frame, {
+        y: 2.6 * e,
+        z: variant === 2 ? 1.2 * sign * slow * e : 0,
+        posY: -0.08 * e
+      }, 0.82);
       break;
     case 'lean_left':
     case 'lean_right': {
