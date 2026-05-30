@@ -5,6 +5,9 @@ export const ROOM_TTS_SETTINGS_KEY = 'roomTTSSettings';
 export const ROOM_MODEL_SETTINGS_KEY = 'roomModelSettings';
 export const ROOM_VTS_SETTINGS_KEY = 'roomVTubeStudioSettings';
 export const ROOM_MEMORY_SETTINGS_KEY = 'roomMemorySettings';
+const ROOM_MODEL_STAGE_DEFAULTS_MIGRATION_KEY = 'roomModelStageDefaultsMigratedV2';
+const LEGACY_ROOM_MODEL_STAGE_IDLE_SCALE = 0.9;
+const LEGACY_ROOM_MODEL_STAGE_MOTION_SCALE = 0.75;
 
 export const DEFAULT_GPT_SOVITS_GPT_WEIGHT = 'GPT_weights_v2ProPlus/yachiyo-v2pro-e15.ckpt';
 export const DEFAULT_GPT_SOVITS_SOVITS_WEIGHT = 'SoVITS_weights_v2ProPlus/yachiyo-v2pro_e8_s456.pth';
@@ -40,8 +43,8 @@ export const DEFAULT_ROOM_MODEL_SETTINGS = {
   lowQualityModel: false,
   renderDpr: 3,
   stageFloatEnabled: true,
-  stageIdleScale: 0.9,
-  stageMotionScale: 0.75,
+  stageIdleScale: 1.18,
+  stageMotionScale: 1.16,
   stageVerticalOffset: 0
 };
 
@@ -160,6 +163,32 @@ export function normalizeRoomModelSettings(settings = {}) {
   };
 }
 
+function closeTo(left, right) {
+  return Math.abs(Number(left) - Number(right)) < 0.001;
+}
+
+function upgradeLegacyRoomModelStageDefaults(settings) {
+  if (typeof localStorage === 'undefined') return settings;
+  try {
+    if (localStorage.getItem(ROOM_MODEL_STAGE_DEFAULTS_MIGRATION_KEY) === '1') return settings;
+    const upgraded = { ...settings };
+    let changed = false;
+    if (closeTo(upgraded.stageIdleScale, LEGACY_ROOM_MODEL_STAGE_IDLE_SCALE)) {
+      upgraded.stageIdleScale = DEFAULT_ROOM_MODEL_SETTINGS.stageIdleScale;
+      changed = true;
+    }
+    if (closeTo(upgraded.stageMotionScale, LEGACY_ROOM_MODEL_STAGE_MOTION_SCALE)) {
+      upgraded.stageMotionScale = DEFAULT_ROOM_MODEL_SETTINGS.stageMotionScale;
+      changed = true;
+    }
+    localStorage.setItem(ROOM_MODEL_STAGE_DEFAULTS_MIGRATION_KEY, '1');
+    if (changed) writeJson(ROOM_MODEL_SETTINGS_KEY, upgraded);
+    return upgraded;
+  } catch (_) {
+    return settings;
+  }
+}
+
 export function normalizeRoomVTubeStudioSettings(settings = {}) {
   const merged = { ...DEFAULT_ROOM_VTS_SETTINGS, ...(settings || {}) };
   return {
@@ -216,7 +245,9 @@ export function readRoomTTSSettings() {
 }
 
 export function readRoomModelSettings() {
-  return normalizeRoomModelSettings(readJson(ROOM_MODEL_SETTINGS_KEY, clone(DEFAULT_ROOM_MODEL_SETTINGS)));
+  return upgradeLegacyRoomModelStageDefaults(
+    normalizeRoomModelSettings(readJson(ROOM_MODEL_SETTINGS_KEY, clone(DEFAULT_ROOM_MODEL_SETTINGS)))
+  );
 }
 
 export function readRoomVTubeStudioSettings() {

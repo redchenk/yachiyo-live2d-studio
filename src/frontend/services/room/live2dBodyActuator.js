@@ -1,12 +1,18 @@
 import { normalizeBehaviorBodyPose } from '../../constants/room/behaviorActionRegistry';
+import { getRoomLive2DPerformanceBrain } from './live2dPerformanceBrain';
 import { readRoomModelSettings } from './roomSettings';
 
 const ROOM_ACT_EVENT = 'tsukuyomi:room-act';
 const STAGE_ACTUATOR_STATE_KEY = '__TSUKUYOMI_LIVE2D_STAGE_BODY_ACTUATOR_STATE__';
-const DEFAULT_STAGE_MOTION_SCALE = 1.05;
-const DEFAULT_STAGE_IDLE_SCALE = 1.15;
-const RUNTIME_STAGE_POSE_SCALE = 0.08;
-const STAGE_MOTION_FADE_OUT_MS = 320;
+const DEFAULT_STAGE_MOTION_SCALE = 1.16;
+const DEFAULT_STAGE_IDLE_SCALE = 1.18;
+const STAGE_MOTION_FADE_OUT_MS = 420;
+const STAGE_POSE_MAX_STEP = {
+  x: 14,
+  y: 9,
+  rotate: 1.35,
+  scale: 0.012
+};
 const BODY_PARAMETER_HINTS = [
   'ParamBodyInput_BodyX',
   'ParamBodyInput_BodyY',
@@ -95,8 +101,8 @@ function clamp(value, min, max, fallback = min) {
   return Math.min(Math.max(numeric, min), max);
 }
 
-function lerp(from, to, amount) {
-  return from + (to - from) * clamp(amount, 0, 1, 0);
+function emptyStagePose() {
+  return { x: 0, y: 0, rotate: 0, scale: 1 };
 }
 
 function normalizePose(value) {
@@ -268,7 +274,7 @@ export function resolveLive2DStageMotion(detail = {}) {
 }
 
 export function sampleLive2DStagePose(motion, progress, scale = DEFAULT_STAGE_MOTION_SCALE) {
-  if (!motion) return { x: 0, y: 0, rotate: 0, scale: 1 };
+  if (!motion) return emptyStagePose();
   const t = clamp(progress, 0, 1);
   const e = envelope(t) * clamp(motion.intensity, 0.5, 1) * clamp(scale, 0, 2.4);
   const fast = Math.sin(t * Math.PI * 4);
@@ -279,61 +285,61 @@ export function sampleLive2DStagePose(motion, progress, scale = DEFAULT_STAGE_MO
     case 'nod':
       return {
         x: 0,
-        y: 4 * beat * e,
-        rotate: -0.28 * fast * e,
-        scale: 1 + 0.003 * beat * e
+        y: 2.6 * beat * e,
+        rotate: -0.22 * fast * e,
+        scale: 1 + 0.002 * beat * e
       };
     case 'shake_head':
       return {
-        x: 15 * fast * e,
-        y: 1.2 * beat * e,
-        rotate: 2.4 * fast * e,
+        x: 20 * fast * e,
+        y: 0.8 * beat * e,
+        rotate: 2.2 * fast * e,
         scale: 1
       };
     case 'lean_in':
       return {
         x: 0,
-        y: -12 * e,
-        rotate: 0.36 * slow * e,
-        scale: 1 + 0.018 * e
+        y: -8 * e,
+        rotate: 0.28 * slow * e,
+        scale: 1 + 0.015 * e
       };
     case 'lean_left':
       return {
-        x: -24 * e,
-        y: 3.5 * e,
-        rotate: -3 * e,
-        scale: 1 + 0.006 * e
+        x: -36 * e,
+        y: 2 * e,
+        rotate: -2.7 * e,
+        scale: 1 + 0.005 * e
       };
     case 'lean_right':
       return {
-        x: 24 * e,
-        y: 3.5 * e,
-        rotate: 3 * e,
-        scale: 1 + 0.006 * e
+        x: 36 * e,
+        y: 2 * e,
+        rotate: 2.7 * e,
+        scale: 1 + 0.005 * e
       };
     case 'sway':
       return {
-        x: 20 * slow * e,
-        y: 2.6 * absPulse(t, 2) * e,
-        rotate: 2.4 * slow * e,
+        x: 34 * slow * e,
+        y: 1.4 * absPulse(t, 2) * e,
+        rotate: 2.1 * slow * e,
         scale: 1 + 0.003 * Math.abs(slow) * e
       };
     case 'bounce':
       return {
-        x: 2 * slow * e,
-        y: -18 * beat * e,
+        x: 5 * slow * e,
+        y: -11 * beat * e,
         rotate: 0.58 * slow * e,
-        scale: 1 + 0.012 * beat * e
+        scale: 1 + 0.009 * beat * e
       };
     case 'emphasis':
       return {
-        x: 10 * fast * e,
-        y: -9 * absPulse(t, 1) * e,
-        rotate: -2.2 * fast * e,
-        scale: 1 + 0.014 * absPulse(t, 1) * e
+        x: 11 * slow * e,
+        y: -7 * absPulse(t, 1) * e,
+        rotate: -1.2 * slow * e,
+        scale: 1 + 0.012 * absPulse(t, 1) * e
       };
     default:
-      return { x: 0, y: 0, rotate: 0, scale: 1 };
+      return emptyStagePose();
   }
 }
 
@@ -345,11 +351,74 @@ export function sampleLive2DIdleStagePose(nowMs = performance.now(), scale = DEF
   const drift = Math.sin(seconds * 0.47 + 1.35);
   const side = Math.sin(seconds * 0.36 + 0.8);
   return {
-    x: 5.8 * side * amount,
-    y: (13 * slow + 4 * drift) * amount,
+    x: 9.5 * side * amount,
+    y: (9.5 * slow + 3.2 * drift) * amount,
     rotate: 0.22 * Math.sin(seconds * 0.43 + 2.1) * amount,
     scale: 1 + 0.003 * Math.sin(seconds * 0.72 + 0.4) * amount
   };
+}
+
+function stagePoseFromBehaviorActionType(type, sign = 1) {
+  const pose = normalizePose(type);
+  if (pose) return pose;
+  if (type === 'head_tilt') return sign < 0 ? 'lean_left' : 'lean_right';
+  if (type === 'look_at_chat' || type === 'dress_sway') return 'sway';
+  if (type === 'smile' || type === 'ear_perk' || type === 'ear_wiggle' || type === 'wing_flutter') return 'bounce';
+  if (type === 'smirk' || type === 'lean') return sign < 0 ? 'lean_left' : 'lean_right';
+  return '';
+}
+
+function sampleBehaviorStagePose(sample, dominantSample, scale = DEFAULT_STAGE_MOTION_SCALE) {
+  if (!sample?.action) return emptyStagePose();
+  const sign = Number(sample.sign) || Number(sample.action?.sign) || 1;
+  const pose = stagePoseFromBehaviorActionType(sample.action.type, sign);
+  if (!pose || !BODY_POSES.has(pose)) return emptyStagePose();
+  const dominant = sample === dominantSample;
+  const actionScale = dominant ? 0.78 : 0.42;
+  return scaleCanvasPose(
+    sampleLive2DStagePose({
+      pose,
+      intensity: clamp(sample.intensity ?? sample.action.intensity, 0.42, 1, 0.64)
+    }, sample.progress, scale),
+    actionScale
+  );
+}
+
+function sampleCharacterStagePose(character, now, scale = DEFAULT_STAGE_MOTION_SCALE) {
+  if (!character) return emptyStagePose();
+  const speaking = character.mode === 'speaking';
+  const acting = character.mode === 'acting';
+  const active = speaking || acting;
+  const amount = clamp(scale, 0, 2.4) * (active ? 0.82 : 0.34);
+  const seconds = now / 1000;
+  const slowFloat = Math.sin(seconds * 0.76 + 0.8);
+  const x = (
+    (Number(character.bodyPosX) || 0) * 78 +
+    (Number(character.facePosX) || 0) * 0.62 +
+    (Number(character.bodyZ) || 0) * 0.56
+  ) * amount;
+  const y = speaking
+    ? ((Number(character.bodyPosY) || 0) * -12 + slowFloat * 1.4) * amount
+    : ((Number(character.bodyPosY) || 0) * -34 + (Number(character.bodyY) || 0) * 0.09 + slowFloat * 1.2) * amount;
+  const rotate = (
+    (Number(character.bodyZ) || 0) * 0.12 +
+    (Number(character.faceZ) || 0) * 0.035
+  ) * amount;
+  return {
+    x: clamp(x, -38, 38),
+    y: clamp(y, -16, 16),
+    rotate: clamp(rotate, -2.4, 2.4),
+    scale: 1 + clamp((Number(character.energy) || 0) * (active ? 0.003 : 0.0015), 0, 0.005)
+  };
+}
+
+function samplePerformanceStagePose(performanceFrame, now, scale = DEFAULT_STAGE_MOTION_SCALE) {
+  if (!performanceFrame) return emptyStagePose();
+  let pose = sampleCharacterStagePose(performanceFrame.character, now, scale);
+  for (const sample of Array.isArray(performanceFrame.samples) ? performanceFrame.samples : []) {
+    pose = combineCanvasPoses(pose, sampleBehaviorStagePose(sample, performanceFrame.dominant, scale));
+  }
+  return pose;
 }
 
 function scaleCanvasPose(pose, amount) {
@@ -362,13 +431,35 @@ function scaleCanvasPose(pose, amount) {
   };
 }
 
-function smoothCanvasPose(previous, target, amount = 0.2) {
+function smoothStageAxis(previous, target, velocity, maxStep, deltaMs) {
+  const deltaSeconds = clamp(deltaMs / 1000, 0.008, 0.05, 0.016);
+  const stiffness = 72;
+  const damping = 17;
+  const acceleration = (target - previous) * stiffness - velocity * damping;
+  const nextVelocity = velocity + acceleration * deltaSeconds;
+  const step = clamp(nextVelocity * deltaSeconds, -maxStep, maxStep, 0);
+  const nextValue = previous + step;
+  if (Math.abs(target - nextValue) < 0.01 && Math.abs(nextVelocity) < 0.02) {
+    return { value: target, velocity: 0 };
+  }
+  return { value: nextValue, velocity: nextVelocity };
+}
+
+function smoothCanvasPose(previous, target, velocity, deltaMs = 1000 / 60) {
   if (!previous) return target;
+  const x = smoothStageAxis(previous.x || 0, target.x || 0, velocity.x || 0, STAGE_POSE_MAX_STEP.x, deltaMs);
+  const y = smoothStageAxis(previous.y || 0, target.y || 0, velocity.y || 0, STAGE_POSE_MAX_STEP.y, deltaMs);
+  const rotate = smoothStageAxis(previous.rotate || 0, target.rotate || 0, velocity.rotate || 0, STAGE_POSE_MAX_STEP.rotate, deltaMs);
+  const scale = smoothStageAxis(previous.scale || 1, target.scale || 1, velocity.scale || 0, STAGE_POSE_MAX_STEP.scale, deltaMs);
+  velocity.x = x.velocity;
+  velocity.y = y.velocity;
+  velocity.rotate = rotate.velocity;
+  velocity.scale = scale.velocity;
   return {
-    x: lerp(previous.x || 0, target.x || 0, amount),
-    y: lerp(previous.y || 0, target.y || 0, amount),
-    rotate: lerp(previous.rotate || 0, target.rotate || 0, amount),
-    scale: lerp(previous.scale || 1, target.scale || 1, amount * 0.72)
+    x: x.value,
+    y: y.value,
+    rotate: rotate.value,
+    scale: scale.value
   };
 }
 
@@ -378,6 +469,15 @@ function combineCanvasPoses(base, overlay) {
     y: (base?.y || 0) + (overlay?.y || 0),
     rotate: (base?.rotate || 0) + (overlay?.rotate || 0),
     scale: (base?.scale || 1) * (overlay?.scale || 1)
+  };
+}
+
+function clampCanvasPose(pose) {
+  return {
+    x: clamp(pose?.x || 0, -92, 92, 0),
+    y: clamp(pose?.y || 0, -58, 58, 0),
+    rotate: clamp(pose?.rotate || 0, -8, 8, 0),
+    scale: clamp(pose?.scale || 1, 0.92, 1.08, 1)
   };
 }
 
@@ -400,17 +500,6 @@ function findLive2DContainer(containerSelector) {
 function findLive2DCanvas(containerSelector) {
   const container = findLive2DContainer(containerSelector);
   return container?.querySelector?.('canvas') || null;
-}
-
-function applyRuntimeStagePose(pose, strength = RUNTIME_STAGE_POSE_SCALE) {
-  if (typeof window === 'undefined' || typeof window.setLive2DModelSettings !== 'function') return false;
-  const amount = clamp(strength, 0, 1, RUNTIME_STAGE_POSE_SCALE);
-  window.setLive2DModelSettings(
-    clamp(1 + ((pose.scale || 1) - 1) * amount, 0.92, 1.08, 1),
-    clamp((pose.x || 0) * amount, -90, 90, 0),
-    clamp((pose.y || 0) * amount, -90, 90, 0)
-  );
-  return true;
 }
 
 function applyModelContainerPose(container, pose) {
@@ -471,12 +560,8 @@ function clearRuntimeStagePose() {
 }
 
 function applyStagePose(container, canvas, pose) {
-  const runtimeApplied = applyRuntimeStagePose(pose);
   if (applyModelContainerPose(container, pose)) {
     clearCanvasPose(canvas);
-    setStageActuatorState({
-      output: runtimeApplied ? 'model-container-transform+runtime-view-matrix' : 'model-container-transform'
-    });
     return;
   }
   applyCanvasPose(canvas, pose);
@@ -491,6 +576,9 @@ export function mountLive2DStageBodyActuator(containerSelector = '#live2d-contai
   let lastCanvas = null;
   let lastContainer = null;
   let lastPose = null;
+  let lastPoseVelocity = { x: 0, y: 0, rotate: 0, scale: 0 };
+  let lastRenderAt = 0;
+  const performanceBrain = getRoomLive2DPerformanceBrain();
 
   function stopFrame() {
     if (frameId) window.cancelAnimationFrame(frameId);
@@ -498,6 +586,8 @@ export function mountLive2DStageBodyActuator(containerSelector = '#live2d-contai
   }
 
   function render(now = performance.now()) {
+    const deltaMs = lastRenderAt ? Math.min(Math.max(now - lastRenderAt, 8), 64) : 1000 / 60;
+    lastRenderAt = now;
     const container = findLive2DContainer(containerSelector);
     const canvas = findLive2DCanvas(containerSelector);
     lastContainer = container || lastContainer;
@@ -505,8 +595,13 @@ export function mountLive2DStageBodyActuator(containerSelector = '#live2d-contai
     const floatEnabled = readStageFloatEnabled();
     let pose = floatEnabled
       ? sampleLive2DIdleStagePose(now, readStageIdleScale())
-      : { x: 0, y: 0, rotate: 0, scale: 1 };
-    if (floatEnabled && outgoingMotion) {
+      : emptyStagePose();
+    const performanceFrame = performanceBrain.sample(now, { intensityScale: 1.62 });
+    if (floatEnabled) {
+      pose = combineCanvasPoses(pose, samplePerformanceStagePose(performanceFrame, now, readStageMotionScale()));
+    }
+    const planDrivenMotion = Boolean(performanceFrame?.behaviorPlan);
+    if (floatEnabled && outgoingMotion && !planDrivenMotion) {
       const age = now - outgoingMotion.releasedAt;
       const fade = 1 - clamp(age / outgoingMotion.fadeOutMs, 0, 1, 1);
       if (fade <= 0.001) {
@@ -519,7 +614,7 @@ export function mountLive2DStageBodyActuator(containerSelector = '#live2d-contai
         );
       }
     }
-    if (floatEnabled && activeMotion) {
+    if (floatEnabled && activeMotion && !planDrivenMotion) {
       const progress = (now - startMs) / activeMotion.durationMs;
       pose = combineCanvasPoses(pose, sampleLive2DStagePose(activeMotion, progress, readStageMotionScale()));
       if (progress >= 1) activeMotion = null;
@@ -528,7 +623,8 @@ export function mountLive2DStageBodyActuator(containerSelector = '#live2d-contai
       ...pose,
       y: pose.y + readStageVerticalOffset()
     };
-    lastPose = smoothCanvasPose(lastPose, pose, 0.24);
+    pose = clampCanvasPose(pose);
+    lastPose = smoothCanvasPose(lastPose, pose, lastPoseVelocity, deltaMs);
     applyStagePose(container, canvas, lastPose);
     frameId = window.requestAnimationFrame(render);
   }
@@ -562,6 +658,8 @@ export function mountLive2DStageBodyActuator(containerSelector = '#live2d-contai
     activeMotion = null;
     outgoingMotion = null;
     lastPose = null;
+    lastPoseVelocity = { x: 0, y: 0, rotate: 0, scale: 0 };
+    lastRenderAt = 0;
     stopFrame();
     clearRuntimeStagePose();
     clearContainerPose(lastContainer || findLive2DContainer(containerSelector));
