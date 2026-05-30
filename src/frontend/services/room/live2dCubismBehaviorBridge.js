@@ -14,6 +14,7 @@ const ROOM_ACT_EVENT = 'tsukuyomi:room-act';
 const FACE_CAPTURE_EVENT = 'tsukuyomi:live2d-face';
 const MOUTH_EVENT = 'tsukuyomi:live2d-mouth';
 const CHARACTER_STATE_EVENT = 'tsukuyomi:live2d-character-state';
+const LOCAL_CUBISM_ACTION_INTENSITY_SCALE = 1.86;
 
 const EYE_OWNING_EXPRESSIONS = new Set([
   'angry',
@@ -588,10 +589,10 @@ function applyCharacterState(frame, character, strength = 1, options = {}) {
   if (!character) return;
   const amount = clamp(strength, 0, 1, 1);
   const isSpeaking = character.mode === 'speaking';
-  const faceVerticalAmount = isSpeaking ? amount * 0.72 : amount;
-  const bodyVerticalAmount = isSpeaking ? amount * 0.46 : amount;
-  const bodyPositionVerticalAmount = isSpeaking ? amount * 0.34 : amount;
-  const bodyWeight = isSpeaking ? 0.98 : 0.8;
+  const faceVerticalAmount = isSpeaking ? amount * 0.62 : amount;
+  const bodyVerticalAmount = isSpeaking ? amount * 0.32 : amount;
+  const bodyPositionVerticalAmount = isSpeaking ? amount * 0.18 : amount;
+  const bodyWeight = isSpeaking ? 0.76 : 0.8;
   setHead(frame, {
     x: character.faceX * amount,
     y: character.faceY * faceVerticalAmount,
@@ -647,7 +648,7 @@ export function mountCubismBehaviorBridge(options = {}) {
   }
 
   function sample(now = performance.now()) {
-    const performanceFrame = performanceBrain.sample(now, { intensityScale: 1.62 });
+    const performanceFrame = performanceBrain.sample(now, { intensityScale: LOCAL_CUBISM_ACTION_INTENSITY_SCALE });
     const { behaviorPlan, character, dominant, samples } = performanceFrame;
     if (momentaryPulse && now - momentaryPulse.startedAt > momentaryPulse.durationMs) {
       momentaryPulse = null;

@@ -179,7 +179,8 @@ export function createLive2DPerformanceBrain() {
   }
 
   function sample(now = nowMs(), options = {}) {
-    const frameKey = Math.floor(Number(now) / 16);
+    const intensityScale = Number(options.intensityScale) || 1.62;
+    const frameKey = `${Math.floor(Number(now) / 16)}:${intensityScale.toFixed(3)}`;
     if (cachedFrame && cachedFrameKey === frameKey) return cachedFrame;
     const character = characterState.sample(now);
     const currentPlan = behaviorPlan;
@@ -190,7 +191,6 @@ export function createLive2DPerformanceBrain() {
       characterState.setMode('listening', { now, holdMs: 1400, attention: 0.52 });
     }
     const activePlan = behaviorPlan;
-    const intensityScale = Number(options.intensityScale) || 1.62;
     const outgoingExpression = outgoingPlan?.plan?.expression;
     const trailingSamples = sampleOutgoingBehaviorActions(now, intensityScale);
     const activeSamples = activePlan ? sampleActiveBehaviorActions(activePlan.actions, elapsedMs, {
