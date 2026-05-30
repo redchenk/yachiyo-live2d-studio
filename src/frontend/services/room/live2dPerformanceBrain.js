@@ -68,7 +68,7 @@ export function createLive2DPerformanceBrain() {
       plan,
       releasedAt: at,
       elapsedAtRelease,
-      fadeOutMs: clamp(fadeOutMs || plan.interruptPolicy?.blendOutMs, 180, 900, 260)
+      fadeOutMs: clamp(fadeOutMs || plan.interruptPolicy?.blendOutMs, 260, 1200, 520)
     };
   }
 

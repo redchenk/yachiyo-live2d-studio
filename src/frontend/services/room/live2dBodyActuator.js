@@ -13,6 +13,20 @@ const STAGE_POSE_MAX_STEP = {
   rotate: 1.35,
   scale: 0.012
 };
+const STAGE_LERP_PROFILES = {
+  idle: {
+    x: 270,
+    y: 340,
+    rotate: 320,
+    scale: 380
+  },
+  motion: {
+    x: 210,
+    y: 270,
+    rotate: 260,
+    scale: 320
+  }
+};
 const BODY_PARAMETER_HINTS = [
   'ParamBodyInput_BodyX',
   'ParamBodyInput_BodyY',
@@ -431,26 +445,27 @@ function scaleCanvasPose(pose, amount) {
   };
 }
 
-function smoothStageAxis(previous, target, velocity, maxStep, deltaMs) {
-  const deltaSeconds = clamp(deltaMs / 1000, 0.008, 0.05, 0.016);
-  const stiffness = 72;
-  const damping = 17;
-  const acceleration = (target - previous) * stiffness - velocity * damping;
-  const nextVelocity = velocity + acceleration * deltaSeconds;
-  const step = clamp(nextVelocity * deltaSeconds, -maxStep, maxStep, 0);
-  const nextValue = previous + step;
-  if (Math.abs(target - nextValue) < 0.01 && Math.abs(nextVelocity) < 0.02) {
-    return { value: target, velocity: 0 };
-  }
-  return { value: nextValue, velocity: nextVelocity };
+function lerpAmount(deltaMs, responseMs) {
+  return 1 - Math.exp(-Math.max(deltaMs, 1) / Math.max(responseMs, 1));
 }
 
-function smoothCanvasPose(previous, target, velocity, deltaMs = 1000 / 60) {
+function smoothStageAxis(previous, target, maxStep, deltaMs, responseMs) {
+  const deltaSeconds = clamp(deltaMs / 1000, 0.008, 0.05, 0.016);
+  const rawStep = (target - previous) * lerpAmount(deltaMs, responseMs);
+  const step = clamp(rawStep, -maxStep, maxStep, 0);
+  const nextValue = previous + step;
+  if (Math.abs(target - nextValue) < 0.01 && Math.abs(step) < 0.005) {
+    return { value: target, velocity: 0 };
+  }
+  return { value: nextValue, velocity: step / deltaSeconds };
+}
+
+function smoothCanvasPose(previous, target, velocity, deltaMs = 1000 / 60, profile = STAGE_LERP_PROFILES.motion) {
   if (!previous) return target;
-  const x = smoothStageAxis(previous.x || 0, target.x || 0, velocity.x || 0, STAGE_POSE_MAX_STEP.x, deltaMs);
-  const y = smoothStageAxis(previous.y || 0, target.y || 0, velocity.y || 0, STAGE_POSE_MAX_STEP.y, deltaMs);
-  const rotate = smoothStageAxis(previous.rotate || 0, target.rotate || 0, velocity.rotate || 0, STAGE_POSE_MAX_STEP.rotate, deltaMs);
-  const scale = smoothStageAxis(previous.scale || 1, target.scale || 1, velocity.scale || 0, STAGE_POSE_MAX_STEP.scale, deltaMs);
+  const x = smoothStageAxis(previous.x || 0, target.x || 0, STAGE_POSE_MAX_STEP.x, deltaMs, profile.x);
+  const y = smoothStageAxis(previous.y || 0, target.y || 0, STAGE_POSE_MAX_STEP.y, deltaMs, profile.y);
+  const rotate = smoothStageAxis(previous.rotate || 0, target.rotate || 0, STAGE_POSE_MAX_STEP.rotate, deltaMs, profile.rotate);
+  const scale = smoothStageAxis(previous.scale || 1, target.scale || 1, STAGE_POSE_MAX_STEP.scale, deltaMs, profile.scale);
   velocity.x = x.velocity;
   velocity.y = y.velocity;
   velocity.rotate = rotate.velocity;
@@ -479,6 +494,14 @@ function clampCanvasPose(pose) {
     rotate: clamp(pose?.rotate || 0, -8, 8, 0),
     scale: clamp(pose?.scale || 1, 0.92, 1.08, 1)
   };
+}
+
+function selectStageLerpProfile(performanceFrame, activeMotion, outgoingMotion) {
+  if (performanceFrame?.behaviorPlan || activeMotion || outgoingMotion) return STAGE_LERP_PROFILES.motion;
+  const mode = performanceFrame?.character?.mode;
+  return mode === 'speaking' || mode === 'acting'
+    ? STAGE_LERP_PROFILES.motion
+    : STAGE_LERP_PROFILES.idle;
 }
 
 function setStageActuatorState(patch) {
@@ -624,7 +647,13 @@ export function mountLive2DStageBodyActuator(containerSelector = '#live2d-contai
       y: pose.y + readStageVerticalOffset()
     };
     pose = clampCanvasPose(pose);
-    lastPose = smoothCanvasPose(lastPose, pose, lastPoseVelocity, deltaMs);
+    lastPose = smoothCanvasPose(
+      lastPose,
+      pose,
+      lastPoseVelocity,
+      deltaMs,
+      selectStageLerpProfile(performanceFrame, activeMotion, outgoingMotion)
+    );
     applyStagePose(container, canvas, lastPose);
     frameId = window.requestAnimationFrame(render);
   }
