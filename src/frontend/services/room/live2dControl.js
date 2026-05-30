@@ -10,10 +10,13 @@ import {
   semanticExpressionBehaviorActions,
   semanticExpressionFromEmotion
 } from '../../constants/room/yachiyoExpressionPresetRegistry';
+import {
+  appendRoomLive2DDebugEvent,
+  publishRoomLive2DDebugState,
+  readRoomLive2DDebugState as readSharedRoomLive2DDebugState
+} from './live2dDebug';
 
-const DEBUG_STATE_KEY = 'roomLive2DDebugState';
 export const ROOM_LIVE2D_PENDING_INTENT_KEY = 'roomLive2DPendingIntent';
-const DEBUG_HISTORY_LIMIT = 12;
 
 let activeQueueTimers = [];
 
@@ -86,39 +89,15 @@ function normalizeParameterDuration(value) {
 }
 
 function readDebugState() {
-  if (typeof localStorage === 'undefined') return {};
-  try {
-    return JSON.parse(localStorage.getItem(DEBUG_STATE_KEY) || '{}') || {};
-  } catch (_) {
-    return {};
-  }
+  return readSharedRoomLive2DDebugState();
 }
 
 function writeDebugState(patch) {
-  if (typeof localStorage === 'undefined') return;
-  const current = readDebugState();
-  const next = {
-    ...current,
-    ...patch,
-    updatedAt: Date.now()
-  };
-  localStorage.setItem(DEBUG_STATE_KEY, JSON.stringify(next));
-  window.dispatchEvent(new CustomEvent('tsukuyomi:room-live2d-debug', { detail: next }));
+  publishRoomLive2DDebugState(patch);
 }
 
 function appendDebugHistory(entry) {
-  const current = readDebugState();
-  const history = Array.isArray(current.history) ? current.history : [];
-  writeDebugState({
-    history: [
-      {
-        ...entry,
-        id: `act-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`,
-        createdAt: Date.now()
-      },
-      ...history
-    ].slice(0, DEBUG_HISTORY_LIMIT)
-  });
+  appendRoomLive2DDebugEvent(entry.source || 'dispatch', entry);
 }
 
 export function normalizeLive2DExpression(value, manifest = roomLive2DManifest) {

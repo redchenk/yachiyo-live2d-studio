@@ -9,6 +9,10 @@ import {
   translateLive2DReplyToChinese
 } from '../services/room/live2dLlmControl';
 import { dispatchRoomLive2D } from '../services/room/live2dControl';
+import {
+  ROOM_LIVE2D_DEBUG_EVENT,
+  readRoomLive2DDebugState
+} from '../services/room/live2dDebug';
 import { createLive2DSpeechPlayer } from '../services/room/live2dSpeech';
 import { cleanLive2DReply } from '../services/room/live2dText';
 import {
@@ -41,12 +45,94 @@ const speechState = ref({
   status: 'idle',
   error: ''
 });
+const debugPanelOpen = ref(
+  typeof localStorage !== 'undefined'
+    ? localStorage.getItem('roomLive2DDebugPanelOpen') === 'true'
+    : false
+);
+const live2dDebug = ref(readRoomLive2DDebugState());
 
 let liveTimer = 0;
 let liveTurnInFlight = false;
 let speechPlayer = null;
 const CHARACTER_STATE_EVENT = 'tsukuyomi:live2d-character-state';
 const SETTINGS_SAVED_EVENT = 'tsukuyomi:studio-settings-saved';
+
+const debugEmotion = computed(() => (
+  live2dDebug.value.emotion ||
+  live2dDebug.value.current?.emotion ||
+  live2dDebug.value.current?.expression ||
+  'neutral'
+));
+
+const debugMouthEnergy = computed(() => Number(live2dDebug.value.mouthEnergy || 0).toFixed(3));
+
+const debugActionQueue = computed(() => {
+  const planActions = live2dDebug.value.actionQueue || live2dDebug.value.behaviorPlan?.actions || [];
+  if (Array.isArray(planActions) && planActions.length) return planActions.slice(0, 8);
+  const sequence = live2dDebug.value.normalized?.sequence || [];
+  return Array.isArray(sequence)
+    ? sequence.map((step) => ({
+        type: step.bodyPose || step.motion || step.expression || 'act',
+        intensity: step.intensity,
+        delayMs: step.delayMs,
+        durationMs: step.durationMs
+      })).slice(0, 8)
+    : [];
+});
+
+const debugVTSParameters = computed(() => (live2dDebug.value.vtsParameters || []).slice(0, 18));
+const debugCubismParameters = computed(() => (live2dDebug.value.cubismParameters || []).slice(0, 12));
+const debugExpressionFiles = computed(() => live2dDebug.value.expressionFiles || {});
+const debugEvents = computed(() => (live2dDebug.value.behaviorEvents || live2dDebug.value.history || []).slice(0, 10));
+const debugBehaviorPlanText = computed(() => formatDebugObject(live2dDebug.value.behaviorPlan || null));
+const debugInterruptPolicyText = computed(() => formatDebugObject(live2dDebug.value.interruptPolicy || null));
+
+const debugUpdatedLabel = computed(() => formatDebugTime(live2dDebug.value.updatedAt));
+
+function formatDebugObject(value) {
+  if (!value) return 'null';
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch (_) {
+    return String(value);
+  }
+}
+
+function formatDebugTime(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric <= 0) return '--:--:--';
+  return new Date(numeric).toLocaleTimeString();
+}
+
+function formatDebugNumber(value) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric.toFixed(Math.abs(numeric) >= 10 ? 1 : 3) : String(value || 0);
+}
+
+function debugActionLabel(action) {
+  return action?.type || action?.action || action?.bodyPose || action?.expression || 'act';
+}
+
+function debugActionMeta(action) {
+  const parts = [];
+  if (Number.isFinite(Number(action?.intensity))) parts.push(`i ${formatDebugNumber(action.intensity)}`);
+  if (Number.isFinite(Number(action?.delayMs)) && Number(action.delayMs) > 0) parts.push(`+${Math.round(action.delayMs)}ms`);
+  if (Number.isFinite(Number(action?.durationMs)) && Number(action.durationMs) > 0) parts.push(`${Math.round(action.durationMs)}ms`);
+  return parts.join(' / ') || 'ready';
+}
+
+function debugEventLabel(event) {
+  const bits = [event.type, event.emotion, event.action].filter(Boolean);
+  return bits.join(' / ') || 'event';
+}
+
+function toggleLive2DDebugPanel() {
+  debugPanelOpen.value = !debugPanelOpen.value;
+  if (typeof localStorage !== 'undefined') {
+    localStorage.setItem('roomLive2DDebugPanelOpen', debugPanelOpen.value ? 'true' : 'false');
+  }
+}
 
 const statusLabel = computed(() => {
   if (live2d.error.value) return 'ERROR';
@@ -611,13 +697,20 @@ function handleStudioSettingsSaved() {
   speechPlayer?.warmup?.();
 }
 
+function handleLive2DDebugEvent(event) {
+  live2dDebug.value = event.detail || readRoomLive2DDebugState();
+}
+
 onMounted(() => {
   window.addEventListener(SETTINGS_SAVED_EVENT, handleStudioSettingsSaved);
+  window.addEventListener(ROOM_LIVE2D_DEBUG_EVENT, handleLive2DDebugEvent);
+  live2dDebug.value = readRoomLive2DDebugState();
   init();
 });
 
 onUnmounted(() => {
   window.removeEventListener(SETTINGS_SAVED_EVENT, handleStudioSettingsSaved);
+  window.removeEventListener(ROOM_LIVE2D_DEBUG_EVENT, handleLive2DDebugEvent);
   stopLiveDirector();
   speechPlayer?.destroy();
   speechPlayer = null;
@@ -658,6 +751,16 @@ onUnmounted(() => {
       <div class="live2d-status-row">
         <span class="live2d-status-dot" :class="{ ready: live2d.ready.value, error: live2d.error.value }"></span>
         <strong>{{ statusLabel }}</strong>
+        <button
+          class="live2d-icon-btn live2d-debug-toggle"
+          type="button"
+          title="Motion inspector"
+          aria-label="Motion inspector"
+          :aria-pressed="debugPanelOpen ? 'true' : 'false'"
+          @click="toggleLive2DDebugPanel"
+        >
+          <TsIcon name="list" :size="17" />
+        </button>
       </div>
 
       <section class="live2d-live-director" aria-label="Live director">
@@ -748,6 +851,105 @@ onUnmounted(() => {
         <p v-if="llmState.error">{{ llmState.error }}</p>
         <p v-else>Motion queued.</p>
       </div>
+    </aside>
+
+    <aside v-if="debugPanelOpen" class="live2d-debug-panel" aria-label="Live2D motion inspector">
+      <header class="live2d-debug-header">
+        <div>
+          <span>Motion Inspector</span>
+          <strong>{{ debugEmotion }}</strong>
+        </div>
+        <div class="live2d-debug-header-actions">
+          <small>{{ debugUpdatedLabel }}</small>
+          <button class="live2d-icon-btn" type="button" title="Close inspector" aria-label="Close inspector" @click="toggleLive2DDebugPanel">
+            <TsIcon name="x" :size="17" />
+          </button>
+        </div>
+      </header>
+
+      <div class="live2d-debug-metrics">
+        <div>
+          <span>Emotion</span>
+          <strong>{{ debugEmotion }}</strong>
+        </div>
+        <div>
+          <span>Mouth</span>
+          <strong>{{ debugMouthEnergy }}</strong>
+        </div>
+        <div>
+          <span>VTS</span>
+          <strong>{{ live2dDebug.vtsStatus?.status || 'idle' }}</strong>
+        </div>
+        <div>
+          <span>Queue</span>
+          <strong>{{ debugActionQueue.length }}</strong>
+        </div>
+      </div>
+
+      <section class="live2d-debug-section">
+        <h2>Action Queue</h2>
+        <div v-if="debugActionQueue.length" class="live2d-debug-list">
+          <article v-for="(action, index) in debugActionQueue" :key="`${debugActionLabel(action)}-${index}`">
+            <strong>{{ debugActionLabel(action) }}</strong>
+            <span>{{ debugActionMeta(action) }}</span>
+          </article>
+        </div>
+        <p v-else>idle</p>
+      </section>
+
+      <section class="live2d-debug-section">
+        <h2>BehaviorPlan</h2>
+        <pre>{{ debugBehaviorPlanText }}</pre>
+      </section>
+
+      <section class="live2d-debug-section">
+        <h2>VTS Parameters</h2>
+        <div v-if="debugVTSParameters.length" class="live2d-debug-param-list">
+          <span v-for="param in debugVTSParameters" :key="param.id">
+            <code>{{ param.id }}</code>
+            <em>{{ formatDebugNumber(param.value) }}</em>
+          </span>
+        </div>
+        <p v-else>no VTS output yet</p>
+      </section>
+
+      <section v-if="debugCubismParameters.length" class="live2d-debug-section">
+        <h2>Cubism Parameters</h2>
+        <div class="live2d-debug-param-list">
+          <span v-for="param in debugCubismParameters" :key="param.id">
+            <code>{{ param.id }}</code>
+            <em>{{ formatDebugNumber(param.value) }}</em>
+          </span>
+        </div>
+      </section>
+
+      <section class="live2d-debug-section">
+        <h2>Expression Files</h2>
+        <div class="live2d-debug-expression-state">
+          <span>active {{ debugExpressionFiles.active?.length || 0 }}</span>
+          <span>available {{ debugExpressionFiles.availableCount || 0 }}</span>
+          <span>eye {{ debugExpressionFiles.ownsEyeOpen ? 'owned' : 'free' }}</span>
+        </div>
+        <div v-if="debugExpressionFiles.active?.length" class="live2d-debug-chip-row">
+          <span v-for="file in debugExpressionFiles.active" :key="file">{{ file }}</span>
+        </div>
+      </section>
+
+      <section class="live2d-debug-section">
+        <h2>Interrupt Policy</h2>
+        <pre>{{ debugInterruptPolicyText }}</pre>
+      </section>
+
+      <section class="live2d-debug-section">
+        <h2>Recent Events</h2>
+        <div v-if="debugEvents.length" class="live2d-debug-events">
+          <article v-for="event in debugEvents" :key="event.id">
+            <time>{{ formatDebugTime(event.createdAt) }}</time>
+            <span>{{ debugEventLabel(event) }}</span>
+          </article>
+        </div>
+        <p v-else>no events</p>
+      </section>
     </aside>
 
     <div v-if="live2d.loading.value" class="live2d-loading" role="status">

@@ -168,7 +168,8 @@ body.vue-live2d-route {
 
 .live2d-error,
 .live2d-loading,
-.live2d-control-panel {
+.live2d-control-panel,
+.live2d-debug-panel {
     border: 1px solid rgba(235, 242, 255, 0.18);
     border-radius: 8px;
     background: rgba(10, 15, 29, 0.58);
@@ -224,6 +225,16 @@ body.vue-live2d-route {
 
 .live2d-status-row strong {
     color: var(--live2d-ink);
+}
+
+.live2d-debug-toggle {
+    width: 2rem;
+    min-height: 2rem;
+}
+
+.live2d-debug-toggle[aria-pressed="true"] {
+    border-color: rgba(158, 232, 255, 0.62);
+    background: rgba(158, 232, 255, 0.18);
 }
 
 .live2d-status-dot {
@@ -416,6 +427,209 @@ body.vue-live2d-route {
     opacity: 0.5;
 }
 
+.live2d-debug-panel {
+    position: fixed;
+    top: clamp(1rem, 3vw, 2rem);
+    left: clamp(1rem, 3vw, 2rem);
+    bottom: clamp(1rem, 3vw, 2rem);
+    z-index: 6;
+    width: min(32rem, calc(100vw - 26rem));
+    display: flex;
+    flex-direction: column;
+    gap: 0.72rem;
+    padding: 0.86rem;
+    overflow: auto;
+}
+
+.live2d-debug-header,
+.live2d-debug-header-actions,
+.live2d-debug-metrics,
+.live2d-debug-expression-state,
+.live2d-debug-chip-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.live2d-debug-header {
+    justify-content: space-between;
+    gap: 1rem;
+}
+
+.live2d-debug-header div:first-child {
+    min-width: 0;
+    display: grid;
+    gap: 0.12rem;
+}
+
+.live2d-debug-header span,
+.live2d-debug-section h2,
+.live2d-debug-metrics span {
+    color: var(--live2d-muted);
+    font-size: 0.68rem;
+    font-weight: 850;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+.live2d-debug-header strong {
+    min-width: 0;
+    overflow: hidden;
+    color: var(--live2d-ink);
+    font-size: 1rem;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.live2d-debug-header-actions {
+    flex: none;
+}
+
+.live2d-debug-header-actions small {
+    color: var(--live2d-muted);
+    font-size: 0.7rem;
+    font-weight: 800;
+}
+
+.live2d-debug-metrics {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.live2d-debug-metrics div,
+.live2d-debug-section {
+    min-width: 0;
+    border: 1px solid rgba(235, 242, 255, 0.13);
+    border-radius: 7px;
+    background: rgba(3, 7, 18, 0.36);
+}
+
+.live2d-debug-metrics div {
+    display: grid;
+    gap: 0.18rem;
+    padding: 0.52rem;
+}
+
+.live2d-debug-metrics strong {
+    min-width: 0;
+    overflow: hidden;
+    color: var(--live2d-ink);
+    font-size: 0.82rem;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.live2d-debug-section {
+    display: grid;
+    gap: 0.5rem;
+    padding: 0.62rem;
+}
+
+.live2d-debug-section h2,
+.live2d-debug-section p {
+    margin: 0;
+}
+
+.live2d-debug-section p {
+    color: var(--live2d-muted);
+    font-size: 0.76rem;
+}
+
+.live2d-debug-section pre {
+    max-height: 12rem;
+    margin: 0;
+    overflow: auto;
+    color: rgba(235, 242, 255, 0.76);
+    font-size: 0.68rem;
+    line-height: 1.45;
+    white-space: pre-wrap;
+}
+
+.live2d-debug-list,
+.live2d-debug-events {
+    display: grid;
+    gap: 0.38rem;
+}
+
+.live2d-debug-list article,
+.live2d-debug-events article {
+    min-width: 0;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 0.52rem;
+    padding: 0.42rem 0.48rem;
+    border: 1px solid rgba(235, 242, 255, 0.1);
+    border-radius: 7px;
+    background: rgba(255, 255, 255, 0.05);
+}
+
+.live2d-debug-list strong,
+.live2d-debug-events span {
+    min-width: 0;
+    overflow: hidden;
+    color: var(--live2d-ink);
+    font-size: 0.74rem;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.live2d-debug-list span,
+.live2d-debug-events time {
+    color: var(--live2d-muted);
+    font-size: 0.68rem;
+    font-weight: 800;
+}
+
+.live2d-debug-param-list {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.34rem;
+}
+
+.live2d-debug-param-list span,
+.live2d-debug-expression-state span,
+.live2d-debug-chip-row span {
+    min-width: 0;
+    border: 1px solid rgba(235, 242, 255, 0.12);
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.06);
+    color: rgba(235, 242, 255, 0.78);
+    font-size: 0.68rem;
+    font-weight: 850;
+}
+
+.live2d-debug-param-list span {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 0.38rem;
+    padding: 0.32rem 0.44rem;
+}
+
+.live2d-debug-param-list code {
+    min-width: 0;
+    overflow: hidden;
+    color: var(--live2d-cyan);
+    font-family: inherit;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.live2d-debug-param-list em {
+    color: var(--live2d-ink);
+    font-style: normal;
+}
+
+.live2d-debug-expression-state,
+.live2d-debug-chip-row {
+    flex-wrap: wrap;
+}
+
+.live2d-debug-expression-state span,
+.live2d-debug-chip-row span {
+    padding: 0.28rem 0.44rem;
+}
+
 .live2d-loading {
     position: fixed;
     left: 50%;
@@ -482,7 +696,20 @@ body.vue-live2d-route {
         width: auto;
     }
 
+    .live2d-debug-panel {
+        left: 1rem;
+        right: 1rem;
+        top: max(0.9rem, env(safe-area-inset-top));
+        bottom: 19rem;
+        width: auto;
+    }
+
     .live2d-actions {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .live2d-debug-metrics,
+    .live2d-debug-param-list {
         grid-template-columns: repeat(2, minmax(0, 1fr));
     }
 

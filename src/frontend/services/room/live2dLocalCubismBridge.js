@@ -1,5 +1,9 @@
 import { mountCubismBehaviorBridge } from './live2dCubismBehaviorBridge';
 import { YACHIYO_MODEL_PARAMETER_RANGES } from '../../constants/room/yachiyoModelParameterRegistry';
+import {
+  publishRoomLive2DDebugState,
+  summarizeDebugParameters
+} from './live2dDebug';
 
 const FACE_CAPTURE_EVENT = 'tsukuyomi:live2d-face';
 const LOCAL_BRIDGE_STATE_KEY = '__TSUKUYOMI_LOCAL_CUBISM_BRIDGE_STATE__';
@@ -250,6 +254,16 @@ function flushLocalCubismFrame() {
     try {
       const frameParameters = smoothLocalCubismFrame(parameters);
       bridge.setFrame(frameParameters);
+      publishRoomLive2DDebugState({
+        cubismParameters: summarizeDebugParameters(frameParameters),
+        cubismParameterCount: frameParameters.length,
+        cubismParametersUpdatedAt: Date.now()
+      }, {
+        volatile: true,
+        persist: false,
+        throttleKey: 'cubism-parameters',
+        throttleMs: 140
+      });
       setLocalBridgeState({
         mounted: true,
         output: 'runtime-direct',

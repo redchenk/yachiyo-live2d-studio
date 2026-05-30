@@ -10,6 +10,11 @@ import {
   normalizeSemanticExpressionId,
   semanticExpressionFromEmotion
 } from '../../constants/room/yachiyoExpressionPresetRegistry';
+import {
+  appendRoomLive2DDebugEvent,
+  publishRoomLive2DPerformanceDebug,
+  summarizeDebugBehaviorPlan
+} from './live2dDebug';
 
 let sharedPerformanceBrain = null;
 
@@ -70,6 +75,12 @@ export function createLive2DPerformanceBrain() {
       elapsedAtRelease,
       fadeOutMs: clamp(fadeOutMs || plan.interruptPolicy?.blendOutMs, 260, 1200, 520)
     };
+    appendRoomLive2DDebugEvent('behavior-plan-release', {
+      source: plan.source || 'performance',
+      expression: plan.expression,
+      behaviorPlan: summarizeDebugBehaviorPlan(plan, elapsedAtRelease),
+      fadeOutMs: outgoingPlan.fadeOutMs
+    });
   }
 
   function sampleOutgoingBehaviorActions(at, intensityScale) {
@@ -110,7 +121,15 @@ export function createLive2DPerformanceBrain() {
       suppressEyeOpen: Boolean(options.suppressEyeOpen),
       speechStyle: options.speechStyle
     });
-    if (!shouldInterruptLive2DBehaviorPlan(behaviorPlan, nextPlan, now)) return behaviorPlan;
+    if (!shouldInterruptLive2DBehaviorPlan(behaviorPlan, nextPlan, now)) {
+      appendRoomLive2DDebugEvent('behavior-plan-protected', {
+        source: options.source || 'room-act',
+        expression,
+        behaviorPlan: summarizeDebugBehaviorPlan(behaviorPlan, now - (behaviorPlan?.startedAt || now)),
+        nextPlan: summarizeDebugBehaviorPlan(nextPlan, 0)
+      });
+      return behaviorPlan;
+    }
     if (behaviorPlan) {
       releaseBehaviorPlan(behaviorPlan, now, nextPlan.interruptPolicy?.blendInMs || behaviorPlan.interruptPolicy?.blendOutMs);
     }
@@ -121,6 +140,13 @@ export function createLive2DPerformanceBrain() {
       holdMs: nextPlan.durationMs + 420,
       attention: 0.86,
       arousal: 0.72
+    });
+    appendRoomLive2DDebugEvent('behavior-plan-start', {
+      source: nextPlan.source || options.source || 'room-act',
+      expression,
+      emotion: options.emotion,
+      behaviorPlan: summarizeDebugBehaviorPlan(nextPlan, 0),
+      action: nextPlan.actions?.[0]?.type || ''
     });
     return behaviorPlan;
   }
@@ -189,6 +215,11 @@ export function createLive2DPerformanceBrain() {
       releaseBehaviorPlan(currentPlan, now, currentPlan.interruptPolicy?.blendOutMs);
       behaviorPlan = null;
       characterState.setMode('listening', { now, holdMs: 1400, attention: 0.52 });
+      appendRoomLive2DDebugEvent('behavior-plan-complete', {
+        source: currentPlan.source || 'performance',
+        expression: currentPlan.expression,
+        behaviorPlan: summarizeDebugBehaviorPlan(currentPlan, currentPlan.durationMs)
+      });
     }
     const activePlan = behaviorPlan;
     const outgoingExpression = outgoingPlan?.plan?.expression;
@@ -210,6 +241,7 @@ export function createLive2DPerformanceBrain() {
       active: Boolean(activePlan || trailingSamples.length),
       completed: Boolean(currentPlan && !activePlan)
     };
+    publishRoomLive2DPerformanceDebug(cachedFrame);
     cachedFrameKey = frameKey;
     return cachedFrame;
   }

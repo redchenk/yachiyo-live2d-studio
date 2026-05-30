@@ -20,6 +20,11 @@ import {
   pickDominantMotion as pickBehaviorDominantMotion,
 } from './live2dBehaviorOrchestrator';
 import { getRoomLive2DPerformanceBrain } from './live2dPerformanceBrain';
+import {
+  appendRoomLive2DDebugEvent,
+  publishRoomLive2DDebugState,
+  summarizeDebugParameters
+} from './live2dDebug';
 
 const ROOM_ACT_EVENT = 'tsukuyomi:room-act';
 const FACE_CAPTURE_EVENT = 'tsukuyomi:live2d-face';
@@ -1416,6 +1421,25 @@ export function mountVTubeStudioBridge() {
     return [...activeExpressionFiles].some((file) => expressionOwnsEyeOpen(file));
   }
 
+  function publishVTSExpressionDebug(reason = '') {
+    publishRoomLive2DDebugState({
+      expressionFiles: {
+        reason,
+        availableCount: expressionFiles.length,
+        available: expressionFiles.slice(0, 18),
+        active: [...activeExpressionFiles],
+        activationTimers: expressionActivationTimers.size,
+        holdTimers: expressionTimers.size,
+        momentary: [...momentaryExpressionTimers.keys()],
+        ownsEyeOpen: activeExpressionOwnsEyeOpen(),
+        loadedAt: expressionsLoadedAt || 0
+      }
+    }, {
+      volatile: true,
+      persist: false
+    });
+  }
+
   function releaseInjectedEyes() {
     EYE_INJECTION_IDS.forEach((id) => {
       pendingInjection.delete(id);
@@ -1453,8 +1477,13 @@ export function mountVTubeStudioBridge() {
   }
 
   function setStatus(status, error = '') {
+    const detail = { status, error, enabled: Boolean(settings.enabled), apiUrl: normalizeUrl(settings.apiUrl) };
+    publishRoomLive2DDebugState({ vtsStatus: detail }, {
+      volatile: true,
+      persist: false
+    });
     window.dispatchEvent(new CustomEvent(STATUS_EVENT, {
-      detail: { status, error, enabled: Boolean(settings.enabled), apiUrl: normalizeUrl(settings.apiUrl) }
+      detail
     }));
   }
 
@@ -1656,6 +1685,7 @@ export function mountVTubeStudioBridge() {
       .map((item) => String(item?.file || item?.expressionFile || item?.name || '').trim())
       .filter(Boolean);
     expressionsLoadedAt = Date.now();
+    publishVTSExpressionDebug('loaded');
     return expressionFiles;
   }
 
@@ -1711,6 +1741,7 @@ export function mountVTubeStudioBridge() {
     activeExpressionFiles.clear();
     releaseInjectedEyes();
     releaseInjectedMomentaryParameters();
+    publishVTSExpressionDebug('deactivated-all');
   }
 
   function deactivateOtherExpressions(nextFile, options = {}) {
@@ -1724,6 +1755,7 @@ export function mountVTubeStudioBridge() {
       activeExpressionFiles.delete(file);
     });
     if (!activeExpressionOwnsEyeOpen()) releaseInjectedEyes();
+    publishVTSExpressionDebug('deactivated-others');
   }
 
   function activateVTSExpression(expression, durationMs = 2600) {
@@ -1763,11 +1795,21 @@ export function mountVTubeStudioBridge() {
           expressionTimers.delete(file);
           if (!activeExpressionOwnsEyeOpen()) releaseInjectedEyes();
           if (momentaryExpression) releaseInjectedMomentaryParameters();
+          publishVTSExpressionDebug('expired');
         }, holdMs);
         expressionTimers.set(file, timer);
+        publishVTSExpressionDebug('activated');
+        appendRoomLive2DDebugEvent('vts-expression-activate', {
+          source: 'vts',
+          expression,
+          file,
+          ownsEyes,
+          momentaryExpression,
+          durationMs: holdMs
+        });
       })
       .catch(() => {});
-  }
+    }
 
   function queueInjection(values) {
     if (!settings.enabled || !Array.isArray(values) || !values.length) return;
@@ -1796,6 +1838,16 @@ export function mountVTubeStudioBridge() {
     const now = performance.now();
     const smoothedValues = smoothInjectionValues(values, smoothedInjection, lastInjectionAt ? now - lastInjectionAt : 32);
     lastInjectionAt = now;
+    publishRoomLive2DDebugState({
+      vtsParameters: summarizeDebugParameters(smoothedValues),
+      vtsParameterCount: smoothedValues.length,
+      vtsParametersUpdatedAt: Date.now()
+    }, {
+      volatile: true,
+      persist: false,
+      throttleKey: 'vts-parameters',
+      throttleMs: 120
+    });
     connect()
       .then(() => sendPayload('InjectParameterDataRequest', {
         mode: 'set',
