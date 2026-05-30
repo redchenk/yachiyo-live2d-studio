@@ -5,6 +5,9 @@ const ROOM_SCRIPT = '/lib/bundled/live2d-room-neuro-live.iife.js';
 const LIVE2D_READY_EVENT = 'tsukuyomi:live2d-ready';
 const LIVE2D_READY_TIMEOUT = 20000;
 const LIVE2D_ASSET_VERSION = Date.now().toString(36);
+const DESKTOP_LIVE2D_DEFAULT_DPR = 6;
+const DESKTOP_LIVE2D_MAX_DPR = 8;
+const MOBILE_LIVE2D_MAX_DPR = 3;
 
 let loadingPromise = null;
 let initialized = false;
@@ -66,7 +69,7 @@ function readRoomModelSettings() {
   }
 }
 
-function clampLive2DRenderDpr(value, fallback, max = 3) {
+function clampLive2DRenderDpr(value, fallback, max = DESKTOP_LIVE2D_MAX_DPR) {
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) return fallback;
   return Math.min(Math.max(numeric, 1), max);
@@ -81,19 +84,22 @@ export function live2DPerformanceMode() {
 
 export function live2DRenderDpr(mode = live2DPerformanceMode()) {
   const settings = readRoomModelSettings();
-  const maxDpr = mode === 'standard' && !isMobileLive2DDevice() ? 3 : 1.5;
-  if (mode === 'standard' && !isMobileLive2DDevice()) return 3;
+  const desktop = mode === 'standard' && !isMobileLive2DDevice();
+  const maxDpr = desktop ? DESKTOP_LIVE2D_MAX_DPR : MOBILE_LIVE2D_MAX_DPR;
   if (settings.renderDpr !== undefined && settings.renderDpr !== null && settings.renderDpr !== '') {
-    return clampLive2DRenderDpr(settings.renderDpr, mode === 'standard' ? 2.5 : 1, maxDpr);
+    return clampLive2DRenderDpr(settings.renderDpr, desktop ? DESKTOP_LIVE2D_DEFAULT_DPR : 1.5, maxDpr);
   }
-  if (mode !== 'standard' || isMobileLive2DDevice()) return 1;
-  return 2.5;
+  if (!desktop) return 1.5;
+  return DESKTOP_LIVE2D_DEFAULT_DPR;
 }
 
 function applyLive2DGlobalSettings() {
   const mode = live2DPerformanceMode();
   window.TSUKUYOMI_LIVE2D_PERFORMANCE = mode;
   window.TSUKUYOMI_LIVE2D_DPR = live2DRenderDpr(mode);
+  window.TSUKUYOMI_LIVE2D_MAX_DPR = isMobileLive2DDevice() ? MOBILE_LIVE2D_MAX_DPR : DESKTOP_LIVE2D_MAX_DPR;
+  window.TSUKUYOMI_LIVE2D_HIGH_QUALITY = mode === 'standard';
+  window.TSUKUYOMI_LIVE2D_TEXTURE_MIPMAPS = false;
   window.TSUKUYOMI_LIVE2D_ASSET_VERSION = LIVE2D_ASSET_VERSION;
   window.TSUKUYOMI_LIVE2D_DISABLE_POINTER = true;
   return mode;

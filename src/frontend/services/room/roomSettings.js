@@ -6,8 +6,10 @@ export const ROOM_MODEL_SETTINGS_KEY = 'roomModelSettings';
 export const ROOM_VTS_SETTINGS_KEY = 'roomVTubeStudioSettings';
 export const ROOM_MEMORY_SETTINGS_KEY = 'roomMemorySettings';
 const ROOM_MODEL_STAGE_DEFAULTS_MIGRATION_KEY = 'roomModelStageDefaultsMigratedV2';
+const ROOM_MODEL_RENDER_DEFAULTS_MIGRATION_KEY = 'roomModelRenderDefaultsMigratedV2';
 const LEGACY_ROOM_MODEL_STAGE_IDLE_SCALE = 0.9;
 const LEGACY_ROOM_MODEL_STAGE_MOTION_SCALE = 0.75;
+const LEGACY_ROOM_MODEL_RENDER_DPRS = [3, 4];
 
 export const DEFAULT_GPT_SOVITS_GPT_WEIGHT = 'GPT_weights_v2ProPlus/yachiyo-v2pro-e15.ckpt';
 export const DEFAULT_GPT_SOVITS_SOVITS_WEIGHT = 'SoVITS_weights_v2ProPlus/yachiyo-v2pro_e8_s456.pth';
@@ -41,7 +43,7 @@ export const DEFAULT_ROOM_TTS_SETTINGS = {
 
 export const DEFAULT_ROOM_MODEL_SETTINGS = {
   lowQualityModel: false,
-  renderDpr: 3,
+  renderDpr: 6,
   stageFloatEnabled: true,
   stageIdleScale: 1.18,
   stageMotionScale: 1.16,
@@ -155,7 +157,7 @@ export function normalizeRoomModelSettings(settings = {}) {
   const merged = { ...DEFAULT_ROOM_MODEL_SETTINGS, ...(settings || {}) };
   return {
     lowQualityModel: asBoolean(merged.lowQualityModel),
-    renderDpr: asNumber(merged.renderDpr, DEFAULT_ROOM_MODEL_SETTINGS.renderDpr, 1, 3),
+    renderDpr: asNumber(merged.renderDpr, DEFAULT_ROOM_MODEL_SETTINGS.renderDpr, 1, 8),
     stageFloatEnabled: asBoolean(merged.stageFloatEnabled),
     stageIdleScale: asNumber(merged.stageIdleScale, DEFAULT_ROOM_MODEL_SETTINGS.stageIdleScale, 0, 3),
     stageMotionScale: asNumber(merged.stageMotionScale, DEFAULT_ROOM_MODEL_SETTINGS.stageMotionScale, 0, 3),
@@ -170,18 +172,29 @@ function closeTo(left, right) {
 function upgradeLegacyRoomModelStageDefaults(settings) {
   if (typeof localStorage === 'undefined') return settings;
   try {
-    if (localStorage.getItem(ROOM_MODEL_STAGE_DEFAULTS_MIGRATION_KEY) === '1') return settings;
+    const stageMigrated = localStorage.getItem(ROOM_MODEL_STAGE_DEFAULTS_MIGRATION_KEY) === '1';
+    const renderMigrated = localStorage.getItem(ROOM_MODEL_RENDER_DEFAULTS_MIGRATION_KEY) === '1';
+    if (stageMigrated && renderMigrated) return settings;
     const upgraded = { ...settings };
     let changed = false;
-    if (closeTo(upgraded.stageIdleScale, LEGACY_ROOM_MODEL_STAGE_IDLE_SCALE)) {
-      upgraded.stageIdleScale = DEFAULT_ROOM_MODEL_SETTINGS.stageIdleScale;
-      changed = true;
+    if (!stageMigrated) {
+      if (closeTo(upgraded.stageIdleScale, LEGACY_ROOM_MODEL_STAGE_IDLE_SCALE)) {
+        upgraded.stageIdleScale = DEFAULT_ROOM_MODEL_SETTINGS.stageIdleScale;
+        changed = true;
+      }
+      if (closeTo(upgraded.stageMotionScale, LEGACY_ROOM_MODEL_STAGE_MOTION_SCALE)) {
+        upgraded.stageMotionScale = DEFAULT_ROOM_MODEL_SETTINGS.stageMotionScale;
+        changed = true;
+      }
+      localStorage.setItem(ROOM_MODEL_STAGE_DEFAULTS_MIGRATION_KEY, '1');
     }
-    if (closeTo(upgraded.stageMotionScale, LEGACY_ROOM_MODEL_STAGE_MOTION_SCALE)) {
-      upgraded.stageMotionScale = DEFAULT_ROOM_MODEL_SETTINGS.stageMotionScale;
-      changed = true;
+    if (!renderMigrated) {
+      if (LEGACY_ROOM_MODEL_RENDER_DPRS.some((value) => closeTo(upgraded.renderDpr, value))) {
+        upgraded.renderDpr = DEFAULT_ROOM_MODEL_SETTINGS.renderDpr;
+        changed = true;
+      }
+      localStorage.setItem(ROOM_MODEL_RENDER_DEFAULTS_MIGRATION_KEY, '1');
     }
-    localStorage.setItem(ROOM_MODEL_STAGE_DEFAULTS_MIGRATION_KEY, '1');
     if (changed) writeJson(ROOM_MODEL_SETTINGS_KEY, upgraded);
     return upgraded;
   } catch (_) {
