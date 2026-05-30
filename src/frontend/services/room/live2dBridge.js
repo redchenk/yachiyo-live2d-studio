@@ -95,6 +95,7 @@ function applyLive2DGlobalSettings() {
   window.TSUKUYOMI_LIVE2D_PERFORMANCE = mode;
   window.TSUKUYOMI_LIVE2D_DPR = live2DRenderDpr(mode);
   window.TSUKUYOMI_LIVE2D_ASSET_VERSION = LIVE2D_ASSET_VERSION;
+  window.TSUKUYOMI_LIVE2D_DISABLE_POINTER = true;
   return mode;
 }
 
