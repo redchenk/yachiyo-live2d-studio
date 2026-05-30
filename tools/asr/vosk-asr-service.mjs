@@ -85,7 +85,7 @@ function resolveModelPath(modelPath) {
     ? (path.isAbsolute(raw) ? raw : path.resolve(repoRoot, raw))
     : path.resolve(repoRoot, 'models', 'vosk', 'vosk-model-small-cn-0.22');
   if (!fs.existsSync(candidate) || !fs.statSync(candidate).isDirectory()) {
-    throw new Error(`Vosk model directory not found: ${candidate}`);
+    throw new Error(`Vosk model directory not found: ${candidate}. Run npm run install:vosk-model, or set Settings -> ASR -> Model Path to an installed Vosk model directory.`);
   }
   return candidate;
 }

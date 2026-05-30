@@ -607,7 +607,7 @@ The browser records microphone audio, converts it to mono 16 kHz PCM WAV, posts 
 Setup:
 
 1. Install project dependencies so the local `vosk` Node binding is available.
-2. Put a Vosk model directory under `models/vosk/`, for example `models/vosk/vosk-model-small-cn-0.22`.
+2. Run `npm run install:vosk-model` to download `vosk-model-small-cn-0.22`, or put another Vosk model directory under `models/vosk/`. The installer resumes a partial zip if the network drops.
 3. Open Settings -> ASR, enable ASR, and confirm the model path.
 4. Use the microphone button beside the Audience line input.
 
