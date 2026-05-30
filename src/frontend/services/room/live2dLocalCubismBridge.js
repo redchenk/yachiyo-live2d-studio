@@ -3,7 +3,7 @@ import { YACHIYO_MODEL_PARAMETER_RANGES } from '../../constants/room/yachiyoMode
 
 const FACE_CAPTURE_EVENT = 'tsukuyomi:live2d-face';
 const LOCAL_BRIDGE_STATE_KEY = '__TSUKUYOMI_LOCAL_CUBISM_BRIDGE_STATE__';
-const LOCAL_CUBISM_FRAME_FLUSH_MS = 32;
+const LOCAL_CUBISM_FRAME_FLUSH_MS = 1000 / 60;
 
 const LOCAL_CUBISM_BODY_DRIVER_IDS = new Set([
   'ParamSwitchCtrl_BodyX',
@@ -131,9 +131,9 @@ function normalizeParameterId(item) {
 
 function localFrameSmoothingProfile(id) {
   if (id.startsWith('ParamSwitchCtrl_')) return { alpha: 1, step: 1 };
-  if (id.startsWith('ParamBodyInput_')) return { alpha: 0.58, step: 3.8 };
-  if (id.startsWith('ParamOutput_') || id.startsWith('ParamPhysicsRAM_')) return { alpha: 0.52, step: 3.4 };
-  if (id.startsWith('ParamAngle_Body') || id.startsWith('ParamAngle_Chest') || id.startsWith('ParamAngle_Hip') || id.startsWith('ParamAngle_Shoulder')) return { alpha: 0.52, step: 3.6 };
+  if (id.startsWith('ParamBodyInput_')) return { alpha: 0.32, step: 2.1 };
+  if (id.startsWith('ParamOutput_') || id.startsWith('ParamPhysicsRAM_')) return { alpha: 0.3, step: 2.0 };
+  if (id.startsWith('ParamAngle_Body') || id.startsWith('ParamAngle_Chest') || id.startsWith('ParamAngle_Hip') || id.startsWith('ParamAngle_Shoulder')) return { alpha: 0.3, step: 2.0 };
   if (id === 'ParamPosition_Z') return { alpha: 0.46, step: 2.2 };
   if (id.startsWith('ParamHair')) return { alpha: 0.46, step: 2.8 };
   if (id.startsWith('ParamEarShape')) return { alpha: 0.42, step: 0.16 };
@@ -149,9 +149,10 @@ function localFrameSmoothingProfile(id) {
   if (id.includes('EyeBall')) return { alpha: 0.36, step: 0.18 };
   if (id.includes('Brow') || id.includes('Cheek')) return { alpha: 0.34, step: 0.12 };
   if (id.includes('Mouth')) return { alpha: 0.34, step: 0.18 };
-  if (isLocalCubismBodyDriverId(id)) return { alpha: 0.4, step: 2.2 };
-  if (id === 'ParamAngleX' || id === 'ParamAngleY' || id === 'ParamAngleZ') return { alpha: 0.46, step: 4.2 };
-  if (id === 'PositionX' || id === 'PositionY' || id === 'PositionZ') return { alpha: 0.42, step: 2.6 };
+  if (isLocalCubismBodyDriverId(id)) return { alpha: 0.32, step: 1.8 };
+  if (id === 'ParamAngleX' || id === 'ParamAngleY' || id === 'ParamAngleZ') return { alpha: 0.38, step: 3.2 };
+  if (id === 'PositionY') return { alpha: 0.28, step: 1.1 };
+  if (id === 'PositionX' || id === 'PositionZ') return { alpha: 0.36, step: 1.8 };
   if (id.includes('Angle') || id.includes('Position')) return { alpha: 0.34, step: 1.8 };
   return { alpha: 0.34, step: 0.12 };
 }
@@ -263,7 +264,7 @@ function flushLocalCubismFrame() {
 function writeLocalCubismFrame(parameters) {
   queueLocalCubismFrame(parameters);
   if (flushTimer) return;
-  flushTimer = window.setTimeout(flushLocalCubismFrame, LOCAL_CUBISM_FRAME_FLUSH_MS);
+  flushTimer = window.requestAnimationFrame(flushLocalCubismFrame);
 }
 
 export function mountLocalCubismBridge() {
@@ -283,7 +284,7 @@ export function mountLocalCubismBridge() {
       delete window.TSUKUYOMI_LOCAL_CUBISM_BRIDGE_MOUNTED;
     }
     setLocalBridgeState({ mounted: false, output: 'destroyed', parameterCount: 0 });
-    if (flushTimer) window.clearTimeout(flushTimer);
+    if (flushTimer) window.cancelAnimationFrame(flushTimer);
     pendingFrame = new Map();
     flushTimer = 0;
     lastSmoothedFrame = new Map();

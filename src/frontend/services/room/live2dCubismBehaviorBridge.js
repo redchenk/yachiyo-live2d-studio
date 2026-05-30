@@ -653,8 +653,12 @@ export function mountCubismBehaviorBridge(options = {}) {
     const expression = performanceFrame.expression;
     const suppressEyeOpen = expressionOwnsEyeOpen(expression);
     const frame = createFrame({ suppressEyeOpen });
+    const speaking = character?.mode === 'speaking';
+    const characterStrength = behaviorPlan && dominant
+      ? (speaking ? 0.42 : 0.66)
+      : (speaking ? 0.82 : 1);
 
-    applyCharacterState(frame, character, behaviorPlan && dominant ? 0.66 : 1, { suppressEyeOpen });
+    applyCharacterState(frame, character, characterStrength, { suppressEyeOpen });
     applySemanticOverlay(frame, expression, behaviorPlan ? 0.76 : 0.48, { suppressEyeOpen });
     samples.forEach((sample) => applyAction(frame, sample, { dominant: sample === dominant, suppressEyeOpen }));
     applyMomentaryPulse(frame, momentaryPulse);
