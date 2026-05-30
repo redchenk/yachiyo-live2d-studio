@@ -1,6 +1,7 @@
 import { normalizeBehaviorBodyPose } from '../../constants/room/behaviorActionRegistry';
 
 const ROOM_ACT_EVENT = 'tsukuyomi:room-act';
+const STAGE_ACTUATOR_STATE_KEY = '__TSUKUYOMI_LIVE2D_STAGE_BODY_ACTUATOR_STATE__';
 const DEFAULT_STAGE_MOTION_SCALE = 0.86;
 const DEFAULT_STAGE_IDLE_SCALE = 1;
 const BODY_PARAMETER_HINTS = [
@@ -85,9 +86,9 @@ const PARAMETER_WEIGHTS = {
   ])
 };
 
-function clamp(value, min, max) {
+function clamp(value, min, max, fallback = min) {
   const numeric = Number(value);
-  if (!Number.isFinite(numeric)) return min;
+  if (!Number.isFinite(numeric)) return fallback;
   return Math.min(Math.max(numeric, min), max);
 }
 
@@ -304,6 +305,15 @@ function combineCanvasPoses(base, overlay) {
   };
 }
 
+function setStageActuatorState(patch) {
+  if (typeof window === 'undefined') return;
+  window[STAGE_ACTUATOR_STATE_KEY] = {
+    ...(window[STAGE_ACTUATOR_STATE_KEY] || {}),
+    ...patch,
+    updatedAt: Date.now()
+  };
+}
+
 function findLive2DCanvas(containerSelector) {
   const container = typeof containerSelector === 'string'
     ? document.querySelector(containerSelector)
@@ -311,17 +321,60 @@ function findLive2DCanvas(containerSelector) {
   return container?.querySelector?.('canvas') || null;
 }
 
+function applyRuntimeStagePose(pose) {
+  if (typeof window === 'undefined' || typeof window.setLive2DModelSettings !== 'function') return false;
+  window.setLive2DModelSettings(
+    clamp(pose.scale, 0.86, 1.16, 1),
+    clamp(pose.x, -90, 90, 0),
+    clamp(pose.y, -90, 90, 0)
+  );
+  setStageActuatorState({
+    mounted: true,
+    output: 'runtime-view-matrix',
+    pose: {
+      x: Number(pose.x.toFixed(2)),
+      y: Number(pose.y.toFixed(2)),
+      scale: Number(pose.scale.toFixed(4))
+    }
+  });
+  return true;
+}
+
 function applyCanvasPose(canvas, pose) {
   if (!canvas) return;
   canvas.style.transformOrigin = '50% 72%';
   canvas.style.willChange = 'transform';
   canvas.style.transform = `translate3d(${pose.x.toFixed(2)}px, ${pose.y.toFixed(2)}px, 0) rotate(${pose.rotate.toFixed(3)}deg) scale(${pose.scale.toFixed(4)})`;
+  setStageActuatorState({
+    mounted: true,
+    output: 'canvas-transform-fallback',
+    pose: {
+      x: Number(pose.x.toFixed(2)),
+      y: Number(pose.y.toFixed(2)),
+      rotate: Number(pose.rotate.toFixed(3)),
+      scale: Number(pose.scale.toFixed(4))
+    }
+  });
 }
 
 function clearCanvasPose(canvas) {
   if (!canvas) return;
   canvas.style.transform = '';
   canvas.style.willChange = '';
+}
+
+function clearRuntimeStagePose() {
+  if (typeof window !== 'undefined' && typeof window.setLive2DModelSettings === 'function') {
+    window.setLive2DModelSettings(1, 0, 0);
+  }
+}
+
+function applyStagePose(canvas, pose) {
+  if (applyRuntimeStagePose(pose)) {
+    clearCanvasPose(canvas);
+    return;
+  }
+  applyCanvasPose(canvas, pose);
 }
 
 export function mountLive2DStageBodyActuator(containerSelector = '#live2d-container') {
@@ -345,9 +398,7 @@ export function mountLive2DStageBodyActuator(containerSelector = '#live2d-contai
       pose = combineCanvasPoses(pose, sampleLive2DStagePose(activeMotion, progress, readStageMotionScale()));
       if (progress >= 1) activeMotion = null;
     }
-    if (canvas) {
-      applyCanvasPose(canvas, pose);
-    }
+    applyStagePose(canvas, pose);
     frameId = window.requestAnimationFrame(render);
   }
 
@@ -370,7 +421,9 @@ export function mountLive2DStageBodyActuator(containerSelector = '#live2d-contai
     window.removeEventListener(ROOM_ACT_EVENT, onRoomAct);
     activeMotion = null;
     stopFrame();
+    clearRuntimeStagePose();
     clearCanvasPose(lastCanvas || findLive2DCanvas(containerSelector));
     lastCanvas = null;
+    setStageActuatorState({ mounted: false, output: 'destroyed' });
   };
 }
