@@ -1,7 +1,8 @@
 import { normalizeBehaviorBodyPose } from '../../constants/room/behaviorActionRegistry';
 
 const ROOM_ACT_EVENT = 'tsukuyomi:room-act';
-const DEFAULT_STAGE_MOTION_SCALE = 0;
+const DEFAULT_STAGE_MOTION_SCALE = 0.86;
+const DEFAULT_STAGE_IDLE_SCALE = 1;
 const BODY_PARAMETER_HINTS = [
   'ParamBodyInput_BodyX',
   'ParamBodyInput_BodyY',
@@ -111,6 +112,19 @@ function readStageMotionScale() {
     // ignore storage failures in WebView privacy modes
   }
   return DEFAULT_STAGE_MOTION_SCALE;
+}
+
+function readStageIdleScale() {
+  if (typeof window === 'undefined') return DEFAULT_STAGE_IDLE_SCALE;
+  const globalValue = Number(window.TSUKUYOMI_LIVE2D_STAGE_IDLE_SCALE);
+  if (Number.isFinite(globalValue)) return clamp(globalValue, 0, 2.4);
+  try {
+    const stored = Number(window.localStorage?.getItem('roomLive2DStageIdleScale'));
+    if (Number.isFinite(stored)) return clamp(stored, 0, 2.4);
+  } catch (_) {
+    // ignore storage failures in WebView privacy modes
+  }
+  return DEFAULT_STAGE_IDLE_SCALE;
 }
 
 function easeInOut(value) {
@@ -266,6 +280,30 @@ export function sampleLive2DStagePose(motion, progress, scale = DEFAULT_STAGE_MO
   }
 }
 
+export function sampleLive2DIdleStagePose(nowMs = performance.now(), scale = DEFAULT_STAGE_IDLE_SCALE) {
+  const amount = clamp(scale, 0, 2.4);
+  if (amount <= 0) return { x: 0, y: 0, rotate: 0, scale: 1 };
+  const seconds = nowMs / 1000;
+  const slow = Math.sin(seconds * 1.04);
+  const drift = Math.sin(seconds * 0.47 + 1.35);
+  const side = Math.sin(seconds * 0.36 + 0.8);
+  return {
+    x: 5.5 * side * amount,
+    y: (22 * slow + 8 * drift) * amount,
+    rotate: 0.42 * Math.sin(seconds * 0.43 + 2.1) * amount,
+    scale: 1 + 0.006 * Math.sin(seconds * 0.72 + 0.4) * amount
+  };
+}
+
+function combineCanvasPoses(base, overlay) {
+  return {
+    x: (base?.x || 0) + (overlay?.x || 0),
+    y: (base?.y || 0) + (overlay?.y || 0),
+    rotate: (base?.rotate || 0) + (overlay?.rotate || 0),
+    scale: (base?.scale || 1) * (overlay?.scale || 1)
+  };
+}
+
 function findLive2DCanvas(containerSelector) {
   const container = typeof containerSelector === 'string'
     ? document.querySelector(containerSelector)
@@ -299,22 +337,16 @@ export function mountLive2DStageBodyActuator(containerSelector = '#live2d-contai
   }
 
   function render(now = performance.now()) {
-    if (!activeMotion) {
-      stopFrame();
-      clearCanvasPose(lastCanvas);
-      return;
-    }
-    const progress = (now - startMs) / activeMotion.durationMs;
     const canvas = findLive2DCanvas(containerSelector);
     lastCanvas = canvas || lastCanvas;
-    if (canvas) {
-      applyCanvasPose(canvas, sampleLive2DStagePose(activeMotion, progress, readStageMotionScale()));
+    let pose = sampleLive2DIdleStagePose(now, readStageIdleScale());
+    if (activeMotion) {
+      const progress = (now - startMs) / activeMotion.durationMs;
+      pose = combineCanvasPoses(pose, sampleLive2DStagePose(activeMotion, progress, readStageMotionScale()));
+      if (progress >= 1) activeMotion = null;
     }
-    if (progress >= 1) {
-      activeMotion = null;
-      clearCanvasPose(canvas || lastCanvas);
-      stopFrame();
-      return;
+    if (canvas) {
+      applyCanvasPose(canvas, pose);
     }
     frameId = window.requestAnimationFrame(render);
   }
@@ -332,6 +364,7 @@ export function mountLive2DStageBodyActuator(containerSelector = '#live2d-contai
   }
 
   window.addEventListener(ROOM_ACT_EVENT, onRoomAct);
+  frameId = window.requestAnimationFrame(render);
 
   return () => {
     window.removeEventListener(ROOM_ACT_EVENT, onRoomAct);

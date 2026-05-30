@@ -4,6 +4,7 @@ import {
   ROOM_LIVE2D_PENDING_INTENT_KEY
 } from '../../services/room/live2dControl';
 import { destroyLive2DRoom, initLive2DRoom } from '../../services/room/live2dBridge';
+import { mountLive2DStageBodyActuator } from '../../services/room/live2dBodyActuator';
 import { mountLocalCubismBridge } from '../../services/room/live2dLocalCubismBridge';
 import { mountVTubeStudioBridge } from '../../services/room/live2dVTubeStudioBridge';
 
@@ -14,6 +15,7 @@ export function useLive2D() {
   const ready = ref(false);
   const error = ref('');
   let destroyCubismBehavior = null;
+  let destroyStageBody = null;
   let destroyVTubeStudio = null;
 
   function consumePendingSoon() {
@@ -55,6 +57,8 @@ export function useLive2D() {
     try {
       destroyCubismBehavior?.();
       destroyCubismBehavior = null;
+      destroyStageBody?.();
+      destroyStageBody = null;
       destroyVTubeStudio?.();
       destroyVTubeStudio = null;
       destroyLive2DRoom();
@@ -62,6 +66,7 @@ export function useLive2D() {
       setInitState({ status: 'loading-runtime' });
       await initLive2DRoom();
       ensureCubismBehaviorBridge('after-cubism-runtime');
+      destroyStageBody = mountLive2DStageBodyActuator();
       destroyVTubeStudio = mountVTubeStudioBridge();
       ready.value = true;
       loading.value = false;
@@ -86,6 +91,8 @@ export function useLive2D() {
     loading.value = false;
     destroyCubismBehavior?.();
     destroyCubismBehavior = null;
+    destroyStageBody?.();
+    destroyStageBody = null;
     destroyVTubeStudio?.();
     destroyVTubeStudio = null;
     destroyLive2DRoom();
