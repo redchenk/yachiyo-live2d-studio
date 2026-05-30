@@ -463,7 +463,10 @@ export function createLive2DCharacterStateMachine() {
     arousal: 0.34,
     gazeX: 0,
     gazeY: 0,
+    currentGazeX: 0,
+    currentGazeY: 0,
     nextGazeAt: 0,
+    lastSampleAt: 0,
     motionStartedAt: 0,
     motionDurationMs: 4200,
     motionHoldMs: 1200,
@@ -639,6 +642,12 @@ export function createLive2DCharacterStateMachine() {
     const headScale = modeProfile.head * (0.78 + state.attention * 0.34 + state.arousal * 0.2);
     const bodyScale = modeProfile.body * (0.82 + state.arousal * 0.28);
     const gazeScale = modeProfile.gaze * (0.7 + state.attention * 0.44);
+    const deltaMs = state.lastSampleAt ? clamp(at - state.lastSampleAt, 1, 80, 16.67) : 16.67;
+    const gazeResponseMs = (isSpeaking || state.mode === 'acting') ? 180 : 260;
+    const gazeAlpha = 1 - Math.exp(-deltaMs / gazeResponseMs);
+    state.currentGazeX = lerp(state.currentGazeX, state.gazeX, gazeAlpha);
+    state.currentGazeY = lerp(state.currentGazeY, state.gazeY, gazeAlpha);
+    state.lastSampleAt = at;
     const speechEnergy = isSpeaking
       ? clamp(state.speechMotionEnergy * 0.72 + state.mouthEnergy * 0.28, 0, 1)
       : state.mouthEnergy * 0.45;
@@ -658,8 +667,8 @@ export function createLive2DCharacterStateMachine() {
       emotion: state.emotion,
       transition,
       eyeOpen: clamp(emotionProfile.eye - speechEyeSmile, 0.66, 1),
-      eyeX: clamp(state.gazeX * gazeScale - headDrift * 0.07, -0.72, 0.72),
-      eyeY: clamp(state.gazeY * gazeScale - 0.02 - thinkingNod * 0.04 - speechNod * 0.018 - speechLift * 0.014, -0.48, 0.42),
+      eyeX: clamp(state.currentGazeX * gazeScale - headDrift * 0.07, -0.72, 0.72),
+      eyeY: clamp(state.currentGazeY * gazeScale - 0.02 - thinkingNod * 0.04 - speechNod * 0.018 - speechLift * 0.014, -0.48, 0.42),
       faceX: (headDrift * 2.8 + speechSway * 13.2) * headScale,
       faceY: (
         isSpeaking
@@ -678,8 +687,8 @@ export function createLive2DCharacterStateMachine() {
       ) * modeProfile.body,
       mouthSmile: clamp(mouthSmile + Math.max(speechNod, 0) * 0.018, 0.18, 0.84),
       brows: softBrow,
-      browLeftY: clamp(softBrow + smoothNoise(motionSeconds, 0.83, 1.41, 2.2) * 0.024, 0.18, 0.84),
-      browRightY: clamp(softBrow + smoothNoise(motionSeconds + 0.6, 0.79, 1.33, 2.08) * 0.024, 0.18, 0.84),
+      browLeftY: clamp(softBrow + smoothNoise(motionSeconds, 0.83, 1.41, 2.2) * 0.012, 0.18, 0.84),
+      browRightY: clamp(softBrow + smoothNoise(motionSeconds + 0.6, 0.79, 1.33, 2.08) * 0.012, 0.18, 0.84),
       bodyX: (bodyDrift * 0.72 + speechCounterSway * 7.2) * bodyScale,
       bodyY: (
         isSpeaking
