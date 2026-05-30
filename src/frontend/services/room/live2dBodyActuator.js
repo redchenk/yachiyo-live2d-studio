@@ -15,16 +15,16 @@ const STAGE_POSE_MAX_STEP = {
 };
 const STAGE_LERP_PROFILES = {
   idle: {
-    x: 270,
-    y: 340,
-    rotate: 320,
-    scale: 380
+    x: 310,
+    y: 390,
+    rotate: 370,
+    scale: 440
   },
   motion: {
-    x: 210,
-    y: 270,
-    rotate: 260,
-    scale: 320
+    x: 245,
+    y: 320,
+    rotate: 310,
+    scale: 380
   }
 };
 const BODY_PARAMETER_HINTS = [
