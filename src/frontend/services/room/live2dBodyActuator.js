@@ -3,9 +3,10 @@ import { readRoomModelSettings } from './roomSettings';
 
 const ROOM_ACT_EVENT = 'tsukuyomi:room-act';
 const STAGE_ACTUATOR_STATE_KEY = '__TSUKUYOMI_LIVE2D_STAGE_BODY_ACTUATOR_STATE__';
-const DEFAULT_STAGE_MOTION_SCALE = 0.75;
-const DEFAULT_STAGE_IDLE_SCALE = 0.9;
+const DEFAULT_STAGE_MOTION_SCALE = 1.05;
+const DEFAULT_STAGE_IDLE_SCALE = 1.15;
 const RUNTIME_STAGE_POSE_SCALE = 0.08;
+const STAGE_MOTION_FADE_OUT_MS = 320;
 const BODY_PARAMETER_HINTS = [
   'ParamBodyInput_BodyX',
   'ParamBodyInput_BodyY',
@@ -92,6 +93,10 @@ function clamp(value, min, max, fallback = min) {
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) return fallback;
   return Math.min(Math.max(numeric, min), max);
+}
+
+function lerp(from, to, amount) {
+  return from + (to - from) * clamp(amount, 0, 1, 0);
 }
 
 function normalizePose(value) {
@@ -229,17 +234,36 @@ function inferPoseFromParameters(parameters) {
   return null;
 }
 
+function resolvePoseFromBehaviorActions(detail = {}) {
+  const actions = Array.isArray(detail.behaviorActions)
+    ? detail.behaviorActions
+    : (Array.isArray(detail.actions) ? detail.actions : []);
+  for (const action of actions) {
+    const pose = normalizePose(action?.type || action?.motion || action?.pose || action?.action);
+    if (pose && BODY_POSES.has(pose)) {
+      return {
+        pose,
+        intensity: clamp(action?.intensity ?? detail.intensity, 0.5, 1, 0.68),
+        durationMs: normalizeDuration(action?.durationMs || action?.duration || detail.durationMs || detail.duration),
+        source: 'behaviorActions'
+      };
+    }
+  }
+  return null;
+}
+
 export function resolveLive2DStageMotion(detail = {}) {
+  const actionMotion = resolvePoseFromBehaviorActions(detail);
   const explicitPose = normalizePose(detail.bodyPose || detail.pose || detail.posture || detail.motion || detail.action);
-  const inferred = explicitPose ? null : inferPoseFromParameters(detail.parameters || detail.parameterTargets || detail.params);
-  const pose = explicitPose || inferred?.pose || '';
+  const inferred = explicitPose || actionMotion ? null : inferPoseFromParameters(detail.parameters || detail.parameterTargets || detail.params);
+  const pose = explicitPose || actionMotion?.pose || inferred?.pose || '';
   if (!pose) return null;
-  const intensity = clamp(Math.max(Number(detail.intensity) || 0, inferred?.intensity || 0.62), 0.5, 1);
+  const intensity = clamp(Math.max(Number(detail.intensity) || 0, actionMotion?.intensity || 0, inferred?.intensity || 0.62), 0.5, 1);
   return {
     pose,
     intensity,
-    durationMs: normalizeDuration(detail.durationMs || detail.duration),
-    source: explicitPose ? 'pose' : inferred.source
+    durationMs: normalizeDuration(actionMotion?.durationMs || detail.durationMs || detail.duration),
+    source: explicitPose ? 'pose' : (actionMotion?.source || inferred.source)
   };
 }
 
@@ -321,10 +345,30 @@ export function sampleLive2DIdleStagePose(nowMs = performance.now(), scale = DEF
   const drift = Math.sin(seconds * 0.47 + 1.35);
   const side = Math.sin(seconds * 0.36 + 0.8);
   return {
-    x: 3.5 * side * amount,
+    x: 5.8 * side * amount,
     y: (13 * slow + 4 * drift) * amount,
     rotate: 0.22 * Math.sin(seconds * 0.43 + 2.1) * amount,
     scale: 1 + 0.003 * Math.sin(seconds * 0.72 + 0.4) * amount
+  };
+}
+
+function scaleCanvasPose(pose, amount) {
+  const factor = clamp(amount, 0, 1, 1);
+  return {
+    x: (pose?.x || 0) * factor,
+    y: (pose?.y || 0) * factor,
+    rotate: (pose?.rotate || 0) * factor,
+    scale: 1 + ((pose?.scale || 1) - 1) * factor
+  };
+}
+
+function smoothCanvasPose(previous, target, amount = 0.2) {
+  if (!previous) return target;
+  return {
+    x: lerp(previous.x || 0, target.x || 0, amount),
+    y: lerp(previous.y || 0, target.y || 0, amount),
+    rotate: lerp(previous.rotate || 0, target.rotate || 0, amount),
+    scale: lerp(previous.scale || 1, target.scale || 1, amount * 0.72)
   };
 }
 
@@ -441,10 +485,12 @@ function applyStagePose(container, canvas, pose) {
 export function mountLive2DStageBodyActuator(containerSelector = '#live2d-container') {
   if (typeof window === 'undefined' || typeof document === 'undefined') return () => {};
   let activeMotion = null;
+  let outgoingMotion = null;
   let startMs = 0;
   let frameId = 0;
   let lastCanvas = null;
   let lastContainer = null;
+  let lastPose = null;
 
   function stopFrame() {
     if (frameId) window.cancelAnimationFrame(frameId);
@@ -460,6 +506,19 @@ export function mountLive2DStageBodyActuator(containerSelector = '#live2d-contai
     let pose = floatEnabled
       ? sampleLive2DIdleStagePose(now, readStageIdleScale())
       : { x: 0, y: 0, rotate: 0, scale: 1 };
+    if (floatEnabled && outgoingMotion) {
+      const age = now - outgoingMotion.releasedAt;
+      const fade = 1 - clamp(age / outgoingMotion.fadeOutMs, 0, 1, 1);
+      if (fade <= 0.001) {
+        outgoingMotion = null;
+      } else {
+        const progress = outgoingMotion.progressAtRelease + age / outgoingMotion.durationMs;
+        pose = combineCanvasPoses(
+          pose,
+          scaleCanvasPose(sampleLive2DStagePose(outgoingMotion, progress, readStageMotionScale()), fade)
+        );
+      }
+    }
     if (floatEnabled && activeMotion) {
       const progress = (now - startMs) / activeMotion.durationMs;
       pose = combineCanvasPoses(pose, sampleLive2DStagePose(activeMotion, progress, readStageMotionScale()));
@@ -469,13 +528,23 @@ export function mountLive2DStageBodyActuator(containerSelector = '#live2d-contai
       ...pose,
       y: pose.y + readStageVerticalOffset()
     };
-    applyStagePose(container, canvas, pose);
+    lastPose = smoothCanvasPose(lastPose, pose, 0.24);
+    applyStagePose(container, canvas, lastPose);
     frameId = window.requestAnimationFrame(render);
   }
 
   function startMotion(motion) {
+    const now = performance.now();
+    if (activeMotion) {
+      outgoingMotion = {
+        ...activeMotion,
+        releasedAt: now,
+        progressAtRelease: clamp((now - startMs) / activeMotion.durationMs, 0, 1, 0),
+        fadeOutMs: STAGE_MOTION_FADE_OUT_MS
+      };
+    }
     activeMotion = motion;
-    startMs = performance.now();
+    startMs = now;
     stopFrame();
     frameId = window.requestAnimationFrame(render);
   }
@@ -491,6 +560,8 @@ export function mountLive2DStageBodyActuator(containerSelector = '#live2d-contai
   return () => {
     window.removeEventListener(ROOM_ACT_EVENT, onRoomAct);
     activeMotion = null;
+    outgoingMotion = null;
+    lastPose = null;
     stopFrame();
     clearRuntimeStagePose();
     clearContainerPose(lastContainer || findLive2DContainer(containerSelector));
