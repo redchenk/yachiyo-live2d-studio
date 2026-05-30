@@ -11,7 +11,8 @@
     "generate:yachiyo-memory-seeds": "node tools/memory/generate-yachiyo-memory-seeds.mjs ../yachiyo_novel_detailed_corpus.txt",
     "install:yachiyo-vts-parameters": "node tools/vtube-studio/install-yachiyo-model-parameters.mjs",
     "audit:yachiyo-vts-control": "node tools/vtube-studio/audit-yachiyo-vts-control.mjs",
-    "install:vosk-model": "powershell.exe -ExecutionPolicy Bypass -File tools/asr/install-vosk-model.ps1"
+    "install:vosk-model": "powershell.exe -ExecutionPolicy Bypass -File tools/asr/install-vosk-model.ps1",
+    "install:vosk-python": "py -3.9 -m pip install vosk"
   },
   "dependencies": {
     "@vitejs/plugin-vue": "^6.0.6",

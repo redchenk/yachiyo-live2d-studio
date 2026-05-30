@@ -1,6 +1,7 @@
 param(
     [string]$ModelName = "vosk-model-small-cn-0.22",
-    [string]$Url = "https://alphacephei.com/vosk/models/vosk-model-small-cn-0.22.zip"
+    [string]$Url = "https://alphacephei.com/vosk/models/vosk-model-small-cn-0.22.zip",
+    [long]$ExpectedBytes = 43898754
 )
 
 $ErrorActionPreference = "Stop"
@@ -18,16 +19,46 @@ if (Test-Path -LiteralPath $targetDir) {
     exit 0
 }
 
-Write-Host "Downloading Vosk model: $Url"
-if (Get-Command curl.exe -ErrorAction SilentlyContinue) {
-    $curlArgs = @("-L", "--retry", "3", "--fail")
-    if (Test-Path -LiteralPath $zipPath) {
-        $curlArgs += @("-C", "-")
+if ((Test-Path -LiteralPath $zipPath) -and $ExpectedBytes -gt 0) {
+    $currentBytes = (Get-Item -LiteralPath $zipPath).Length
+    if ($currentBytes -gt $ExpectedBytes) {
+        Write-Host "Removing oversized partial download: $zipPath ($currentBytes bytes)"
+        Remove-Item -LiteralPath $zipPath -Force
     }
-    $curlArgs += @("-o", $zipPath, $Url)
-    & curl.exe @curlArgs
-} else {
-    Invoke-WebRequest -Uri $Url -OutFile $zipPath
+}
+
+Write-Host "Downloading Vosk model: $Url"
+$attempt = 0
+while ($true) {
+    $attempt += 1
+    if (Get-Command curl.exe -ErrorAction SilentlyContinue) {
+        $curlArgs = @("-L", "--retry", "10", "--fail")
+        if (Test-Path -LiteralPath $zipPath) {
+            $curlArgs += @("-C", "-")
+        }
+        $curlArgs += @("-o", $zipPath, $Url)
+        & curl.exe @curlArgs
+    } else {
+        Invoke-WebRequest -Uri $Url -OutFile $zipPath
+    }
+
+    if (!(Test-Path -LiteralPath $zipPath)) {
+        throw "Vosk model download did not create $zipPath"
+    }
+
+    $downloadedBytes = (Get-Item -LiteralPath $zipPath).Length
+    if ($ExpectedBytes -le 0 -or $downloadedBytes -eq $ExpectedBytes) {
+        break
+    }
+    if ($downloadedBytes -gt $ExpectedBytes) {
+        Write-Host "Partial zip is larger than expected; deleting corrupt download."
+        Remove-Item -LiteralPath $zipPath -Force
+    } elseif ($attempt -ge 30) {
+        throw "Vosk model download is incomplete after $attempt attempts: $downloadedBytes / $ExpectedBytes bytes"
+    } else {
+        Write-Host "Partial download: $downloadedBytes / $ExpectedBytes bytes. Resuming..."
+        Start-Sleep -Seconds 2
+    }
 }
 
 if (!(Test-Path -LiteralPath $zipPath)) {

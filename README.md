@@ -607,8 +607,9 @@ The browser records microphone audio, converts it to mono 16 kHz PCM WAV, posts 
 Setup:
 
 1. Install project dependencies so the local `vosk` Node binding is available.
-2. Run `npm run install:vosk-model` to download `vosk-model-small-cn-0.22`, or put another Vosk model directory under `models/vosk/`. The installer resumes a partial zip if the network drops.
-3. Open Settings -> ASR, enable ASR, and confirm the model path.
-4. Use the microphone button beside the Audience line input.
+2. On Windows, run `npm run install:vosk-python` if the Node `vosk` optional dependency cannot build native modules.
+3. Run `npm run install:vosk-model` to download `vosk-model-small-cn-0.22`, or put another Vosk model directory under `models/vosk/`. The installer resumes a partial zip if the network drops and verifies the final byte size before extraction.
+4. Open Settings -> ASR, enable ASR, and confirm the model path.
+5. Use the microphone button beside the Audience line input.
 
 The ASR result enters the same audience queue as typed chat, so the existing LLM, semantic action, TTS, VTS, and Cubism layers continue to work unchanged.

@@ -995,30 +995,47 @@ internal static class DesktopApiProxy
                 return;
             }
 
-            var nodeDir = Live2DStudioLauncher.FindNodeDirectory(repoRoot);
-            if (string.IsNullOrWhiteSpace(nodeDir))
-            {
-                throw new InvalidOperationException("Node.js is required for local Vosk ASR.");
-            }
-            var nodeExe = Path.Combine(nodeDir, "node.exe");
-            var script = Path.Combine(repoRoot, "tools", "asr", "vosk-asr-service.mjs");
-            if (!File.Exists(script))
-            {
-                throw new InvalidOperationException("Vosk ASR service script is missing.");
-            }
-
-            var start = new ProcessStartInfo
-            {
-                FileName = nodeExe,
-                Arguments = QuoteArgument(script) + " --port " + AsrServicePort + " --repo-root " + QuoteArgument(repoRoot),
-                WorkingDirectory = repoRoot,
-                UseShellExecute = false,
-                CreateNoWindow = true
-            };
+            var start = CreateAsrServiceStartInfo();
             start.EnvironmentVariables["YACHIYO_REPO_ROOT"] = repoRoot;
             asrServiceProcess = Process.Start(start);
             WaitForAsrService();
         }
+    }
+
+    private static ProcessStartInfo CreateAsrServiceStartInfo()
+    {
+        var pythonScript = Path.Combine(repoRoot, "tools", "asr", "vosk_asr_service.py");
+        var pythonExe = FindPythonLauncher();
+        if (File.Exists(pythonScript) && !string.IsNullOrWhiteSpace(pythonExe) && CanImportPythonVosk(pythonExe))
+        {
+            var pythonArgs = string.Equals(Path.GetFileName(pythonExe), "py.exe", StringComparison.OrdinalIgnoreCase)
+                ? "-3.9 " + QuoteArgument(pythonScript)
+                : QuoteArgument(pythonScript);
+            return new ProcessStartInfo
+            {
+                FileName = pythonExe,
+                Arguments = pythonArgs + " --port " + AsrServicePort + " --repo-root " + QuoteArgument(repoRoot),
+                WorkingDirectory = repoRoot,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+        }
+
+        var nodeDir = Live2DStudioLauncher.FindNodeDirectory(repoRoot);
+        var nodeScript = Path.Combine(repoRoot, "tools", "asr", "vosk-asr-service.mjs");
+        if (!string.IsNullOrWhiteSpace(nodeDir) && File.Exists(nodeScript))
+        {
+            return new ProcessStartInfo
+            {
+                FileName = Path.Combine(nodeDir, "node.exe"),
+                Arguments = QuoteArgument(nodeScript) + " --port " + AsrServicePort + " --repo-root " + QuoteArgument(repoRoot),
+                WorkingDirectory = repoRoot,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+        }
+
+        throw new InvalidOperationException("Local Vosk ASR requires tools/asr/vosk_asr_service.py with Python Vosk, or tools/asr/vosk-asr-service.mjs with node_modules/vosk.");
     }
 
     private static void WaitForAsrService()
@@ -1028,7 +1045,7 @@ internal static class DesktopApiProxy
             if (ProbeAsrService()) return;
             if (asrServiceProcess != null && asrServiceProcess.HasExited)
             {
-                throw new InvalidOperationException("Vosk ASR service exited before it became ready. Make sure npm install has installed the vosk package.");
+                throw new InvalidOperationException("Vosk ASR service exited before it became ready. Install Python Vosk with py -3.9 -m pip install vosk, or install node_modules/vosk.");
             }
             Thread.Sleep(125);
         }
@@ -1141,6 +1158,74 @@ internal static class DesktopApiProxy
     private static string QuoteArgument(string value)
     {
         return "\"" + (value ?? string.Empty).Replace("\"", "\\\"") + "\"";
+    }
+
+    private static string FindPythonLauncher()
+    {
+        var candidates = new[]
+        {
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "py.exe"),
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs", "Python", "Python39", "python.exe"),
+            Path.Combine("D:\\", "visual studio", "tools", "Python39_64", "python.exe")
+        };
+
+        foreach (var candidate in candidates)
+        {
+            if (File.Exists(candidate))
+            {
+                return candidate;
+            }
+        }
+
+        return FindOnPath("py.exe") ?? FindOnPath("python.exe") ?? string.Empty;
+    }
+
+    private static bool CanImportPythonVosk(string pythonExe)
+    {
+        try
+        {
+            var args = string.Equals(Path.GetFileName(pythonExe), "py.exe", StringComparison.OrdinalIgnoreCase)
+                ? "-3.9 -c \"import vosk\""
+                : "-c \"import vosk\"";
+            var start = new ProcessStartInfo
+            {
+                FileName = pythonExe,
+                Arguments = args,
+                WorkingDirectory = repoRoot,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardError = true,
+                RedirectStandardOutput = true
+            };
+            using (var process = Process.Start(start))
+            {
+                if (!process.WaitForExit(5000))
+                {
+                    try { process.Kill(); } catch { }
+                    return false;
+                }
+                return process.ExitCode == 0;
+            }
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static string FindOnPath(string executable)
+    {
+        var pathValue = Environment.GetEnvironmentVariable("PATH") ?? string.Empty;
+        foreach (var pathEntry in pathValue.Split(new[] { Path.PathSeparator }, StringSplitOptions.RemoveEmptyEntries))
+        {
+            var trimmed = pathEntry.Trim('"');
+            var candidate = Path.Combine(trimmed, executable);
+            if (File.Exists(candidate))
+            {
+                return candidate;
+            }
+        }
+        return null;
     }
 
     private static void WaitForMemoryDataService()
