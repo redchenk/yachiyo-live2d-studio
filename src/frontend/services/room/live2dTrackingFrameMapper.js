@@ -50,11 +50,11 @@ const DIRECT_PARAMETER_RANGES = {
   ParamAngleZ: [-30, 30],
   PositionX: [-15, 15],
   PositionY: [-15, 15],
-  PositionZ: [-10, 10],
-  ParamPosition_Z: [-10, 10],
-  ParamBodyAngleX: [-10, 10],
-  ParamBodyAngleY: [-10, 10],
-  ParamBodyAngleZ: [-10, 10],
+  PositionZ: [-30, 30],
+  ParamPosition_Z: [-30, 30],
+  ParamBodyAngleX: [-30, 30],
+  ParamBodyAngleY: [-30, 30],
+  ParamBodyAngleZ: [-30, 30],
   ParamMouthForm: [-1, 1],
   ParamMouthOpenY: [0, 2.1],
   ParamMouthX: [-1, 1],
@@ -91,6 +91,45 @@ const BODY_SWITCHES = [
   'ParamSwitchCtrl_ChestZ',
   'ParamSwitchCtrl_HipZ'
 ];
+
+const BODY_PRIORITY_IDS = [
+  ...BODY_SWITCHES,
+  'ParamBodyInput_BodyX',
+  'ParamBodyInput_BodyY',
+  'ParamBodyInput_BodyZ',
+  'ParamBodyInput_ChestZ',
+  'ParamBodyInput_HipZ',
+  'ParamOutput_BodyX',
+  'ParamOutput_BodyY',
+  'ParamOutput_BodyZ',
+  'ParamOutput_ChestZ',
+  'ParamOutput_HipZ',
+  'ParamPhysicsRAM_BodyX',
+  'ParamPhysicsRAM_BodyY',
+  'ParamPhysicsRAM_BodyZ',
+  'ParamPhysicsRAM_ChestZ',
+  'ParamPhysicsRAM_HipZ',
+  'ParamBodyAngleX',
+  'ParamBodyAngleY',
+  'ParamBodyAngleZ',
+  'ParamAngle_BodyX',
+  'ParamAngle_BodyX2',
+  'ParamAngle_BodyX3',
+  'ParamAngle_BodyY',
+  'ParamAngle_BodyY2',
+  'ParamAngle_BodyZ',
+  'ParamAngle_BodyZ2',
+  'ParamAngle_ChestZ',
+  'ParamAngle_HipZ',
+  'ParamAngle_ShoulderL',
+  'ParamAngle_ShoulderR',
+  'ParamAngle_HipUp',
+  'ParamAngle_HipDown',
+  'PositionZ',
+  'ParamPosition_Z'
+];
+
+const BODY_PRIORITY = new Map(BODY_PRIORITY_IDS.map((id, index) => [id, index]));
 
 function clamp(value, min, max, fallback = min) {
   const numeric = Number(value);
@@ -165,6 +204,15 @@ function addMapped(target, id, value, weight = 0.75) {
   putWeighted(target, id, value, weight, 'replace');
 }
 
+function prioritizedParameters(target) {
+  return [...target.values()].sort((left, right) => {
+    const leftPriority = BODY_PRIORITY.has(left.id) ? BODY_PRIORITY.get(left.id) : BODY_PRIORITY.size + 1;
+    const rightPriority = BODY_PRIORITY.has(right.id) ? BODY_PRIORITY.get(right.id) : BODY_PRIORITY.size + 1;
+    if (leftPriority !== rightPriority) return leftPriority - rightPriority;
+    return 0;
+  });
+}
+
 function preserveDirectParameter(target, item) {
   const id = item.id;
   if (TRACKING_PARAMETER_IDS.has(id)) return;
@@ -195,19 +243,20 @@ function mapFaceTracking(target, tracking) {
   }
   if (posX) addMapped(target, 'PositionX', posX.value, posX.weight * 0.36);
   if (posY) {
-    const verticalBody = clamp(-posY.value * 0.86, -10, 10);
+    const verticalBody = clamp(-posY.value * 1.18, -30, 30);
     addMapped(target, 'PositionY', posY.value, posY.weight * 0.34);
     addMapped(target, 'ParamBodyInput_BodyY', verticalBody, posY.weight * 0.72);
-    addMapped(target, 'ParamOutput_BodyY', verticalBody * 0.92, posY.weight * 0.52);
-    addMapped(target, 'ParamPhysicsRAM_BodyY', verticalBody * 0.92, posY.weight * 0.38);
-    addMapped(target, 'ParamAngle_BodyY', verticalBody * 1.08, posY.weight * 0.62);
-    addMapped(target, 'ParamAngle_BodyY2', verticalBody * 0.82, posY.weight * 0.52);
+    addMapped(target, 'ParamOutput_BodyY', verticalBody * 1.08, posY.weight * 0.6);
+    addMapped(target, 'ParamPhysicsRAM_BodyY', verticalBody * 1.08, posY.weight * 0.48);
+    addMapped(target, 'ParamAngle_BodyY', verticalBody * 1.18, posY.weight * 0.68);
+    addMapped(target, 'ParamAngle_BodyY2', verticalBody * 0.92, posY.weight * 0.58);
+    addMapped(target, 'ParamPosition_Z', verticalBody * 0.48, posY.weight * 0.38);
     addMapped(target, 'ParamAngle_HipUp', Math.max(0, verticalBody * 0.45), posY.weight * 0.45);
     addMapped(target, 'ParamAngle_HipDown', Math.min(0, verticalBody * 0.45), posY.weight * 0.45);
   }
   if (posZ) {
     addMapped(target, 'PositionZ', posZ.value, posZ.weight * 0.42);
-    addMapped(target, 'ParamPosition_Z', posZ.value, posZ.weight * 0.2);
+    addMapped(target, 'ParamPosition_Z', posZ.value, posZ.weight * 0.36);
   }
 }
 
@@ -312,32 +361,53 @@ function mapBodyTracking(target, tracking) {
 
   if (!hasBody && !posX && !posY) return;
 
-  addMapped(target, 'ParamBodyInput_BodyX', bodyX, weight * 0.94);
-  addMapped(target, 'ParamBodyInput_BodyY', bodyY, weight * 0.94);
-  addMapped(target, 'ParamBodyInput_BodyZ', bodyZ, weight * 0.94);
-  addMapped(target, 'ParamBodyInput_ChestZ', bodyZ * 0.72, weight * 0.76);
-  addMapped(target, 'ParamBodyInput_HipZ', -bodyZ * 0.62, weight * 0.66);
-  addMapped(target, 'PositionZ', clamp(-bodyY * 0.62, -10, 10), weight * 0.72);
+  const outputX = bodyX * 1.52 + posX * 10.5;
+  const outputY = bodyY * 1.38 + posY * 18;
+  const outputZ = bodyZ * 1.56 + posX * 5.5;
+  const chestZ = bodyZ * 1.18 + bodyX * 0.28 + posX * 5.2;
+  const hipZ = -bodyZ * 1.02 + bodyX * 0.18 - posX * 4.8;
+  const depth = clamp(-bodyY * 1.1 + posY * 9.5, -30, 30);
+  const lift = bodyY * 0.44 + posY * 20;
+  const drop = bodyY * 0.34 - posY * 16;
 
-  addMapped(target, 'ParamOutput_BodyX', bodyX * 0.86, weight * 0.38);
-  addMapped(target, 'ParamOutput_BodyY', bodyY * 0.92 + posY * 8.2, weight * 0.66);
-  addMapped(target, 'ParamOutput_BodyZ', bodyZ * 0.88, weight * 0.38);
-  addMapped(target, 'ParamPhysicsRAM_BodyY', bodyY * 0.92 + posY * 8.2, weight * 0.48);
+  addMapped(target, 'ParamBodyInput_BodyX', bodyX * 1.35 + posX * 7.5, weight * 0.98);
+  addMapped(target, 'ParamBodyInput_BodyY', bodyY * 1.28 + posY * 11.5, weight * 0.98);
+  addMapped(target, 'ParamBodyInput_BodyZ', bodyZ * 1.36 + posX * 4.2, weight * 0.98);
+  addMapped(target, 'ParamBodyInput_ChestZ', chestZ * 0.86, weight * 0.82);
+  addMapped(target, 'ParamBodyInput_HipZ', hipZ * 0.78, weight * 0.76);
+  addMapped(target, 'PositionZ', depth * 0.58, weight * 0.72);
+  addMapped(target, 'ParamPosition_Z', depth * 0.66, weight * 0.62);
 
-  addMapped(target, 'ParamBodyAngleX', bodyX * 0.34, weight * 0.24);
-  addMapped(target, 'ParamBodyAngleY', bodyY * 0.38 + posY * 2.2, weight * 0.36);
-  addMapped(target, 'ParamBodyAngleZ', bodyZ * 0.34, weight * 0.24);
-  addMapped(target, 'ParamAngle_BodyX', bodyX, weight * 0.34);
-  addMapped(target, 'ParamAngle_BodyY', bodyY * 1.08 + posY * 8.5, weight * 0.72);
-  addMapped(target, 'ParamAngle_BodyY2', bodyY * 0.82 + posY * 6.2, weight * 0.58);
-  addMapped(target, 'ParamAngle_BodyZ', bodyZ, weight * 0.34);
-  addMapped(target, 'ParamAngle_ShoulderL', -bodyZ * 0.25 + posY * 5.5, weight * 0.48);
-  addMapped(target, 'ParamAngle_ShoulderR', bodyZ * 0.25 + posY * 5.5, weight * 0.48);
-  addMapped(target, 'ParamAngle_HipUp', Math.max(0, bodyY * 0.28 + posY * 14), weight * 0.58);
-  addMapped(target, 'ParamAngle_HipDown', Math.min(0, bodyY * 0.2 - posY * 10), weight * 0.48);
-  addMapped(target, 'ParamHairFront', -bodyY * 0.34 + bodyZ * 0.12, weight * 0.36);
-  addMapped(target, 'ParamHairSide', -bodyX * 0.34 - bodyZ * 0.22, weight * 0.36);
-  addMapped(target, 'ParamHairBack', bodyZ * 0.28 + bodyY * 0.18, weight * 0.32);
+  addMapped(target, 'ParamOutput_BodyX', outputX, weight * 0.82);
+  addMapped(target, 'ParamOutput_BodyY', outputY, weight * 0.86);
+  addMapped(target, 'ParamOutput_BodyZ', outputZ, weight * 0.82);
+  addMapped(target, 'ParamOutput_ChestZ', chestZ, weight * 0.78);
+  addMapped(target, 'ParamOutput_HipZ', hipZ, weight * 0.72);
+  addMapped(target, 'ParamPhysicsRAM_BodyX', outputX * 0.92, weight * 0.74);
+  addMapped(target, 'ParamPhysicsRAM_BodyY', outputY * 0.94, weight * 0.78);
+  addMapped(target, 'ParamPhysicsRAM_BodyZ', outputZ * 0.92, weight * 0.74);
+  addMapped(target, 'ParamPhysicsRAM_ChestZ', chestZ * 0.9, weight * 0.68);
+  addMapped(target, 'ParamPhysicsRAM_HipZ', hipZ * 0.86, weight * 0.64);
+
+  addMapped(target, 'ParamBodyAngleX', bodyX * 0.62 + posX * 2.4, weight * 0.52);
+  addMapped(target, 'ParamBodyAngleY', bodyY * 0.58 + posY * 4.2, weight * 0.58);
+  addMapped(target, 'ParamBodyAngleZ', bodyZ * 0.62, weight * 0.52);
+  addMapped(target, 'ParamAngle_BodyX', outputX * 0.96, weight * 0.82);
+  addMapped(target, 'ParamAngle_BodyX2', outputX * 0.72 + outputZ * 0.12, weight * 0.68);
+  addMapped(target, 'ParamAngle_BodyX3', outputX * 0.48, weight * 0.56);
+  addMapped(target, 'ParamAngle_BodyY', outputY * 0.96, weight * 0.86);
+  addMapped(target, 'ParamAngle_BodyY2', outputY * 0.72, weight * 0.7);
+  addMapped(target, 'ParamAngle_BodyZ', outputZ * 0.94, weight * 0.82);
+  addMapped(target, 'ParamAngle_BodyZ2', outputZ * 0.72 + chestZ * 0.16, weight * 0.68);
+  addMapped(target, 'ParamAngle_ChestZ', chestZ * 0.88, weight * 0.72);
+  addMapped(target, 'ParamAngle_HipZ', hipZ * 0.82, weight * 0.66);
+  addMapped(target, 'ParamAngle_ShoulderL', -chestZ * 0.36 + posY * 6.2, weight * 0.58);
+  addMapped(target, 'ParamAngle_ShoulderR', chestZ * 0.36 + posY * 6.2, weight * 0.58);
+  addMapped(target, 'ParamAngle_HipUp', Math.max(0, lift), weight * 0.68);
+  addMapped(target, 'ParamAngle_HipDown', Math.min(0, drop), weight * 0.6);
+  addMapped(target, 'ParamHairFront', -outputY * 0.32 + outputZ * 0.12, weight * 0.42);
+  addMapped(target, 'ParamHairSide', -outputX * 0.32 - outputZ * 0.24, weight * 0.42);
+  addMapped(target, 'ParamHairBack', outputZ * 0.28 + outputY * 0.16, weight * 0.38);
 }
 
 function mapBreath(target, tracking) {
@@ -369,5 +439,5 @@ export function mapTrackingFrameToYachiyoCubismParameters(frameItems = []) {
   mapBodyTracking(target, tracking);
   mapBreath(target, tracking);
 
-  return [...target.values()].slice(0, 160);
+  return prioritizedParameters(target).slice(0, 180);
 }
