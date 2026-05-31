@@ -619,7 +619,7 @@ export function createLive2DCharacterStateMachine() {
         state.modeUntil = 0;
       }
     }
-    if (state.mode === 'speaking' && at - state.lastMouthAt > 820) {
+    if (state.mode === 'speaking' && at - state.lastMouthAt > 820 && (!state.modeUntil || at > state.modeUntil)) {
       state.previousMode = state.mode;
       state.mode = 'listening';
       state.modeSince = at;
