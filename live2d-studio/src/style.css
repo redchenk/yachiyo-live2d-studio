@@ -7,6 +7,125 @@
   overflow: hidden;
 }
 
+.studio-left-rail {
+  position: fixed;
+  top: 1rem;
+  left: 0.85rem;
+  bottom: 1rem;
+  z-index: 48;
+  width: 5rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.7rem;
+  padding: 0.72rem 0.5rem;
+  border: 1px solid rgba(165, 190, 255, 0.2);
+  border-radius: 8px;
+  color: rgba(248, 251, 255, 0.94);
+  background: rgba(13, 19, 40, 0.66);
+  box-shadow: 0 24px 68px rgba(0, 0, 0, 0.32);
+  backdrop-filter: blur(22px) saturate(1.16);
+}
+
+.studio-rail-brand {
+  width: 3.15rem;
+  height: 3.15rem;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(73, 220, 255, 0.32);
+  border-radius: 8px;
+  background: linear-gradient(135deg, rgba(73, 220, 255, 0.18), rgba(155, 98, 255, 0.2));
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08), 0 14px 34px rgba(73, 220, 255, 0.08);
+}
+
+.studio-rail-brand span {
+  color: #ffffff;
+  font-size: 1.42rem;
+  font-weight: 950;
+}
+
+.studio-left-rail nav {
+  width: 100%;
+  display: grid;
+  gap: 0.52rem;
+}
+
+.studio-rail-item {
+  width: 100%;
+  min-height: 4.15rem;
+  display: grid;
+  place-items: center;
+  gap: 0.28rem;
+  border: 1px solid rgba(165, 190, 255, 0.13);
+  border-radius: 8px;
+  color: rgba(220, 231, 255, 0.6);
+  background: rgba(255, 255, 255, 0.045);
+  font: inherit;
+  font-size: 0.68rem;
+  font-weight: 850;
+  cursor: pointer;
+  transition: transform 0.16s ease, border-color 0.16s ease, background 0.16s ease, color 0.16s ease;
+}
+
+.studio-rail-item svg {
+  color: currentColor;
+}
+
+.studio-rail-item span {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.studio-rail-item:hover,
+.studio-rail-item.active {
+  transform: translateY(-1px);
+  border-color: rgba(73, 220, 255, 0.44);
+  color: rgba(245, 250, 255, 0.96);
+  background: rgba(73, 220, 255, 0.12);
+}
+
+.studio-rail-settings {
+  margin-top: auto;
+}
+
+.studio-rail-avatar {
+  width: 100%;
+  min-height: 5.25rem;
+  display: grid;
+  place-items: center;
+  gap: 0.12rem;
+  border: 1px solid rgba(255, 128, 197, 0.2);
+  border-radius: 8px;
+  color: rgba(248, 251, 255, 0.9);
+  background: rgba(255, 128, 197, 0.08);
+}
+
+.studio-rail-avatar svg {
+  color: rgba(255, 128, 197, 0.92);
+}
+
+.studio-rail-avatar strong,
+.studio-rail-avatar em {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.studio-rail-avatar strong {
+  font-size: 0.68rem;
+  font-weight: 900;
+}
+
+.studio-rail-avatar em {
+  color: rgba(220, 231, 255, 0.55);
+  font-size: 0.62rem;
+  font-style: normal;
+  font-weight: 850;
+}
+
 .studio-floating-toolbar {
   position: fixed;
   top: 1rem;
@@ -505,6 +624,10 @@
 }
 
 @media (max-width: 720px) {
+  .studio-left-rail {
+    display: none;
+  }
+
   .studio-settings-panel {
     left: 0.75rem;
     right: 0.75rem;

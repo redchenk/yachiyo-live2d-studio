@@ -28,6 +28,13 @@ const liveTopic = ref('late-night AI VTuber test stream');
 const audienceInput = ref('');
 const audienceQueue = ref([]);
 const showLog = ref([]);
+const activeMotionTab = ref('expression');
+const muted = ref(false);
+const modelHidden = ref(false);
+const modelLocked = ref(false);
+const micGain = ref(70);
+const liveStartedAt = ref(0);
+const clockNow = ref(Date.now());
 const llmState = ref({
   loading: false,
   error: '',
@@ -59,6 +66,7 @@ const debugPanelOpen = ref(
 const live2dDebug = ref(readRoomLive2DDebugState());
 
 let liveTimer = 0;
+let clockTimer = 0;
 let liveTurnInFlight = false;
 let speechPlayer = null;
 let asrRecorder = null;
@@ -96,6 +104,21 @@ const debugBehaviorPlanText = computed(() => formatDebugObject(live2dDebug.value
 const debugInterruptPolicyText = computed(() => formatDebugObject(live2dDebug.value.interruptPolicy || null));
 
 const debugUpdatedLabel = computed(() => formatDebugTime(live2dDebug.value.updatedAt));
+const liveElapsedLabel = computed(() => {
+  if (!liveStartedAt.value) return '00:00:00';
+  const totalSeconds = Math.max(0, Math.floor((clockNow.value - liveStartedAt.value) / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  return [hours, minutes, seconds].map((item) => String(item).padStart(2, '0')).join(':');
+});
+const audienceStats = computed(() => ({
+  viewers: (1234 + Math.max(0, liveDirector.turn * 7)).toLocaleString(),
+  likes: (56700 + Math.max(0, liveDirector.turn * 93)).toLocaleString(),
+  gifts: (3210 + Math.max(0, liveDirector.turn * 11)).toLocaleString()
+}));
+const displayedChat = computed(() => showLog.value.slice(-4));
+const micBars = computed(() => Array.from({ length: 14 }, (_, index) => index < Math.round(Number(micGain.value || 0) / 8)));
 
 function formatDebugObject(value) {
   if (!value) return 'null';
@@ -162,37 +185,41 @@ const latestCaption = computed(() => {
 });
 
 const testActions = [
-  { label: 'Neutral', expression: 'neutral' },
-  { label: 'Smile', expression: 'smile' },
-  { label: 'Shy', expression: 'bsmile' },
-  { label: 'Tears', expression: 'tears' }
+  { label: '中性', expression: 'neutral', icon: 'meh' },
+  { label: '微笑', expression: 'smile', icon: 'smile' },
+  { label: '害羞', expression: 'bsmile', icon: 'smilePlus' },
+  { label: '哭泣', expression: 'tears', icon: 'frown' }
 ];
 
 const bodyActions = behaviorBodyActionButtons();
 
 const parameterActions = [
   {
-    label: 'Look L',
+    label: '左看',
+    icon: 'chevronUp',
     parameters: [
       { id: 'ParamEyeBallX', value: -0.35, weight: 0.95, durationMs: 900 },
       { id: 'ParamAngleY', value: 5, weight: 0.45, durationMs: 900 }
     ]
   },
   {
-    label: 'Look R',
+    label: '右看',
+    icon: 'chevronDown',
     parameters: [
       { id: 'ParamEyeBallX', value: 0.35, weight: 0.95, durationMs: 900 },
       { id: 'ParamAngleY', value: -5, weight: 0.45, durationMs: 900 }
     ]
   },
   {
-    label: 'Tilt',
+    label: '倾斜',
+    icon: 'sparkles',
     parameters: [
       { id: 'ParamAngleZ', value: 8, weight: 0.85, durationMs: 1100 }
     ]
   },
   {
-    label: 'Focus',
+    label: '专注',
+    icon: 'circleDot',
     parameters: [
       { id: 'ParamAngleX', value: -6, weight: 0.65, durationMs: 1000 },
       { id: 'ParamBrowLY', value: 0.24, weight: 0.7, durationMs: 900 },
@@ -200,19 +227,52 @@ const parameterActions = [
     ]
   },
   {
-    label: 'Warm',
+    label: '温暖',
+    icon: 'heart',
     parameters: [
       { id: 'ParamMouthForm', value: 0.42, weight: 0.9, durationMs: 1000 },
       { id: 'ParamCheek', value: 0.2, weight: 0.55, durationMs: 1100 }
     ]
   },
   {
-    label: 'Breath',
+    label: '呼吸',
+    icon: 'audioLines',
     parameters: [
       { id: 'ParamBreath', value: 0.8, weight: 0.5, durationMs: 1800 }
     ]
   }
 ];
+
+function actionIcon(action) {
+  const key = String(action?.bodyPose || action?.label || '').toLowerCase();
+  if (/nod|点头/.test(key)) return 'smile';
+  if (/shake|摇头/.test(key)) return 'frown';
+  if (/tilt|倾/.test(key)) return 'sparkles';
+  if (/look|看/.test(key)) return 'circleDot';
+  if (/bounce|jump|弹/.test(key)) return 'star';
+  if (/wave|招呼|hand/.test(key)) return 'handHeart';
+  if (/breath|呼吸/.test(key)) return 'audioLines';
+  return 'smile';
+}
+
+function actionLabel(action) {
+  const labels = {
+    nod: '点头',
+    shake_head: '摇头',
+    head_tilt: '倾斜',
+    look_left: '左看',
+    look_right: '右看',
+    look_at_chat: '向左看',
+    look_at_camera: '向右看',
+    sway: '摆动',
+    bounce: '弹跳',
+    wave: '打招呼',
+    lean_in: '靠近',
+    breathe: '呼吸'
+  };
+  const key = String(action?.bodyPose || '').toLowerCase();
+  return labels[key] || action?.label || action?.bodyPose || '动作';
+}
 
 function uid(prefix = 'line') {
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
@@ -417,6 +477,7 @@ function runGreeting() {
 }
 
 function speak() {
+  if (muted.value) return;
   if (latestCaption.value && speechPlayer) {
     speechPlayer.play(latestCaption.value).catch(() => {});
     return;
@@ -686,6 +747,7 @@ function startLiveDirector() {
   if (liveDirector.running) return;
   speechPlayer?.warmup?.();
   liveDirector.running = true;
+  liveStartedAt.value = Date.now();
   liveDirector.status = 'starting';
   liveDirector.error = '';
   dispatchCharacterState('listening', { holdMs: 2200, attention: 0.68, arousal: 0.42 });
@@ -695,6 +757,7 @@ function startLiveDirector() {
 
 function stopLiveDirector() {
   liveDirector.running = false;
+  liveStartedAt.value = 0;
   liveDirector.status = 'idle';
   window.clearTimeout(liveTimer);
   liveTimer = 0;
@@ -715,6 +778,15 @@ function submitAudienceLine(text, meta = {}) {
 
 function sendAudienceLine() {
   submitAudienceLine(audienceInput.value);
+}
+
+function toggleFullscreen() {
+  const root = document.documentElement;
+  if (document.fullscreenElement) {
+    document.exitFullscreen?.();
+    return;
+  }
+  root.requestFullscreen?.();
 }
 
 async function toggleAudienceAsr() {
@@ -745,6 +817,9 @@ function handleLive2DDebugEvent(event) {
 onMounted(() => {
   window.addEventListener(SETTINGS_SAVED_EVENT, handleStudioSettingsSaved);
   window.addEventListener(ROOM_LIVE2D_DEBUG_EVENT, handleLive2DDebugEvent);
+  clockTimer = window.setInterval(() => {
+    clockNow.value = Date.now();
+  }, 1000);
   live2dDebug.value = readRoomLive2DDebugState();
   init();
 });
@@ -752,6 +827,7 @@ onMounted(() => {
 onUnmounted(() => {
   window.removeEventListener(SETTINGS_SAVED_EVENT, handleStudioSettingsSaved);
   window.removeEventListener(ROOM_LIVE2D_DEBUG_EVENT, handleLive2DDebugEvent);
+  window.clearInterval(clockTimer);
   stopLiveDirector();
   speechPlayer?.destroy();
   asrRecorder?.destroy();
@@ -762,38 +838,87 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <main class="live2d-page" :data-live-state="liveDirector.running ? 'on' : 'off'" aria-label="Live2D preview">
+  <main
+    class="live2d-page"
+    :class="{ 'model-hidden': modelHidden, 'model-locked': modelLocked }"
+    :data-live-state="liveDirector.running ? 'on' : 'off'"
+    aria-label="Yachiyo Live2D Studio"
+  >
     <div class="live2d-backdrop" aria-hidden="true"></div>
     <section class="live2d-stage" aria-label="Yachiyo Live2D stage">
+      <div class="live2d-top-metrics" aria-label="Live statistics">
+        <article class="live2d-metric live">
+          <span></span>
+          <div>
+            <strong>{{ liveDirector.running ? 'LIVE' : 'READY' }}</strong>
+            <small>{{ liveElapsedLabel }}</small>
+          </div>
+        </article>
+        <article class="live2d-metric">
+          <TsIcon name="users" :size="18" />
+          <div>
+            <small>观众</small>
+            <strong>{{ audienceStats.viewers }}</strong>
+          </div>
+        </article>
+        <article class="live2d-metric">
+          <TsIcon name="heart" :size="18" />
+          <div>
+            <small>点赞</small>
+            <strong>{{ audienceStats.likes }}</strong>
+          </div>
+        </article>
+        <article class="live2d-metric">
+          <TsIcon name="gift" :size="18" />
+          <div>
+            <small>礼物</small>
+            <strong>{{ audienceStats.gifts }}</strong>
+          </div>
+        </article>
+      </div>
+
       <div
         id="live2d-container"
         class="live2d-model"
+        :class="{ hidden: modelHidden, locked: modelLocked }"
         :data-speaking="speechState.status === 'playing' ? 'true' : undefined"
       ></div>
       <div v-if="live2d.error.value" class="live2d-error" role="alert">{{ live2d.error.value }}</div>
+
+      <section class="live2d-broadcast-hud" aria-label="Broadcast captions">
+        <div v-if="latestCaption" class="live2d-caption">
+          <span>当前发言</span>
+          <p>{{ latestCaption }}</p>
+        </div>
+        <div class="live2d-feed" aria-live="polite">
+          <header>
+            <strong>全部消息</strong>
+            <button class="live2d-mini-btn" type="button" @click="resetLLMHistory">
+              <TsIcon name="trash" :size="15" />
+              <span>清空</span>
+            </button>
+          </header>
+          <article v-for="line in displayedChat" :key="line.id" class="live2d-feed-line" :class="line.role">
+            <strong>{{ line.role === 'yachiyo' ? 'YACHIYO' : line.role === 'audience' ? '聊天' : '系统' }}</strong>
+            <time>{{ formatDebugTime(line.createdAt) }}</time>
+            <span>{{ line.text }}</span>
+          </article>
+          <p v-if="!displayedChat.length" class="live2d-feed-empty">等待第一条消息</p>
+        </div>
+      </section>
     </section>
 
-    <section class="live2d-broadcast-hud" aria-label="Live broadcast state">
-      <div class="live2d-on-air" :class="{ active: liveDirector.running }">
-        <span></span>
-        <strong>{{ liveStateLabel }}</strong>
-        <small>#{{ liveDirector.turn }}</small>
-      </div>
-      <div v-if="latestCaption" class="live2d-caption">
-        {{ latestCaption }}
-      </div>
-      <div v-if="showLog.length" class="live2d-feed" aria-live="polite">
-        <article v-for="line in showLog" :key="line.id" class="live2d-feed-line" :class="line.role">
-          <strong>{{ line.role === 'yachiyo' ? 'Yachiyo' : line.role === 'audience' ? 'Chat' : 'System' }}</strong>
-          <span>{{ line.text }}</span>
-        </article>
-      </div>
-    </section>
-
-    <aside class="live2d-control-panel" aria-label="Live2D test controls">
-      <div class="live2d-status-row">
-        <span class="live2d-status-dot" :class="{ ready: live2d.ready.value, error: live2d.error.value }"></span>
-        <strong>{{ statusLabel }}</strong>
+    <aside class="live2d-control-panel" aria-label="Live controls">
+      <header class="live2d-panel-header">
+        <div class="live2d-status-orb" :class="{ ready: live2d.ready.value, error: live2d.error.value }"></div>
+        <div class="live2d-status-copy">
+          <span>直播状态</span>
+          <strong>{{ liveStateLabel }}</strong>
+          <small>{{ statusLabel }}</small>
+        </div>
+        <button class="live2d-icon-btn" type="button" title="刷新模型状态" aria-label="刷新模型状态" @click="runGreeting">
+          <TsIcon name="refresh" :size="19" />
+        </button>
         <button
           class="live2d-icon-btn live2d-debug-toggle"
           type="button"
@@ -802,12 +927,38 @@ onUnmounted(() => {
           :aria-pressed="debugPanelOpen ? 'true' : 'false'"
           @click="toggleLive2DDebugPanel"
         >
-          <TsIcon name="list" :size="17" />
+          <TsIcon name="settings" :size="19" />
         </button>
-      </div>
+      </header>
 
       <section class="live2d-live-director" aria-label="Live director">
-        <input v-model="liveTopic" type="text" spellcheck="false" placeholder="Stream topic">
+        <label>
+          <span>标题</span>
+          <small>{{ liveTopic.length }}/80</small>
+          <input v-model="liveTopic" maxlength="80" type="text" spellcheck="false" placeholder="late-night AI VTuber test stream">
+        </label>
+        <label>
+          <span>观众发言</span>
+          <small>语音输入</small>
+          <div class="live2d-audience-row">
+            <input v-model="audienceInput" type="text" spellcheck="false" placeholder="在此输入观众发言..." @keydown.enter="sendAudienceLine">
+            <button
+              class="live2d-icon-btn live2d-mic-btn"
+              :class="{ active: asrState.status === 'listening' }"
+              type="button"
+              :title="asrState.status === 'listening' ? '停止语音输入' : '开始语音输入'"
+              :aria-label="asrState.status === 'listening' ? '停止语音输入' : '开始语音输入'"
+              :aria-pressed="asrState.status === 'listening' ? 'true' : 'false'"
+              :disabled="asrState.status === 'transcribing'"
+              @click="toggleAudienceAsr"
+            >
+              <TsIcon :name="asrState.status === 'transcribing' ? 'loader' : 'mic'" :size="20" />
+            </button>
+            <button class="live2d-icon-btn" type="button" title="发送" aria-label="发送" @click="sendAudienceLine">
+              <TsIcon name="send" :size="20" />
+            </button>
+          </div>
+        </label>
         <div class="live2d-live-actions">
           <button
             class="live2d-action-btn live2d-run-btn"
@@ -815,100 +966,117 @@ onUnmounted(() => {
             :disabled="!live2d.ready.value || (!liveDirector.running && llmState.loading)"
             @click="liveDirector.running ? stopLiveDirector() : startLiveDirector()"
           >
-            <TsIcon :name="liveDirector.running ? 'pause' : 'play'" :size="16" />
-            <span>{{ liveDirector.running ? 'Stop' : 'Start' }}</span>
+            <TsIcon :name="liveDirector.running ? 'pause' : 'play'" :size="18" />
+            <span>{{ liveDirector.running ? '停止直播' : '开始直播' }}</span>
           </button>
-          <label class="live2d-toggle">
+          <label class="live2d-switch">
             <input v-model="liveDirector.autoVoice" type="checkbox">
-            <span>Voice</span>
+            <span>语音</span>
           </label>
-        </div>
-        <div class="live2d-audience-row">
-          <input v-model="audienceInput" type="text" spellcheck="false" placeholder="Audience line" @keydown.enter="sendAudienceLine">
-          <button
-            class="live2d-icon-btn live2d-mic-btn"
-            :class="{ active: asrState.status === 'listening' }"
-            type="button"
-            :title="asrState.status === 'listening' ? 'Stop voice input' : 'Start voice input'"
-            :aria-label="asrState.status === 'listening' ? 'Stop voice input' : 'Start voice input'"
-            :aria-pressed="asrState.status === 'listening' ? 'true' : 'false'"
-            :disabled="asrState.status === 'transcribing'"
-            @click="toggleAudienceAsr"
-          >
-            <TsIcon :name="asrState.status === 'transcribing' ? 'loader' : 'mic'" :size="17" />
-          </button>
-          <button class="live2d-icon-btn" type="button" title="Send audience line" aria-label="Send audience line" @click="sendAudienceLine">
-            <TsIcon name="send" :size="17" />
-          </button>
         </div>
         <p v-if="liveDirector.error || speechState.error || asrState.error" class="live2d-inline-error">
           {{ liveDirector.error || speechState.error || asrState.error }}
         </p>
         <p v-else-if="asrState.status === 'listening' || asrState.status === 'transcribing'" class="live2d-inline-status">
-          {{ asrState.status === 'listening' ? 'Listening...' : 'Recognizing...' }}
+          {{ asrState.status === 'listening' ? '正在聆听...' : '正在识别...' }}
         </p>
       </section>
 
-      <div class="live2d-actions">
-        <button
-          v-for="action in testActions"
-          :key="action.expression"
-          class="live2d-action-btn"
-          type="button"
-          :disabled="!live2d.ready.value"
-          @click="runExpression(action.expression)"
-        >
-          {{ action.label }}
-        </button>
-      </div>
-      <div class="live2d-actions live2d-body-actions">
-        <button
-          v-for="action in bodyActions"
-          :key="action.bodyPose"
-          class="live2d-action-btn"
-          type="button"
-          :disabled="!live2d.ready.value"
-          @click="runBodyPose(action.bodyPose)"
-        >
-          {{ action.label }}
-        </button>
-      </div>
-      <div class="live2d-actions live2d-parameter-actions">
-        <button
-          v-for="action in parameterActions"
-          :key="action.label"
-          class="live2d-action-btn"
-          type="button"
-          :disabled="!live2d.ready.value"
-          @click="runParameterTargets(action.parameters)"
-        >
-          {{ action.label }}
-        </button>
-      </div>
-      <div class="live2d-icon-actions">
-        <button class="live2d-icon-btn" type="button" :disabled="!live2d.ready.value" title="Greeting" aria-label="Greeting" @click="runGreeting">
-          <TsIcon name="star" :size="20" />
-        </button>
-        <button class="live2d-icon-btn" type="button" :disabled="!live2d.ready.value" title="Speak caption" aria-label="Speak caption" @click="speak">
-          <TsIcon name="audioLines" :size="20" />
-        </button>
-      </div>
-      <form class="live2d-llm-form" @submit.prevent="runLLMControl">
-        <textarea v-model="prompt" rows="3" spellcheck="false" placeholder="Ask LLM to control Live2D"></textarea>
-        <div class="live2d-llm-actions">
-          <button class="live2d-action-btn live2d-run-btn" type="submit" :disabled="!live2d.ready.value || llmState.loading">
-            {{ llmState.loading ? 'Thinking' : 'LLM Act' }}
-          </button>
-          <button class="live2d-icon-btn" type="button" title="Clear history" aria-label="Clear history" @click="resetLLMHistory">
-            <TsIcon name="trash" :size="18" />
+      <section class="live2d-motion-panel" aria-label="Motion controls">
+        <div class="live2d-tabbar" role="tablist" aria-label="Motion control mode">
+          <button :class="{ active: activeMotionTab === 'expression' }" type="button" @click="activeMotionTab = 'expression'">表情</button>
+          <button :class="{ active: activeMotionTab === 'action' }" type="button" @click="activeMotionTab = 'action'">动作</button>
+          <button :class="{ active: activeMotionTab === 'parameter' }" type="button" @click="activeMotionTab = 'parameter'">参数</button>
+        </div>
+        <div v-if="activeMotionTab === 'expression'" class="live2d-control-grid">
+          <button
+            v-for="action in testActions"
+            :key="action.expression"
+            class="live2d-action-btn live2d-tile-btn"
+            type="button"
+            :disabled="!live2d.ready.value"
+            @click="runExpression(action.expression)"
+          >
+            <TsIcon :name="action.icon" :size="28" />
+            <span>{{ action.label }}</span>
           </button>
         </div>
-      </form>
-      <div v-if="llmState.error || llmState.live2d" class="live2d-llm-result" :class="{ error: llmState.error }">
-        <strong>{{ llmState.error ? 'ERROR' : 'ACT' }}</strong>
-        <p v-if="llmState.error">{{ llmState.error }}</p>
-        <p v-else>Motion queued.</p>
-      </div>
+        <div v-else-if="activeMotionTab === 'action'" class="live2d-control-grid action-grid">
+          <button
+            v-for="action in bodyActions"
+            :key="action.bodyPose"
+            class="live2d-action-btn live2d-tile-btn"
+            type="button"
+            :disabled="!live2d.ready.value"
+            @click="runBodyPose(action.bodyPose)"
+          >
+            <TsIcon :name="actionIcon(action)" :size="27" />
+            <span>{{ actionLabel(action) }}</span>
+          </button>
+        </div>
+        <div v-else class="live2d-control-grid">
+          <button
+            v-for="action in parameterActions"
+            :key="action.label"
+            class="live2d-action-btn live2d-tile-btn"
+            type="button"
+            :disabled="!live2d.ready.value"
+            @click="runParameterTargets(action.parameters)"
+          >
+            <TsIcon :name="action.icon" :size="27" />
+            <span>{{ action.label }}</span>
+          </button>
+        </div>
+      </section>
+
+      <section class="live2d-quick-actions" aria-label="Quick actions">
+        <h2>快捷操作</h2>
+        <div>
+          <button class="live2d-quick-btn" :class="{ active: muted }" type="button" title="静音" aria-label="静音" @click="muted = !muted">
+            <TsIcon :name="muted ? 'micOff' : 'mic'" :size="24" />
+            <span>静音</span>
+          </button>
+          <button class="live2d-quick-btn" :class="{ active: modelHidden }" type="button" title="隐藏模型" aria-label="隐藏模型" @click="modelHidden = !modelHidden">
+            <TsIcon name="eyeOff" :size="24" />
+            <span>隐藏</span>
+          </button>
+          <button class="live2d-quick-btn" :class="{ active: modelLocked }" type="button" title="锁定模型" aria-label="锁定模型" @click="modelLocked = !modelLocked">
+            <TsIcon name="lock" :size="24" />
+            <span>锁定</span>
+          </button>
+          <button class="live2d-quick-btn" type="button" title="全屏" aria-label="全屏" @click="toggleFullscreen">
+            <TsIcon name="maximize" :size="24" />
+            <span>全屏</span>
+          </button>
+        </div>
+      </section>
+
+      <section class="live2d-volume-panel" aria-label="Audio monitor">
+        <div>
+          <span>麦克风音量</span>
+          <strong>{{ micGain }}%</strong>
+        </div>
+        <input v-model.number="micGain" type="range" min="0" max="100" aria-label="麦克风音量">
+        <div class="live2d-mic-meter" aria-hidden="true">
+          <TsIcon name="mic" :size="18" />
+          <span v-for="(active, index) in micBars" :key="index" :class="{ active }"></span>
+        </div>
+      </section>
+
+      <details class="live2d-director-command">
+        <summary>导演指令</summary>
+        <form class="live2d-llm-form" @submit.prevent="runLLMControl">
+          <textarea v-model="prompt" rows="3" spellcheck="false" placeholder="Ask LLM to control Live2D"></textarea>
+          <div class="live2d-llm-actions">
+            <button class="live2d-action-btn live2d-run-btn" type="submit" :disabled="!live2d.ready.value || llmState.loading">
+              {{ llmState.loading ? 'Thinking' : 'LLM Act' }}
+            </button>
+            <button class="live2d-icon-btn" type="button" title="清空历史" aria-label="清空历史" @click="resetLLMHistory">
+              <TsIcon name="trash" :size="18" />
+            </button>
+          </div>
+        </form>
+      </details>
     </aside>
 
     <aside v-if="debugPanelOpen" class="live2d-debug-panel" aria-label="Live2D motion inspector">
