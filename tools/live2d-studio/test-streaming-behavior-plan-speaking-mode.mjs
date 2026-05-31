@@ -37,7 +37,31 @@ try {
     'speaking',
     'streaming speech behavior plans should not flip the character into acting between TTS chunks'
   );
-  assert.equal(brain.getBehaviorPlan()?.source, 'streaming-speech');
+  const firstPlan = brain.getBehaviorPlan();
+  assert.equal(firstPlan?.source, 'streaming-speech');
+
+  brain.onRoomAct({
+    source: 'streaming-speech',
+    emotion: 'happy',
+    expression: 'smile',
+    intensity: 0.72,
+    durationMs: 2200,
+    behaviorActions: [
+      { type: 'sway', intensity: 0.72, delayMs: 0, durationMs: 1200 }
+    ]
+  }, 1460);
+
+  const extendedPlan = brain.getBehaviorPlan();
+  assert.equal(
+    extendedPlan?.id,
+    firstPlan?.id,
+    'streaming speech action queues should extend the current behavior plan instead of replacing it'
+  );
+  assert.ok(
+    extendedPlan.actions.length > firstPlan.actions.length,
+    'extended streaming plans should keep queued actions continuous'
+  );
+  assert.equal(brain.sample(1520).character.mode, 'speaking');
 } finally {
   await server.close();
 }

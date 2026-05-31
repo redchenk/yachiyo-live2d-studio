@@ -33,6 +33,10 @@ function isStreamingSpeechSource(source) {
   return String(source || '').trim().toLowerCase() === 'streaming-speech';
 }
 
+function behaviorActionEndMs(action = {}) {
+  return (Number(action.delayMs) || 0) + (Number(action.durationMs) || 0);
+}
+
 function resolveExpression(detail = {}) {
   return normalizeSemanticExpressionId(
     detail.expression ||
@@ -110,6 +114,61 @@ export function createLive2DPerformanceBrain() {
     return samples;
   }
 
+  function shouldExtendStreamingBehaviorPlan(currentPlan, nextPlan, at) {
+    if (!currentPlan || !nextPlan) return false;
+    if (!isStreamingSpeechSource(currentPlan.source) || !isStreamingSpeechSource(nextPlan.source)) return false;
+    const elapsed = Math.max(0, at - (Number(currentPlan.startedAt) || at));
+    return elapsed <= Number(currentPlan.durationMs || 0) + 1200;
+  }
+
+  function extendStreamingBehaviorPlan(currentPlan, nextPlan, at, options = {}) {
+    const elapsed = Math.max(0, at - (Number(currentPlan.startedAt) || at));
+    const appendAt = Math.max(0, elapsed - 260);
+    const retainAfter = Math.max(0, elapsed - 1500);
+    const retainedActions = currentPlan.actions.filter((action) => behaviorActionEndMs(action) >= retainAfter);
+    const appendedActions = nextPlan.actions.map((action) => ({
+      ...action,
+      delayMs: Math.round(appendAt + (Number(action.delayMs) || 0))
+    }));
+    const actions = [...retainedActions, ...appendedActions].slice(-18);
+    const durationMs = Math.max(
+      Number(currentPlan.durationMs) || 0,
+      appendAt + Number(nextPlan.durationMs || 0),
+      ...actions.map(behaviorActionEndMs),
+      elapsed + 1400
+    );
+    behaviorPlan = {
+      ...currentPlan,
+      emotion: nextPlan.emotion || currentPlan.emotion,
+      expression: nextPlan.expression || currentPlan.expression,
+      intensity: Math.max(Number(currentPlan.intensity) || 0, Number(nextPlan.intensity) || 0) || currentPlan.intensity,
+      priority: Math.max(Number(currentPlan.priority) || 0, Number(nextPlan.priority) || 0) || currentPlan.priority,
+      actions,
+      durationMs: clamp(durationMs, 900, 60000, durationMs),
+      interruptPolicy: nextPlan.interruptPolicy || currentPlan.interruptPolicy,
+      suppressEyeOpen: Boolean(currentPlan.suppressEyeOpen || nextPlan.suppressEyeOpen),
+      speechStyle: nextPlan.speechStyle || currentPlan.speechStyle,
+      extendedAt: at
+    };
+    invalidateFrameCache();
+    characterState.setMode('speaking', {
+      now: at,
+      holdMs: behaviorPlan.durationMs - elapsed + 760,
+      emotion: options.emotion || behaviorPlan.emotion || behaviorPlan.expression,
+      emotionHoldMs: behaviorPlan.durationMs - elapsed + 960,
+      attention: 0.88,
+      arousal: options.emotion === 'sad' || options.emotion === 'crying' ? 0.5 : 0.68
+    });
+    appendRoomLive2DDebugEvent('behavior-plan-extend', {
+      source: behaviorPlan.source || 'streaming-speech',
+      expression: behaviorPlan.expression,
+      emotion: options.emotion,
+      behaviorPlan: summarizeDebugBehaviorPlan(behaviorPlan, elapsed),
+      appendedActionCount: appendedActions.length
+    });
+    return behaviorPlan;
+  }
+
   function startBehaviorPlan(actions, durationMs, options = {}) {
     if (!Array.isArray(actions) || !actions.length) return null;
     const now = Number(options.now) || nowMs();
@@ -125,6 +184,9 @@ export function createLive2DPerformanceBrain() {
       suppressEyeOpen: Boolean(options.suppressEyeOpen),
       speechStyle: options.speechStyle
     });
+    if (shouldExtendStreamingBehaviorPlan(behaviorPlan, nextPlan, now)) {
+      return extendStreamingBehaviorPlan(behaviorPlan, nextPlan, now, options);
+    }
     if (!shouldInterruptLive2DBehaviorPlan(behaviorPlan, nextPlan, now)) {
       appendRoomLive2DDebugEvent('behavior-plan-protected', {
         source: options.source || 'room-act',
