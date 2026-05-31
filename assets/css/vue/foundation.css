@@ -12,6 +12,7 @@
     --font: "Microsoft YaHei", "Noto Sans SC", "Segoe UI", Arial, sans-serif;
     --ts-bg-image: none;
     --ts-room-bg-image: none;
+    --ts-live2d-studio-bg-image: none;
 }
 
 * {

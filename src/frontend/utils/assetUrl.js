@@ -31,4 +31,5 @@ export function configureAssetCssVars() {
   const root = document.documentElement;
   root.style.setProperty('--ts-bg-image', `url("${assetUrl('/assets/images/tsukuyomi-bg.png')}")`);
   root.style.setProperty('--ts-room-bg-image', `url("${assetUrl('/assets/images/room-bg.png')}")`);
+  root.style.setProperty('--ts-live2d-studio-bg-image', `url("${assetUrl('/assets/images/live2d-studio-bg.png')}")`);
 }

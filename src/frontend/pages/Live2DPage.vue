@@ -33,8 +33,6 @@ const muted = ref(false);
 const modelHidden = ref(false);
 const modelLocked = ref(false);
 const micGain = ref(70);
-const liveStartedAt = ref(0);
-const clockNow = ref(Date.now());
 const llmState = ref({
   loading: false,
   error: '',
@@ -66,7 +64,6 @@ const debugPanelOpen = ref(
 const live2dDebug = ref(readRoomLive2DDebugState());
 
 let liveTimer = 0;
-let clockTimer = 0;
 let liveTurnInFlight = false;
 let speechPlayer = null;
 let asrRecorder = null;
@@ -104,19 +101,6 @@ const debugBehaviorPlanText = computed(() => formatDebugObject(live2dDebug.value
 const debugInterruptPolicyText = computed(() => formatDebugObject(live2dDebug.value.interruptPolicy || null));
 
 const debugUpdatedLabel = computed(() => formatDebugTime(live2dDebug.value.updatedAt));
-const liveElapsedLabel = computed(() => {
-  if (!liveStartedAt.value) return '00:00:00';
-  const totalSeconds = Math.max(0, Math.floor((clockNow.value - liveStartedAt.value) / 1000));
-  const hours = Math.floor(totalSeconds / 3600);
-  const minutes = Math.floor((totalSeconds % 3600) / 60);
-  const seconds = totalSeconds % 60;
-  return [hours, minutes, seconds].map((item) => String(item).padStart(2, '0')).join(':');
-});
-const audienceStats = computed(() => ({
-  viewers: (1234 + Math.max(0, liveDirector.turn * 7)).toLocaleString(),
-  likes: (56700 + Math.max(0, liveDirector.turn * 93)).toLocaleString(),
-  gifts: (3210 + Math.max(0, liveDirector.turn * 11)).toLocaleString()
-}));
 const displayedChat = computed(() => showLog.value.slice(-4));
 const micBars = computed(() => Array.from({ length: 14 }, (_, index) => index < Math.round(Number(micGain.value || 0) / 8)));
 
@@ -747,7 +731,6 @@ function startLiveDirector() {
   if (liveDirector.running) return;
   speechPlayer?.warmup?.();
   liveDirector.running = true;
-  liveStartedAt.value = Date.now();
   liveDirector.status = 'starting';
   liveDirector.error = '';
   dispatchCharacterState('listening', { holdMs: 2200, attention: 0.68, arousal: 0.42 });
@@ -757,7 +740,6 @@ function startLiveDirector() {
 
 function stopLiveDirector() {
   liveDirector.running = false;
-  liveStartedAt.value = 0;
   liveDirector.status = 'idle';
   window.clearTimeout(liveTimer);
   liveTimer = 0;
@@ -817,9 +799,6 @@ function handleLive2DDebugEvent(event) {
 onMounted(() => {
   window.addEventListener(SETTINGS_SAVED_EVENT, handleStudioSettingsSaved);
   window.addEventListener(ROOM_LIVE2D_DEBUG_EVENT, handleLive2DDebugEvent);
-  clockTimer = window.setInterval(() => {
-    clockNow.value = Date.now();
-  }, 1000);
   live2dDebug.value = readRoomLive2DDebugState();
   init();
 });
@@ -827,7 +806,6 @@ onMounted(() => {
 onUnmounted(() => {
   window.removeEventListener(SETTINGS_SAVED_EVENT, handleStudioSettingsSaved);
   window.removeEventListener(ROOM_LIVE2D_DEBUG_EVENT, handleLive2DDebugEvent);
-  window.clearInterval(clockTimer);
   stopLiveDirector();
   speechPlayer?.destroy();
   asrRecorder?.destroy();
@@ -846,37 +824,6 @@ onUnmounted(() => {
   >
     <div class="live2d-backdrop" aria-hidden="true"></div>
     <section class="live2d-stage" aria-label="Yachiyo Live2D stage">
-      <div class="live2d-top-metrics" aria-label="Live statistics">
-        <article class="live2d-metric live">
-          <span></span>
-          <div>
-            <strong>{{ liveDirector.running ? 'LIVE' : 'READY' }}</strong>
-            <small>{{ liveElapsedLabel }}</small>
-          </div>
-        </article>
-        <article class="live2d-metric">
-          <TsIcon name="users" :size="18" />
-          <div>
-            <small>观众</small>
-            <strong>{{ audienceStats.viewers }}</strong>
-          </div>
-        </article>
-        <article class="live2d-metric">
-          <TsIcon name="heart" :size="18" />
-          <div>
-            <small>点赞</small>
-            <strong>{{ audienceStats.likes }}</strong>
-          </div>
-        </article>
-        <article class="live2d-metric">
-          <TsIcon name="gift" :size="18" />
-          <div>
-            <small>礼物</small>
-            <strong>{{ audienceStats.gifts }}</strong>
-          </div>
-        </article>
-      </div>
-
       <div
         id="live2d-container"
         class="live2d-model"

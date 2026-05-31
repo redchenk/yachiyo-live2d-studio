@@ -25,7 +25,7 @@ body.vue-live2d-route {
     background:
         linear-gradient(90deg, rgba(4, 7, 18, 0.58), rgba(8, 10, 24, 0.12) 28%, rgba(7, 9, 20, 0.14) 66%, rgba(4, 7, 18, 0.72)),
         linear-gradient(180deg, rgba(3, 6, 18, 0.18), rgba(4, 6, 15, 0.76)),
-        var(--ts-room-bg-image) center / cover no-repeat;
+        var(--ts-live2d-studio-bg-image) center / cover no-repeat;
 }
 
 .live2d-backdrop {
@@ -41,80 +41,6 @@ body.vue-live2d-route {
     position: absolute;
     inset: 0;
     z-index: 1;
-}
-
-.live2d-top-metrics {
-    position: fixed;
-    top: 1.35rem;
-    left: clamp(7.4rem, 10vw, 11.4rem);
-    z-index: 5;
-    width: min(37rem, calc(100vw - 38rem));
-    min-height: 4.25rem;
-    display: grid;
-    grid-template-columns: 1.25fr repeat(3, 1fr);
-    border: 1px solid rgba(160, 184, 255, 0.24);
-    border-radius: 8px;
-    overflow: hidden;
-    background: rgba(16, 23, 48, 0.52);
-    box-shadow: 0 22px 58px rgba(0, 0, 0, 0.24);
-    backdrop-filter: blur(22px) saturate(1.2);
-}
-
-.live2d-metric {
-    min-width: 0;
-    display: flex;
-    align-items: center;
-    gap: 0.62rem;
-    padding: 0.8rem 1.05rem;
-    border-left: 1px solid rgba(160, 184, 255, 0.15);
-    color: var(--live2d-muted);
-}
-
-.live2d-metric:first-child {
-    border-left: 0;
-}
-
-.live2d-metric.live > span {
-    width: 0.76rem;
-    height: 0.76rem;
-    border-radius: 50%;
-    background: var(--live2d-green);
-    box-shadow: 0 0 20px rgba(55, 238, 122, 0.72);
-}
-
-.live2d-page[data-live-state="off"] .live2d-metric.live > span {
-    background: var(--live2d-gold);
-    box-shadow: 0 0 20px rgba(255, 208, 100, 0.58);
-}
-
-.live2d-metric svg {
-    color: rgba(127, 143, 255, 0.9);
-}
-
-.live2d-metric.live strong {
-    color: #e06bff;
-    letter-spacing: 0.08em;
-}
-
-.live2d-metric div {
-    min-width: 0;
-    display: grid;
-    gap: 0.12rem;
-}
-
-.live2d-metric span,
-.live2d-metric small {
-    color: var(--live2d-muted);
-    font-size: 0.84rem;
-    font-weight: 800;
-}
-
-.live2d-metric strong {
-    overflow: hidden;
-    color: var(--live2d-ink);
-    font-size: 1rem;
-    text-overflow: ellipsis;
-    white-space: nowrap;
 }
 
 .live2d-model {
@@ -973,12 +899,6 @@ body.vue-live2d-route {
 }
 
 @media (max-width: 1100px) {
-    .live2d-top-metrics {
-        left: 6.3rem;
-        right: 1rem;
-        width: auto;
-    }
-
     .live2d-model {
         left: 45%;
         width: min(72vw, 720px);
@@ -1006,10 +926,6 @@ body.vue-live2d-route {
 }
 
 @media (max-width: 720px) {
-    .live2d-top-metrics {
-        display: none;
-    }
-
     .live2d-model {
         left: 50%;
         bottom: 14rem;
