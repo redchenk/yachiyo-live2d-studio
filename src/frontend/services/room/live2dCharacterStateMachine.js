@@ -26,7 +26,7 @@ const MODE_PROFILES = {
 };
 
 const IDLE_ACTION_RATIO = 0.9;
-const ACTION_SPEED_SCALE = 0.9;
+const ACTION_SPEED_SCALE = 0.99;
 const IDLE_GESTURE_WEIGHTS = [
   { type: 'bob', weight: 0.34 },
   { type: 'nod', weight: 0.24 },
