@@ -67,6 +67,14 @@ function clamp(value, min, max, fallback = min) {
   return Math.min(Math.max(numeric, min), max);
 }
 
+function lerp(left, right, t) {
+  return left + (right - left) * clamp(t, 0, 1);
+}
+
+function characterSpeakingBlend(character) {
+  return clamp(character?.speakingBlend ?? (character?.mode === 'speaking' ? 1 : 0), 0, 1, 0);
+}
+
 function isSoftTakeoverFrameId(id) {
   const value = String(id || '');
   return (
@@ -629,12 +637,12 @@ function applyAutoBlink(frame, samples, nowMs, baseOpen = 0.92, options = {}) {
 function applyCharacterState(frame, character, strength = 1, options = {}) {
   if (!character) return;
   const amount = clamp(strength, 0, 1, 1);
-  const isSpeaking = character.mode === 'speaking';
-  const horizontalAmount = isSpeaking ? amount * 1.08 : amount;
-  const faceVerticalAmount = isSpeaking ? amount * 0.46 : amount;
-  const bodyVerticalAmount = isSpeaking ? amount * 0.22 : amount;
-  const bodyPositionVerticalAmount = isSpeaking ? amount * 0.08 : amount;
-  const bodyWeight = isSpeaking ? 0.84 : 0.8;
+  const speakingBlend = characterSpeakingBlend(character);
+  const horizontalAmount = amount * lerp(1, 1.08, speakingBlend);
+  const faceVerticalAmount = amount * lerp(1, 0.46, speakingBlend);
+  const bodyVerticalAmount = amount * lerp(1, 0.22, speakingBlend);
+  const bodyPositionVerticalAmount = amount * lerp(1, 0.08, speakingBlend);
+  const bodyWeight = lerp(0.8, 0.84, speakingBlend);
   setHead(frame, {
     x: character.faceX * horizontalAmount,
     y: character.faceY * faceVerticalAmount,
@@ -643,7 +651,7 @@ function applyCharacterState(frame, character, strength = 1, options = {}) {
   setFacePosition(frame, {
     x: character.facePosX * horizontalAmount,
     y: character.facePosY * faceVerticalAmount
-  }, isSpeaking ? 0.78 : 0.64);
+  }, lerp(0.64, 0.78, speakingBlend));
   setEyes(frame, character.eyeX * horizontalAmount, character.eyeY * amount, 0.78);
   if (!options.suppressEyeOpen) setEyeOpen(frame, character.eyeOpen, character.eyeOpen, 0.72);
   setMouthSmile(frame, character.mouthSmile, 0.72);
@@ -699,10 +707,10 @@ export function mountCubismBehaviorBridge(options = {}) {
     const expression = performanceFrame.expression;
     const suppressEyeOpen = expressionOwnsEyeOpen(expression);
     const frame = createFrame({ suppressEyeOpen });
-    const speaking = character?.mode === 'speaking';
+    const speakingBlend = characterSpeakingBlend(character);
     const characterStrength = behaviorPlan && dominant
-      ? (speaking ? 0.42 : 0.66)
-      : (speaking ? 0.82 : 1);
+      ? lerp(0.66, 0.42, speakingBlend)
+      : lerp(1, 0.82, speakingBlend);
 
     applyCharacterState(frame, character, characterStrength, { suppressEyeOpen });
     applySemanticOverlay(frame, expression, behaviorPlan ? 0.76 : 0.48, { suppressEyeOpen });

@@ -252,6 +252,10 @@ function clampFallback(value, min, max, fallback) {
   return clamp(numeric, min, max);
 }
 
+function characterSpeakingBlend(character) {
+  return clampFallback(character?.speakingBlend ?? (character?.mode === 'speaking' ? 1 : 0), 0, 1, 0);
+}
+
 function injectionProfile(id) {
   if (id.startsWith('ParamSwitchCtrl_')) return { alpha: 1, step: 1 };
   if (id.startsWith('ParamBodyInput_')) return { alpha: 0.58, step: 3.8 };
@@ -1306,9 +1310,9 @@ function applySemanticExpressionOverlay(frame, expression, strength = 1, options
 function applyCharacterStateFrame(frame, character, strength = 1) {
   if (!character) return;
   const amount = clampFallback(strength, 0, 1, 1);
-  const isSpeaking = character.mode === 'speaking';
-  const facePositionWeight = isSpeaking ? 0.72 : 0.54;
-  const bodyWeight = isSpeaking ? 0.96 : 0.72;
+  const speakingBlend = characterSpeakingBlend(character);
+  const facePositionWeight = lerp(0.54, 0.72, speakingBlend);
+  const bodyWeight = lerp(0.72, 0.96, speakingBlend);
   setFrameValue(frame, 'FaceAngleX', character.faceX * amount, 0.72);
   setFrameValue(frame, 'FaceAngleY', character.faceY * amount, 0.7);
   setFrameValue(frame, 'FaceAngleZ', character.faceZ * amount, 0.68);
@@ -1346,10 +1350,10 @@ function sampleVTSBehaviorActions(actions, elapsedMs, nowMs = performance.now(),
 
   const suppressEyeOpen = Boolean(options.suppressEyeOpen || expressionOwnsEyeOpen(expression));
   const frame = createDirectTrackingFrame({ suppressEyeOpen });
-  const speaking = character?.mode === 'speaking';
+  const speakingBlend = characterSpeakingBlend(character);
   const dominant = options.dominant || pickBehaviorDominantMotion(samples);
-  applyCharacterStateFrame(frame, character, speaking && dominant ? 0.42 : (speaking ? 0.82 : 0.68));
-  applySemanticExpressionOverlay(frame, expression || character?.emotion, speaking ? 0.68 : 0.82);
+  applyCharacterStateFrame(frame, character, dominant ? lerp(0.68, 0.42, speakingBlend) : lerp(0.68, 0.82, speakingBlend));
+  applySemanticExpressionOverlay(frame, expression || character?.emotion, lerp(0.82, 0.68, speakingBlend));
   applyDirectMotion(frame, dominant);
   samples.forEach((sample) => applyDirectOverlay(frame, sample, dominant, { faceOnly: false, suppressEyeOpen }));
   applyAutoBlink(frame, samples, nowMs, character?.eyeOpen, { suppressEyeOpen });

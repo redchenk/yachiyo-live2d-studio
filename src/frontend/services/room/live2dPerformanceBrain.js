@@ -291,7 +291,6 @@ export function createLive2DPerformanceBrain() {
     const intensityScale = Number(options.intensityScale) || 1.62;
     const frameKey = `${Math.floor(Number(now) / 16)}:${intensityScale.toFixed(3)}`;
     if (cachedFrame && cachedFrameKey === frameKey) return cachedFrame;
-    const character = characterState.sample(now);
     const currentPlan = behaviorPlan;
     const elapsedMs = currentPlan ? now - currentPlan.startedAt : 0;
     if (currentPlan && elapsedMs >= currentPlan.durationMs) {
@@ -305,9 +304,11 @@ export function createLive2DPerformanceBrain() {
       });
     }
     const activePlan = behaviorPlan;
+    const activeElapsedMs = activePlan ? now - activePlan.startedAt : 0;
+    const character = characterState.sample(now);
     const outgoingExpression = outgoingPlan?.plan?.expression;
     const trailingSamples = sampleOutgoingBehaviorActions(now, intensityScale);
-    const activeSamples = activePlan ? sampleActiveBehaviorActions(activePlan.actions, elapsedMs, {
+    const activeSamples = activePlan ? sampleActiveBehaviorActions(activePlan.actions, activeElapsedMs, {
       intensityScale
     }) : [];
     const samples = [...trailingSamples, ...activeSamples];
@@ -317,7 +318,7 @@ export function createLive2DPerformanceBrain() {
     cachedFrame = {
       character,
       behaviorPlan: activePlan,
-      elapsedMs,
+      elapsedMs: activePlan ? activeElapsedMs : elapsedMs,
       samples,
       dominant,
       expression: activePlan?.expression || outgoingExpression || character.emotion,

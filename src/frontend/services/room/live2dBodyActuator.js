@@ -116,6 +116,14 @@ function clamp(value, min, max, fallback = min) {
   return Math.min(Math.max(numeric, min), max);
 }
 
+function lerp(left, right, t) {
+  return left + (right - left) * clamp(t, 0, 1);
+}
+
+function characterSpeakingBlend(character) {
+  return clamp(character?.speakingBlend ?? (character?.mode === 'speaking' ? 1 : 0), 0, 1, 0);
+}
+
 function emptyStagePose() {
   return { x: 0, y: 0, rotate: 0, scale: 1 };
 }
@@ -401,10 +409,10 @@ function sampleBehaviorStagePose(sample, dominantSample, scale = DEFAULT_STAGE_M
 
 function sampleCharacterStagePose(character, now, scale = DEFAULT_STAGE_MOTION_SCALE) {
   if (!character) return emptyStagePose();
-  const speaking = character.mode === 'speaking';
+  const speakingBlend = characterSpeakingBlend(character);
   const acting = character.mode === 'acting';
-  const active = speaking || acting;
-  const amount = clamp(scale, 0, 2.4) * (active ? 0.82 : 0.34);
+  const activeBlend = Math.max(speakingBlend, acting ? 1 : 0);
+  const amount = clamp(scale, 0, 2.4) * lerp(0.34, 0.82, activeBlend);
   const seconds = now / 1000;
   const slowFloat = Math.sin(seconds * 0.76 + 0.8);
   const x = (
@@ -412,9 +420,9 @@ function sampleCharacterStagePose(character, now, scale = DEFAULT_STAGE_MOTION_S
     (Number(character.facePosX) || 0) * 0.62 +
     (Number(character.bodyZ) || 0) * 0.56
   ) * amount;
-  const y = speaking
-    ? ((Number(character.bodyPosY) || 0) * -12 + slowFloat * 1.4) * amount
-    : ((Number(character.bodyPosY) || 0) * -34 + (Number(character.bodyY) || 0) * 0.09 + slowFloat * 1.2) * amount;
+  const speakingY = ((Number(character.bodyPosY) || 0) * -12 + slowFloat * 1.4) * amount;
+  const idleY = ((Number(character.bodyPosY) || 0) * -34 + (Number(character.bodyY) || 0) * 0.09 + slowFloat * 1.2) * amount;
+  const y = lerp(idleY, speakingY, speakingBlend);
   const rotate = (
     (Number(character.bodyZ) || 0) * 0.12 +
     (Number(character.faceZ) || 0) * 0.035
@@ -423,7 +431,7 @@ function sampleCharacterStagePose(character, now, scale = DEFAULT_STAGE_MOTION_S
     x: clamp(x, -38, 38),
     y: clamp(y, -16, 16),
     rotate: clamp(rotate, -2.4, 2.4),
-    scale: 1 + clamp((Number(character.energy) || 0) * (active ? 0.003 : 0.0015), 0, 0.005)
+    scale: 1 + clamp((Number(character.energy) || 0) * lerp(0.0015, 0.003, activeBlend), 0, 0.005)
   };
 }
 
@@ -499,8 +507,9 @@ function clampCanvasPose(pose) {
 
 function selectStageLerpProfile(performanceFrame, activeMotion, outgoingMotion) {
   if (performanceFrame?.behaviorPlan || activeMotion || outgoingMotion) return STAGE_LERP_PROFILES.motion;
-  const mode = performanceFrame?.character?.mode;
-  return mode === 'speaking' || mode === 'acting'
+  const character = performanceFrame?.character;
+  const mode = character?.mode;
+  return characterSpeakingBlend(character) > 0.05 || mode === 'speaking' || mode === 'acting'
     ? STAGE_LERP_PROFILES.motion
     : STAGE_LERP_PROFILES.idle;
 }

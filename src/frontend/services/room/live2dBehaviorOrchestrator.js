@@ -11,6 +11,8 @@ function nowMs() {
   return Date.now();
 }
 
+const NATURAL_EYE_TIMING_ACTIONS = new Set(['blink', 'wink']);
+
 function ease(value) {
   const t = clamp(value, 0, 1, 0);
   return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
@@ -102,6 +104,8 @@ export function pickDominantMotion(samples) {
 export function enrichBehaviorActions(actions = [], options = {}) {
   const durationScale = clamp(options.durationScale, 0.65, 1.45, 1);
   const enriched = (Array.isArray(actions) ? actions : []).map((action, index) => {
+    const keepNaturalEyeTiming = NATURAL_EYE_TIMING_ACTIONS.has(action.type);
+    const baseDurationMs = Math.max(Number(action.durationMs) || 1000, 260);
     const sideSign = action.side === 'left'
       ? -1
       : action.side === 'right'
@@ -111,13 +115,13 @@ export function enrichBehaviorActions(actions = [], options = {}) {
     return {
       ...action,
       sideSign,
-      tempo: 0.9 + Math.random() * 0.22,
+      tempo: keepNaturalEyeTiming ? 1 : 0.9 + Math.random() * 0.22,
       amplitude: 0.92 + Math.random() * 0.26,
       motionVariant: Math.floor(Math.random() * 4),
       motionArc: (Math.random() - 0.5) * 2,
       secondarySign: Math.random() > 0.5 ? 1 : -1,
       phaseOffset: Math.random() * Math.PI * 2,
-      durationMs: Math.round(Math.max(Number(action.durationMs) || 1000, 260) * durationScale * (0.94 + Math.random() * 0.16)),
+      durationMs: Math.round(baseDurationMs * (keepNaturalEyeTiming ? 1 : durationScale * (0.94 + Math.random() * 0.16))),
       delayMs: Math.max(0, Math.round((Number(action.delayMs) || 0) + delayJitter))
     };
   });
