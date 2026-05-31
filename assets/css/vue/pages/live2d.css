@@ -48,12 +48,28 @@ body.vue-live2d-route {
     transform-origin: 50% 84%;
 }
 
+.live2d-model::before {
+    content: "";
+    position: absolute;
+    left: 15%;
+    right: 15%;
+    bottom: 1.5rem;
+    height: 22%;
+    z-index: -1;
+    border-radius: 50%;
+    background: rgba(0, 0, 0, 0.42);
+    filter: blur(28px);
+    pointer-events: none;
+}
+
 .live2d-model canvas {
     width: 100% !important;
     height: 100% !important;
     display: block;
     background: transparent;
-    filter: saturate(1) contrast(0.98) drop-shadow(0 18px 38px rgba(0, 0, 0, 0.46));
+    position: relative;
+    z-index: 1;
+    filter: none;
     touch-action: none;
 }
 
