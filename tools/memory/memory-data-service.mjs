@@ -11,12 +11,15 @@ const DEFAULT_PORT = 3299;
 const DEFAULT_COLLECTION = 'yachiyo_memory';
 const DEFAULT_DIMENSION = 384;
 const DEFAULT_MILVUS_IMAGE = 'milvusdb/milvus:latest';
+const DEFAULT_MILVUS_URL = 'http://127.0.0.1:19530';
 const MANAGED_MILVUS_CONTAINER = 'yachiyo-milvus-standalone';
 const MAX_MEMORY_ROWS = 2000;
 const MAX_NOTE_BYTES = 256 * 1024;
 const MAX_WRITE_CHARS = 2400;
+const DOCKER_DAEMON_WAIT_MS = 120000;
 const execFileAsync = promisify(execFile);
 let managedMilvusPromise = null;
+let managedMilvusStartupError = '';
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const defaultRepoRoot = path.resolve(scriptDir, '..', '..');
@@ -157,10 +160,10 @@ function normalizeSettings(input = {}) {
     maxNotes: Math.round(asNumber(input.query?.maxNotes || settings.maxNotesPerTurn, 4, 1, 12)),
     milvusEnabled: asBoolean(settings.milvusEnabled || settings.useMilvus),
     milvusManaged: asBoolean(settings.milvusManaged || settings.manageMilvus),
-    milvusUrl: asText(settings.milvusUrl || settings.milvusEndpoint || 'http://127.0.0.1:19530', 300).replace(/\/+$/, ''),
+    milvusUrl: asText(settings.milvusUrl || settings.milvusEndpoint || process.env.YACHIYO_MEMORY_MILVUS_URL || DEFAULT_MILVUS_URL, 300).replace(/\/+$/, ''),
     milvusToken: asText(settings.milvusToken || '', 1000),
     milvusCollection: asText(settings.milvusCollection || DEFAULT_COLLECTION, 80).replace(/[^a-zA-Z0-9_]/g, '_') || DEFAULT_COLLECTION,
-    milvusImage: asText(settings.milvusImage || DEFAULT_MILVUS_IMAGE, 200),
+    milvusImage: asText(settings.milvusImage || process.env.YACHIYO_MEMORY_MILVUS_IMAGE || DEFAULT_MILVUS_IMAGE, 200),
     embeddingApiUrl: asText(settings.embeddingApiUrl || '', 300),
     embeddingApiKey: asText(settings.embeddingApiKey || '', 1000),
     embeddingModel: asText(settings.embeddingModel || 'text-embedding-3-small', 120),
@@ -568,6 +571,82 @@ async function runDocker(args, timeout = 60000) {
   });
 }
 
+function ensureManagedMilvusConfigFiles(volumePath) {
+  const embedEtcdPath = path.join(volumePath, 'embedEtcd.yaml');
+  const userConfigPath = path.join(volumePath, 'user.yaml');
+  fs.writeFileSync(embedEtcdPath, [
+    'listen-client-urls: http://0.0.0.0:2379',
+    'advertise-client-urls: http://0.0.0.0:2379',
+    'quota-backend-bytes: 4294967296',
+    'auto-compaction-mode: revision',
+    "auto-compaction-retention: '1000'",
+    ''
+  ].join('\n'));
+  if (!fs.existsSync(userConfigPath)) {
+    fs.writeFileSync(userConfigPath, '# Extra config to override default milvus.yaml\n');
+  }
+  return { embedEtcdPath, userConfigPath };
+}
+
+async function isDockerDaemonReady(timeout = 8000) {
+  try {
+    await runDocker(['info', '--format', '{{.ServerVersion}}'], timeout);
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
+function dockerDesktopCandidates() {
+  if (process.platform !== 'win32') return [];
+  return [
+    process.env.ProgramFiles && path.join(process.env.ProgramFiles, 'Docker', 'Docker', 'Docker Desktop.exe'),
+    process.env['ProgramFiles(x86)'] && path.join(process.env['ProgramFiles(x86)'], 'Docker', 'Docker', 'Docker Desktop.exe'),
+    process.env.LOCALAPPDATA && path.join(process.env.LOCALAPPDATA, 'Docker', 'Docker Desktop.exe')
+  ].filter(Boolean);
+}
+
+function tryLaunchDockerDesktop() {
+  for (const candidate of dockerDesktopCandidates()) {
+    if (!fs.existsSync(candidate)) continue;
+    const child = execFile(candidate, [], { windowsHide: true, detached: true }, () => {});
+    child.unref();
+    return candidate;
+  }
+  return '';
+}
+
+async function ensureDockerDaemon() {
+  if (await isDockerDaemonReady()) return { ready: true };
+  const launched = tryLaunchDockerDesktop();
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < DOCKER_DAEMON_WAIT_MS) {
+    if (await isDockerDaemonReady(10000)) return { ready: true, launched };
+    await new Promise((resolve) => setTimeout(resolve, 3000));
+  }
+  if (launched) {
+    throw new Error(`Docker Desktop was launched but Docker did not become ready in ${Math.round(DOCKER_DAEMON_WAIT_MS / 1000)}s.`);
+  }
+  throw new Error('Docker is required for managed Milvus, but Docker is not running or is not installed.');
+}
+
+async function inspectManagedMilvusContainer() {
+  try {
+    const inspect = await runDocker(['inspect', MANAGED_MILVUS_CONTAINER], 8000);
+    const info = JSON.parse(inspect.stdout || '[]')?.[0];
+    const env = Array.isArray(info?.Config?.Env) ? info.Config.Env : [];
+    const mounts = Array.isArray(info?.Mounts) ? info.Mounts : [];
+    return {
+      exists: Boolean(info),
+      running: Boolean(info?.State?.Running),
+      embeddedEtcd: env.includes('ETCD_USE_EMBED=true') &&
+        mounts.some((mount) => mount?.Destination === '/milvus/configs/embedEtcd.yaml')
+    };
+  } catch (_) {
+    return { exists: false, running: false, embeddedEtcd: false };
+  }
+}
+
 async function ensureManagedMilvus(settings) {
   if (!settings.milvusEnabled || !settings.milvusManaged) return;
   if (await isMilvusReady(settings)) return;
@@ -580,35 +659,60 @@ async function ensureManagedMilvus(settings) {
 }
 
 async function startManagedMilvus(settings) {
+  await ensureDockerDaemon();
   const hostPort = milvusHostPort(settings, 19530);
   const healthPort = hostPort === 9091 ? 9092 : 9091;
   const volumePath = path.join(appDataDir(), 'managed-milvus');
   fs.mkdirSync(volumePath, { recursive: true });
+  const { embedEtcdPath, userConfigPath } = ensureManagedMilvusConfigFiles(volumePath);
 
-  let exists = false;
-  let running = false;
-  try {
-    const inspect = await runDocker(['inspect', '-f', '{{.State.Running}}', MANAGED_MILVUS_CONTAINER], 8000);
-    exists = true;
-    running = String(inspect.stdout || '').trim().toLowerCase() === 'true';
-  } catch (_) {
-    exists = false;
+  let container = await inspectManagedMilvusContainer();
+  if (container.exists && !container.embeddedEtcd) {
+    if (container.running) await runDocker(['stop', MANAGED_MILVUS_CONTAINER], 120000);
+    await runDocker(['rm', MANAGED_MILVUS_CONTAINER], 120000);
+    container = { exists: false, running: false, embeddedEtcd: true };
   }
 
-  if (exists && !running) {
+  if (container.exists && !container.running) {
     await runDocker(['start', MANAGED_MILVUS_CONTAINER], 120000);
-  } else if (!exists) {
+  } else if (!container.exists) {
     await runDocker([
       'run',
       '-d',
       '--name',
       MANAGED_MILVUS_CONTAINER,
+      '--security-opt',
+      'seccomp:unconfined',
+      '-e',
+      'ETCD_USE_EMBED=true',
+      '-e',
+      'ETCD_DATA_DIR=/var/lib/milvus/etcd',
+      '-e',
+      'ETCD_CONFIG_PATH=/milvus/configs/embedEtcd.yaml',
+      '-e',
+      'COMMON_STORAGETYPE=local',
+      '-e',
+      'DEPLOY_MODE=STANDALONE',
       '-p',
       `${hostPort}:19530`,
       '-p',
       `${healthPort}:9091`,
       '-v',
       `${volumePath}:/var/lib/milvus`,
+      '-v',
+      `${embedEtcdPath}:/milvus/configs/embedEtcd.yaml`,
+      '-v',
+      `${userConfigPath}:/milvus/configs/user.yaml`,
+      '--health-cmd',
+      'curl -f http://localhost:9091/healthz',
+      '--health-interval',
+      '30s',
+      '--health-start-period',
+      '90s',
+      '--health-timeout',
+      '20s',
+      '--health-retries',
+      '3',
       settings.milvusImage || DEFAULT_MILVUS_IMAGE,
       'milvus',
       'run',
@@ -622,6 +726,54 @@ async function startManagedMilvus(settings) {
     await new Promise((resolve) => setTimeout(resolve, 1500));
   }
   throw new Error('Managed Milvus container started but did not become ready.');
+}
+
+async function stopManagedMilvusContainer() {
+  if (!(await isDockerDaemonReady())) {
+    return { enabled: true, stopped: false, dockerReady: false };
+  }
+
+  let exists = false;
+  let running = false;
+  try {
+    const inspect = await runDocker(['inspect', '-f', '{{.State.Running}}', MANAGED_MILVUS_CONTAINER], 8000);
+    exists = true;
+    running = String(inspect.stdout || '').trim().toLowerCase() === 'true';
+  } catch (_) {
+    exists = false;
+  }
+
+  if (!exists) return { enabled: true, stopped: false, exists: false };
+  if (!running) return { enabled: true, stopped: false, exists: true, running: false };
+  await runDocker(['stop', MANAGED_MILVUS_CONTAINER], 120000);
+  return { enabled: true, stopped: true, exists: true, running: false };
+}
+
+function managedMilvusSettings(input = {}) {
+  return normalizeSettings({
+    ...(input || {}),
+    provider: 'sqlite-milvus',
+    milvusEnabled: true,
+    milvusManaged: true,
+    milvusUrl: input.milvusUrl || process.env.YACHIYO_MEMORY_MILVUS_URL || DEFAULT_MILVUS_URL,
+    milvusImage: input.milvusImage || process.env.YACHIYO_MEMORY_MILVUS_IMAGE || DEFAULT_MILVUS_IMAGE,
+    milvusCollection: input.milvusCollection || DEFAULT_COLLECTION,
+    embeddingDimension: input.embeddingDimension || DEFAULT_DIMENSION
+  });
+}
+
+async function handleManagedMilvusStart(input = {}) {
+  const settings = managedMilvusSettings(input);
+  await ensureManagedMilvus(settings);
+  const collection = await ensureMilvusCollection(settings);
+  managedMilvusStartupError = '';
+  return {
+    success: true,
+    managed: true,
+    url: settings.milvusUrl,
+    image: settings.milvusImage,
+    collection
+  };
 }
 
 async function ensureMilvusCollection(settings) {
@@ -892,7 +1044,26 @@ async function handleDelete(input) {
   }
 }
 
+async function handleShutdown(input) {
+  let milvus = { enabled: true, stopped: false };
+  try {
+    const shouldStopMilvus = asBoolean(input.stopMilvus ?? true);
+    if (shouldStopMilvus) milvus = await stopManagedMilvusContainer();
+  } catch (error) {
+    milvus = { enabled: true, stopped: false, error: error.message };
+  }
+
+  setTimeout(() => {
+    server.close(() => process.exit(0));
+    setTimeout(() => process.exit(0), 1000).unref();
+  }, 50).unref();
+
+  return { success: true, shuttingDown: true, milvus };
+}
+
 async function dispatch(route, input) {
+  if (route.endsWith('/managed-milvus/start')) return handleManagedMilvusStart(input);
+  if (route.endsWith('/shutdown')) return handleShutdown(input);
   if (route.endsWith('/init')) return handleInit(input);
   if (route.endsWith('/reindex')) return handleReindex(input);
   if (route.endsWith('/search')) return handleSearch(input);
@@ -911,7 +1082,15 @@ const server = http.createServer(async (req, res) => {
     }
     const url = new URL(req.url || '/', `http://${req.headers.host || '127.0.0.1'}`);
     if (req.method === 'GET' && url.pathname === '/healthz') {
-      jsonResponse(res, 200, { success: true, service: 'yachiyo-memory-data', repoRoot });
+      jsonResponse(res, 200, {
+        success: true,
+        service: 'yachiyo-memory-data',
+        repoRoot,
+        managedMilvus: {
+          autostart: asBoolean(process.env.YACHIYO_MEMORY_AUTOSTART_MANAGED_MILVUS),
+          error: managedMilvusStartupError
+        }
+      });
       return;
     }
     if (req.method !== 'POST' || !url.pathname.startsWith('/api/memory/')) {
@@ -931,4 +1110,11 @@ const server = http.createServer(async (req, res) => {
 
 server.listen(port, '127.0.0.1', () => {
   process.stdout.write(`Yachiyo memory data service listening on http://127.0.0.1:${port}\n`);
+  if (asBoolean(process.env.YACHIYO_MEMORY_AUTOSTART_MANAGED_MILVUS)) {
+    handleManagedMilvusStart({})
+      .catch((error) => {
+        managedMilvusStartupError = error.message || 'Managed Milvus failed to start.';
+        process.stderr.write(`Managed Milvus startup failed: ${managedMilvusStartupError}\n`);
+      });
+  }
 });

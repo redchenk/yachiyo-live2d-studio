@@ -388,7 +388,7 @@ npm run audit:yachiyo-vts-control -- --ensure-inputs
 
 当前主推 VTS 输出，本地 Cubism 后续可继续追 VTS 效果。
 
-## Obsidian 长期记忆系统
+## 长期记忆系统
 
 前端：
 
@@ -416,19 +416,21 @@ API：
   ↓
 C# LocalStudioServer
   ↓
-读写用户配置的 Obsidian vault 目录
+托管 Node memory data service
   ↓
-Obsidian 显示普通 Markdown 笔记
+SQLite 记忆库 + 托管 Milvus 向量检索
 ```
 
-Obsidian 本身不需要提供 API。本项目直接读写 vault 里的 `.md` 和 `.json` 文件。
+默认配置为 `sqlite-milvus`：点开 `Start-Live2D-Studio.exe` 时，启动器会后台启动 memory data service，并请求项目托管的 `yachiyo-milvus-standalone` Docker 容器；如果 Docker Desktop 已安装但尚未运行，sidecar 会先尝试拉起 Docker Desktop。关闭启动器时会请求 sidecar 停止 Milvus 容器。首次启动需要本机 Docker 可用，并可能拉取 `milvusdb/milvus:latest` 镜像。
+
+Obsidian 仍作为可选 provider 保留。选择 Obsidian 时，Obsidian 本身不需要提供 API，本项目直接读写 vault 里的 `.md` 和 `.json` 文件。
 
 ### Vault 初始化
 
 在 Settings > Memory 中配置：
 
-- Enable Obsidian memory
-- Obsidian vault path
+- Memory provider
+- SQLite/Milvus 或 Obsidian 相关路径
 - Retrieval mode
 - Write mode
 - Max notes per turn
@@ -530,7 +532,7 @@ memory-seeds/obsidian/          八千代 Obsidian 人格 seed
 models/tsukimi-yachiyo/         Live2D 模型、表情、VTS 配置
 src/frontend/                   共享前端业务代码
 tools/live2d-launcher/          WinForms + WebView2 启动器
-tools/memory/                   人格 seed 生成脚本
+tools/memory/                   memory data service 和人格 seed 生成脚本
 tools/vtube-studio/             VTS 参数安装工具
 Start-Live2D-Studio.exe         一键启动入口
 ```
@@ -594,7 +596,7 @@ npm run install:yachiyo-vts-parameters
 ## 当前限制
 
 - 最终直播画面推荐使用 VTube Studio，本地 Cubism 预览仍在追赶 VTS 的自然度。
-- Obsidian memory 默认关闭，需要用户手动配置 vault path。
+- 托管 Milvus 依赖本机 Docker；首次运行可能需要启动 Docker Desktop 并下载 Milvus 镜像。
 - 详细人格 seed 来自本地语料提炼文件，后续如果语料更新，需要重新生成 seed 并重新初始化或手动同步 vault。
 - LLM 输出质量仍依赖模型本身，需要使用支持稳定 JSON/流式输出的模型。
 

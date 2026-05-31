@@ -302,6 +302,7 @@ internal sealed class LocalStudioServer : IDisposable
             Name = "Yachiyo Live2D static server"
         };
         worker.Start();
+        DesktopApiProxy.WarmupManagedMemoryStack();
     }
 
     public void Dispose()
@@ -768,16 +769,36 @@ internal static class DesktopApiProxy
         {
             var process = memoryDataServiceProcess;
             memoryDataServiceProcess = null;
+            if (process != null)
+            {
+                TryRequestMemoryDataServiceShutdown();
+            }
             if (process == null) return;
             try
             {
-                if (!process.HasExited) process.Kill();
+                if (!process.HasExited && !process.WaitForExit(20000)) process.Kill();
             }
             catch
             {
                 // Best-effort cleanup for the optional memory sidecar.
             }
         }
+    }
+
+    public static void WarmupManagedMemoryStack()
+    {
+        ThreadPool.QueueUserWorkItem(_ =>
+        {
+            try
+            {
+                EnsureMemoryDataServiceStarted();
+                TryStartManagedMilvus();
+            }
+            catch
+            {
+                // Memory is optional; startup failures are surfaced by Memory settings/actions.
+            }
+        });
     }
 
     public static void ShutdownAsrService()
@@ -1150,8 +1171,61 @@ internal static class DesktopApiProxy
                 CreateNoWindow = true
             };
             start.EnvironmentVariables["YACHIYO_REPO_ROOT"] = repoRoot;
+            start.EnvironmentVariables["YACHIYO_MEMORY_AUTOSTART_MANAGED_MILVUS"] = "1";
+            start.EnvironmentVariables["YACHIYO_MEMORY_MILVUS_URL"] = "http://127.0.0.1:19530";
+            start.EnvironmentVariables["YACHIYO_MEMORY_MILVUS_IMAGE"] = "milvusdb/milvus:latest";
             memoryDataServiceProcess = Process.Start(start);
             WaitForMemoryDataService();
+        }
+    }
+
+    private static string ManagedMemorySettingsJson()
+    {
+        return Json.Serialize(new Dictionary<string, object>
+        {
+            { "provider", "sqlite-milvus" },
+            { "enabled", true },
+            { "milvusEnabled", true },
+            { "milvusManaged", true },
+            { "milvusUrl", "http://127.0.0.1:19530" },
+            { "milvusCollection", "yachiyo_memory" },
+            { "milvusImage", "milvusdb/milvus:latest" },
+            { "embeddingDimension", 384 },
+            { "retrievalMode", "hybrid" },
+            { "writeMode", "auto-approved" },
+            { "maxNotesPerTurn", 4 }
+        });
+    }
+
+    private static void TryStartManagedMilvus()
+    {
+        try
+        {
+            PostBytes(
+                "http://127.0.0.1:" + MemoryDataServicePort + "/api/memory/managed-milvus/start",
+                ManagedMemorySettingsJson(),
+                new Dictionary<string, string>(),
+                10 * 60 * 1000);
+        }
+        catch
+        {
+            // The memory data service will report startup errors through health/actions.
+        }
+    }
+
+    private static void TryRequestMemoryDataServiceShutdown()
+    {
+        try
+        {
+            PostBytes(
+                "http://127.0.0.1:" + MemoryDataServicePort + "/api/memory/shutdown",
+                Json.Serialize(new Dictionary<string, object> { { "stopMilvus", true } }),
+                new Dictionary<string, string>(),
+                30000);
+        }
+        catch
+        {
+            // The process kill below is the fallback.
         }
     }
 
@@ -2997,15 +3071,15 @@ internal static class DesktopApiProxy
         write(Encoding.UTF8.GetBytes(builder.ToString()));
     }
 
-    private static ProviderBytes PostBytes(string url, string body, Dictionary<string, string> headers)
+    private static ProviderBytes PostBytes(string url, string body, Dictionary<string, string> headers, int timeoutMs = 120000)
     {
         var bytes = Encoding.UTF8.GetBytes(body ?? string.Empty);
         var request = (HttpWebRequest)WebRequest.Create(url);
         request.Method = "POST";
         request.ContentType = "application/json; charset=utf-8";
         request.Accept = "*/*";
-        request.Timeout = 120000;
-        request.ReadWriteTimeout = 120000;
+        request.Timeout = timeoutMs;
+        request.ReadWriteTimeout = timeoutMs;
         AddHeaders(request, headers);
         using (var requestStream = request.GetRequestStream())
         {

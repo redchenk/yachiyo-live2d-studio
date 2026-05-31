@@ -8,6 +8,7 @@ export const ROOM_MEMORY_SETTINGS_KEY = 'roomMemorySettings';
 export const ROOM_ASR_SETTINGS_KEY = 'roomASRSettings';
 const ROOM_MODEL_STAGE_DEFAULTS_MIGRATION_KEY = 'roomModelStageDefaultsMigratedV2';
 const ROOM_MODEL_RENDER_DEFAULTS_MIGRATION_KEY = 'roomModelRenderDefaultsMigratedV2';
+const ROOM_MEMORY_MANAGED_MILVUS_DEFAULTS_MIGRATION_KEY = 'roomMemoryManagedMilvusDefaultsMigratedV1';
 const LEGACY_ROOM_MODEL_STAGE_IDLE_SCALE = 0.9;
 const LEGACY_ROOM_MODEL_STAGE_MOTION_SCALE = 0.75;
 const LEGACY_ROOM_MODEL_RENDER_DPRS = [3, 4];
@@ -72,12 +73,12 @@ export const DEFAULT_ROOM_VTS_SETTINGS = {
 };
 
 export const DEFAULT_ROOM_MEMORY_SETTINGS = {
-  enabled: false,
-  provider: 'obsidian',
+  enabled: true,
+  provider: 'sqlite-milvus',
   vaultPath: '',
   databasePath: '',
-  milvusEnabled: false,
-  milvusManaged: false,
+  milvusEnabled: true,
+  milvusManaged: true,
   milvusUrl: 'http://127.0.0.1:19530',
   milvusToken: '',
   milvusCollection: 'yachiyo_memory',
@@ -86,9 +87,9 @@ export const DEFAULT_ROOM_MEMORY_SETTINGS = {
   embeddingApiKey: '',
   embeddingModel: 'text-embedding-3-small',
   embeddingDimension: 384,
-  writeMode: 'inbox-only',
-  retrievalMode: 'tags',
-  maxNotesPerTurn: 3,
+  writeMode: 'auto-approved',
+  retrievalMode: 'hybrid',
+  maxNotesPerTurn: 4,
   allowViewerMemory: true,
   allowSessionMemory: true
 };
@@ -274,6 +275,38 @@ export function normalizeRoomMemorySettings(settings = {}) {
   };
 }
 
+function upgradeLegacyRoomMemoryDefaults(settings, rawSettings = {}) {
+  if (typeof localStorage === 'undefined') return settings;
+  try {
+    if (localStorage.getItem(ROOM_MEMORY_MANAGED_MILVUS_DEFAULTS_MIGRATION_KEY) === '1') return settings;
+    const rawProvider = asText(rawSettings.provider || 'obsidian') || 'obsidian';
+    const looksLikeOldDefault = !asBoolean(rawSettings.enabled) &&
+      rawProvider === 'obsidian' &&
+      !rawSettings.vaultPath &&
+      !rawSettings.databasePath &&
+      !asBoolean(rawSettings.milvusEnabled) &&
+      !asBoolean(rawSettings.milvusManaged);
+
+    localStorage.setItem(ROOM_MEMORY_MANAGED_MILVUS_DEFAULTS_MIGRATION_KEY, '1');
+    if (!looksLikeOldDefault) return settings;
+
+    const upgraded = normalizeRoomMemorySettings({
+      ...settings,
+      enabled: true,
+      provider: 'sqlite-milvus',
+      milvusEnabled: true,
+      milvusManaged: true,
+      retrievalMode: 'hybrid',
+      writeMode: 'auto-approved',
+      maxNotesPerTurn: 4
+    });
+    writeJson(ROOM_MEMORY_SETTINGS_KEY, upgraded);
+    return upgraded;
+  } catch (_) {
+    return settings;
+  }
+}
+
 export function readRoomLLMSettings() {
   return normalizeRoomLLMSettings(readJson(ROOM_LLM_SETTINGS_KEY, clone(DEFAULT_ROOM_LLM_SETTINGS)));
 }
@@ -297,7 +330,11 @@ export function readRoomVTubeStudioSettings() {
 }
 
 export function readRoomMemorySettings() {
-  return normalizeRoomMemorySettings(readJson(ROOM_MEMORY_SETTINGS_KEY, clone(DEFAULT_ROOM_MEMORY_SETTINGS)));
+  const raw = readJson(ROOM_MEMORY_SETTINGS_KEY, clone(DEFAULT_ROOM_MEMORY_SETTINGS));
+  return upgradeLegacyRoomMemoryDefaults(
+    normalizeRoomMemorySettings(raw),
+    raw
+  );
 }
 
 export function writeRoomLLMSettings(settings) {
