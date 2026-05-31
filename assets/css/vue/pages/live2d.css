@@ -132,14 +132,29 @@ body.vue-live2d-route {
 .live2d-caption {
     min-height: 6.3rem;
     padding: 1rem 1.3rem;
+    pointer-events: auto;
 }
 
-.live2d-caption span {
-    display: block;
+.live2d-feed {
+    pointer-events: auto;
+}
+
+.live2d-caption-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
     margin-bottom: 0.45rem;
+}
+
+.live2d-caption-head > span {
     color: rgba(211, 219, 255, 0.78);
     font-size: 0.84rem;
     font-weight: 900;
+}
+
+.live2d-caption-head .live2d-mini-btn {
+    flex: none;
 }
 
 .live2d-caption p {
@@ -955,10 +970,6 @@ body.vue-live2d-route {
 
     .live2d-caption p {
         font-size: 1rem;
-    }
-
-    .live2d-feed {
-        display: none;
     }
 
     .live2d-control-panel {

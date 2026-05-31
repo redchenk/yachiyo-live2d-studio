@@ -28,6 +28,7 @@ const liveTopic = ref('late-night AI VTuber test stream');
 const audienceInput = ref('');
 const audienceQueue = ref([]);
 const showLog = ref([]);
+const messagesExpanded = ref(false);
 const activeMotionTab = ref('expression');
 const muted = ref(false);
 const modelHidden = ref(false);
@@ -971,11 +972,22 @@ onUnmounted(() => {
       <div v-if="live2d.error.value" class="live2d-error" role="alert">{{ live2d.error.value }}</div>
 
       <section class="live2d-broadcast-hud" aria-label="Broadcast captions">
-        <div v-if="latestCaption" class="live2d-caption">
-          <span>当前发言</span>
-          <p>{{ latestCaption }}</p>
+        <div class="live2d-caption">
+          <header class="live2d-caption-head">
+            <span>当前发言</span>
+            <button
+              class="live2d-mini-btn"
+              type="button"
+              :aria-expanded="messagesExpanded ? 'true' : 'false'"
+              @click="messagesExpanded = !messagesExpanded"
+            >
+              <TsIcon :name="messagesExpanded ? 'x' : 'message'" :size="15" />
+              <span>{{ messagesExpanded ? '收起' : '全部消息' }}</span>
+            </button>
+          </header>
+          <p>{{ latestCaption || '等待当前消息' }}</p>
         </div>
-        <div class="live2d-feed" aria-live="polite">
+        <div v-if="messagesExpanded" class="live2d-feed" aria-live="polite">
           <header>
             <strong>全部消息</strong>
             <button class="live2d-mini-btn" type="button" @click="resetLLMHistory">
