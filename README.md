@@ -405,7 +405,11 @@ API：
 - `POST /api/memory/search`
 - `POST /api/memory/write`
 - `POST /api/memory/reindex`
+- `POST /api/memory/consolidate`
+- `POST /api/memory/record-turn`
 - `POST /api/memory/list`
+- `POST /api/memory/profile`
+- `POST /api/memory/traces`
 - `POST /api/memory/disable`
 - `POST /api/memory/delete`
 
@@ -424,6 +428,14 @@ SQLite 记忆库 + 托管 Milvus 向量检索
 默认配置为 `sqlite-milvus`：点开 `Start-Live2D-Studio.exe` 时，启动器会后台启动 memory data service，并请求项目托管的 `yachiyo-milvus-standalone` Docker 容器；如果 Docker Desktop 已安装但尚未运行，sidecar 会先尝试拉起 Docker Desktop。关闭启动器时会请求 sidecar 停止 Milvus 容器。首次启动需要本机 Docker 可用，并可能拉取 `milvusdb/milvus:latest` 镜像。
 
 Obsidian 仍作为可选 provider 保留。选择 Obsidian 时，Obsidian 本身不需要提供 API，本项目直接读写 vault 里的 `.md` 和 `.json` 文件。
+
+SQLite/Milvus provider 采用 EverMemOS 风格生命周期：
+
+- Raw Log：`/api/memory/record-turn` 保存原始 user/assistant turn，作为可回放证据。
+- MemCell：`/api/memory/write` 把低风险 memory_writes 或 session summary 固化为 episode、facts、foresight。
+- MemScene：`/api/memory/consolidate` 将相关 MemCell 聚合成主题场景，并维护 scene summary、keywords、centroid。
+- Profile：从 profile/viewer/style/policy/session 等 MemCell 慢更新候选画像，保留 evidence。
+- Recollection：`/api/memory/search` 先检索 scene，再 rerank cell，返回 sufficiency、missing information 和 retrieval trace。
 
 ### Vault 初始化
 
@@ -460,10 +472,10 @@ Obsidian 仍作为可选 provider 保留。选择 Obsidian 时，Obsidian 本身
 
 1. 前端根据输入推断 tags 和 keywords。
 2. 调用 `/api/memory/search`。
-3. C# 读取 `.yachiyo-index/memory-index.json` 或直接扫描 Markdown。
-4. 根据 tags、type、keywords、importance、confidence、updated 打分。
-5. 返回少量相关笔记摘要。
-6. 前端格式化为 `Relevant long-term memory` 注入 prompt。
+3. SQLite/Milvus provider 先取相关 MemScene，再在 scene 内 rerank MemCell。
+4. 同时混合关键词、SQLite 向量、Milvus 向量、importance、confidence 和时效状态。
+5. 生成 sufficiency check；证据不足时返回 missing information。
+6. 前端格式化为 `Reconstructed long-term memory`，包含 scene、facts、foresight 后注入 prompt。
 
 默认不会读取整个 vault。
 

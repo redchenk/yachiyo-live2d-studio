@@ -1,11 +1,12 @@
 import { readRoomMemorySettings } from './roomSettings';
 import { readJson, writeJson } from './roomStorage';
 
-const MEMORY_PROMPT_MAX_CHARS = 1600;
+const MEMORY_PROMPT_MAX_CHARS = 2200;
 const NOTE_SUMMARY_MAX_CHARS = 360;
 const MEMORY_WRITE_MAX_CHARS = 2000;
 const SESSION_MEMORY_BUFFER_KEY = 'live2dMemorySessionBuffer';
 const SESSION_MEMORY_LAST_SUMMARY_KEY = 'live2dMemoryLastSummaryAt';
+const SESSION_MEMORY_ID_KEY = 'live2dMemorySessionId';
 const SESSION_MEMORY_EVERY_TURNS = 10;
 const SESSION_MEMORY_MAX_BUFFER = 24;
 
@@ -96,6 +97,10 @@ function memoryApiSettings(settings) {
   };
 }
 
+function memoryDataProviderReady(settings) {
+  return settings.provider === 'sqlite-milvus' || settings.provider === 'sqlite';
+}
+
 export async function searchLive2DMemory(inputText, options = {}) {
   const settings = readRoomMemorySettings();
   if (!memorySettingsReady(settings)) return [];
@@ -126,7 +131,9 @@ export async function searchLive2DMemory(inputText, options = {}) {
     });
     const result = await response.json().catch(() => ({}));
     if (!response.ok || !result.success || !Array.isArray(result.notes)) return [];
-    return result.notes.slice(0, settings.maxNotesPerTurn);
+    const notes = result.notes.slice(0, settings.maxNotesPerTurn);
+    notes.recollection = result.recollection || null;
+    return notes;
   } catch (_) {
     return [];
   }
@@ -136,15 +143,32 @@ export function formatMemoryPrompt(notes = []) {
   const usableNotes = Array.isArray(notes) ? notes.filter(Boolean).slice(0, 8) : [];
   if (!usableNotes.length) return '';
 
-  const lines = ['Relevant long-term memory:'];
+  const recollection = notes.recollection || null;
+  const lines = ['Reconstructed long-term memory:'];
+  if (recollection?.queryType) {
+    lines.push(`Query type: ${recollection.queryType}. Sufficiency: ${recollection.isSufficient ? 'enough' : 'partial'}.`);
+  }
+  if (Array.isArray(recollection?.scenes) && recollection.scenes.length) {
+    lines.push(`Scenes: ${recollection.scenes.slice(0, 3).map((scene) => asText(scene.title, 80)).filter(Boolean).join(' / ')}`);
+  }
   usableNotes.forEach((note, index) => {
     const type = asText(note.type || 'memory', 32);
     const title = asText(note.title || note.path || `Memory ${index + 1}`, 80);
     const summary = asText(note.summary || note.content || '', NOTE_SUMMARY_MAX_CHARS);
     if (!summary) return;
-    lines.push(`${index + 1}. ${type}: ${title}`);
+    const scene = asText(note.sceneTitle || '', 80);
+    lines.push(`${index + 1}. ${type}: ${title}${scene ? ` [${scene}]` : ''}`);
     lines.push(`   ${summary}`);
+    if (Array.isArray(note.facts) && note.facts.length) {
+      lines.push(`   Facts: ${note.facts.slice(0, 3).map((fact) => asText(fact, 120)).join(' | ')}`);
+    }
+    if (Array.isArray(note.foresight) && note.foresight.length) {
+      lines.push(`   Foresight: ${note.foresight.slice(0, 2).map((item) => asText(item.content || item.text || item, 120)).join(' | ')}`);
+    }
   });
+  if (Array.isArray(recollection?.missingInformation) && recollection.missingInformation.length) {
+    lines.push(`Memory gap: ${recollection.missingInformation.slice(0, 3).join(', ')}`);
+  }
 
   return lines.join('\n').slice(0, MEMORY_PROMPT_MAX_CHARS);
 }
@@ -183,6 +207,12 @@ function sanitizeMemoryWrite(memory) {
     type,
     title,
     text,
+    episode: asText(memory.episode || memory.summary || text, MEMORY_WRITE_MAX_CHARS),
+    facts: Array.isArray(memory.facts) ? memory.facts.map((fact) => asText(fact, 240)).filter(Boolean).slice(0, 8) : [],
+    foresight: Array.isArray(memory.foresight) ? memory.foresight.slice(0, 5) : [],
+    sourceTurnIds: Array.isArray(memory.sourceTurnIds || memory.turn_ids || memory.turnIds)
+      ? (memory.sourceTurnIds || memory.turn_ids || memory.turnIds).map((id) => asText(id, 120)).filter(Boolean).slice(0, 20)
+      : [],
     importance: asNumber(memory.importance, 0.45),
     confidence: asNumber(memory.confidence, 0.65),
     tags: normalizeTags(memory.tags)
@@ -241,6 +271,14 @@ function readSessionMemoryBuffer() {
   return Array.isArray(buffer) ? buffer.filter(Boolean).slice(-SESSION_MEMORY_MAX_BUFFER) : [];
 }
 
+function readSessionMemoryId() {
+  const existing = asText(readJson(SESSION_MEMORY_ID_KEY, ''), 120);
+  if (existing) return existing;
+  const created = `session-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+  writeJson(SESSION_MEMORY_ID_KEY, created);
+  return created;
+}
+
 function writeSessionMemoryBuffer(buffer) {
   writeJson(SESSION_MEMORY_BUFFER_KEY, (Array.isArray(buffer) ? buffer : []).slice(-SESSION_MEMORY_MAX_BUFFER));
 }
@@ -264,9 +302,9 @@ function asCompactTranscript(turns) {
 
 function sessionSummaryPrompt() {
   return [
-    'Summarize a short VTuber live-stream session segment into one safe long-term memory candidate.',
+    'Summarize a short VTuber live-stream session segment into one safe long-term MemCell candidate.',
     'Output exactly one JSON object and nothing else.',
-    'JSON schema: {"title":"short title","text":"concise Chinese session summary","tags":["session","live-stream"],"importance":0.45,"confidence":0.75}',
+    'JSON schema: {"title":"short title","episode":"third-person concise Chinese event summary","facts":["atomic fact"],"foresight":[{"content":"future relevance","valid_until":"","confidence":0.55}],"tags":["session","live-stream"],"importance":0.45,"confidence":0.75}',
     'Keep only durable, low-risk information: stream topic, useful viewer preferences, confirmed running jokes, important decisions, and system events.',
     'Do not include raw chat dumps, API keys, secrets, private personal data, guesses about viewers, or negative personality labels.',
     'Do not add character canon or detailed persona content.'
@@ -296,6 +334,9 @@ function fallbackSessionMemory(turns) {
     type: 'session',
     title: `Live session ${new Date().toISOString().slice(0, 10)}`,
     text: lines,
+    episode: lines,
+    facts: topicHints.slice(0, 5).map((keyword) => `本段直播出现主题线索：${keyword}`),
+    foresight: [],
     importance: 0.38,
     confidence: 0.55,
     tags: ['session', 'live-stream']
@@ -315,13 +356,16 @@ function parseSessionSummary(rawText, turns) {
     try {
       const data = JSON.parse(value.slice(start, end + 1));
       const title = asText(data.title, 90);
-      const text = asText(data.text || data.summary, MEMORY_WRITE_MAX_CHARS);
+      const text = asText(data.text || data.summary || data.episode, MEMORY_WRITE_MAX_CHARS);
       if (title && text) {
         return {
           scope: 'session',
           type: 'session',
           title,
           text,
+          episode: asText(data.episode || text, MEMORY_WRITE_MAX_CHARS),
+          facts: Array.isArray(data.facts) ? data.facts.map((fact) => asText(fact, 240)).filter(Boolean).slice(0, 8) : [],
+          foresight: Array.isArray(data.foresight) ? data.foresight.slice(0, 5) : [],
           importance: asNumber(data.importance, 0.45),
           confidence: asNumber(data.confidence, 0.72),
           tags: normalizeTags(data.tags).length ? normalizeTags(data.tags) : ['session', 'live-stream']
@@ -367,11 +411,30 @@ async function maybeWriteSessionSummary(buffer) {
     const turns = buffer.slice(Math.max(0, buffer.length - SESSION_MEMORY_EVERY_TURNS));
     const memory = await summarizeSessionMemory(turns);
     if (memory) {
-      await writePendingLive2DMemories([memory]);
+      await writePendingLive2DMemories([{
+        ...memory,
+        sourceTurnIds: turns.map((turn) => turn.turnId).filter(Boolean)
+      }]);
       writeJson(SESSION_MEMORY_LAST_SUMMARY_KEY, buffer.length);
     }
   } finally {
     sessionSummaryInFlight = false;
+  }
+}
+
+async function recordRawLive2DMemoryTurn(settings, turn) {
+  if (!settings.enabled || !memoryDataProviderReady(settings)) return;
+  try {
+    await fetch('/api/memory/record-turn', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        ...memoryApiSettings(settings),
+        ...turn
+      })
+    });
+  } catch (_) {
+    // Raw log writes must never interrupt the live loop.
   }
 }
 
@@ -381,9 +444,23 @@ export function recordLive2DSessionMemoryTurn(turn = {}) {
   const input = asText(turn.input || turn.message || '', 800);
   const reply = asText(turn.reply || '', 800);
   if (!input && !reply) return;
+  const sessionId = readSessionMemoryId();
+  const turnId = asText(turn.turnId, 120) || `turn-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+  const at = new Date().toISOString();
+  recordRawLive2DMemoryTurn(settings, {
+    sessionId,
+    turnId,
+    at,
+    source: asText(turn.source || 'live2d', 40),
+    input,
+    reply,
+    emotion: asText(turn.emotion || 'neutral', 32)
+  });
   const buffer = readSessionMemoryBuffer();
   buffer.push({
-    at: new Date().toISOString(),
+    at,
+    sessionId,
+    turnId,
     source: asText(turn.source || 'live2d', 40),
     input,
     reply,
@@ -440,6 +517,20 @@ export function initializeLive2DMemoryVault(settingsOverrides = {}) {
 
 export function rebuildLive2DMemoryIndex(settingsOverrides = {}) {
   return postMemoryTool('/api/memory/reindex', settingsOverrides);
+}
+
+export function consolidateLive2DMemory(settingsOverrides = {}) {
+  return postMemoryTool('/api/memory/consolidate', settingsOverrides);
+}
+
+export function readLive2DMemoryProfile(settingsOverrides = {}) {
+  return postMemoryTool('/api/memory/profile', settingsOverrides);
+}
+
+export function listLive2DMemoryTraces(options = {}, settingsOverrides = {}) {
+  return postMemoryAction('/api/memory/traces', {
+    maxItems: Number(options.maxItems) || 30
+  }, settingsOverrides);
 }
 
 export function listLive2DMemoryNotes(options = {}, settingsOverrides = {}) {

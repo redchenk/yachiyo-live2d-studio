@@ -31,9 +31,11 @@ import {
   writeRoomVTubeStudioSettings
 } from '@frontend/services/room/roomSettings';
 import {
+  consolidateLive2DMemory,
   deleteLive2DMemoryNote,
   initializeLive2DMemoryVault,
   listLive2DMemoryNotes,
+  readLive2DMemoryProfile,
   searchLive2DMemory,
   setLive2DMemoryNoteDisabled,
   rebuildLive2DMemoryIndex
@@ -105,6 +107,11 @@ const memoryBusy = ref('');
 const memoryManagePath = ref('');
 const memorySearchQuery = ref('');
 const memoryNotes = ref([]);
+const memoryCells = ref([]);
+const memoryScenes = ref([]);
+const memoryProfile = ref([]);
+const memoryConflicts = ref([]);
+const memoryRecollection = ref(null);
 const memoryResultMode = ref('idle');
 const llm = reactive(readRoomLLMSettings());
 const tts = reactive(readRoomTTSSettings());
@@ -124,7 +131,11 @@ const memoryStats = computed(() => {
   return {
     total: notes.length,
     active,
-    disabled
+    disabled,
+    cells: memoryCells.value.length,
+    scenes: memoryScenes.value.length,
+    profile: memoryProfile.value.length,
+    conflicts: memoryConflicts.value.length
   };
 });
 const selectedMemoryNote = computed(() => {
@@ -275,10 +286,18 @@ function selectMemoryNote(note) {
 
 function setMemoryNotes(notes, mode) {
   memoryNotes.value = Array.isArray(notes) ? notes.filter(Boolean) : [];
+  memoryRecollection.value = notes?.recollection || null;
   memoryResultMode.value = mode;
   if (!memoryManagePath.value.trim() && memoryNotes.value.length) {
     memoryManagePath.value = notePath(memoryNotes.value[0]);
   }
+}
+
+function setMemoryLifecycle(result = {}) {
+  memoryCells.value = Array.isArray(result.cells) ? result.cells.filter(Boolean) : [];
+  memoryScenes.value = Array.isArray(result.scenes) ? result.scenes.filter(Boolean) : [];
+  memoryProfile.value = Array.isArray(result.profile) ? result.profile.filter(Boolean) : [];
+  memoryConflicts.value = Array.isArray(result.conflicts) ? result.conflicts.filter(Boolean) : [];
 }
 
 function updateMemoryNote(path, patch = {}) {
@@ -303,10 +322,15 @@ async function runMemoryTool(action, label) {
     Object.assign(memory, savedMemory);
     const result = action === 'init'
       ? await initializeLive2DMemoryVault(savedMemory)
-      : await rebuildLive2DMemoryIndex(savedMemory);
+      : action === 'consolidate'
+        ? await consolidateLive2DMemory(savedMemory)
+        : await rebuildLive2DMemoryIndex(savedMemory);
+    const lifecycle = result.lifecycle || {};
     const detail = action === 'init'
-      ? `${result.created || 0} created, ${result.indexed || 0} indexed`
-      : `${result.indexed || 0} indexed`;
+      ? `${result.created || 0} created, ${result.indexed || 0} indexed, ${lifecycle.scenes || 0} scenes`
+      : action === 'consolidate'
+        ? `${lifecycle.cellsCreated || 0} cells, ${lifecycle.scenes || 0} scenes, ${lifecycle.profile || 0} profile`
+        : `${result.indexed || 0} indexed, ${lifecycle.scenes || 0} scenes`;
     setStatus(`${label}: ${detail}`);
     shouldRefreshNotes = true;
   } catch (error) {
@@ -325,6 +349,7 @@ async function listMemoryNotes(silent = false) {
     Object.assign(memory, savedMemory);
     const result = await listLive2DMemoryNotes({ includeDisabled: true, maxNotes: 500 }, savedMemory);
     const disabledCount = (result.notes || []).filter((note) => note.disabled).length;
+    setMemoryLifecycle(result);
     setMemoryNotes(result.notes || [], 'list');
     if (!silent) setStatus(`Memory notes: ${(result.notes || []).length}, disabled: ${disabledCount}`);
   } catch (error) {
@@ -348,10 +373,30 @@ async function searchMemoryNotes() {
     const notes = await searchLive2DMemory(query, {
       maxNotes: Math.max(1, Number(savedMemory.maxNotesPerTurn) || 3)
     });
+    memoryCells.value = notes.recollection?.cells || [];
+    memoryScenes.value = notes.recollection?.scenes || [];
+    memoryProfile.value = notes.recollection?.profile || [];
+    memoryConflicts.value = [];
     setMemoryNotes(notes, 'search');
     setStatus(`Search results: ${notes.length}`);
   } catch (error) {
     setStatus(error?.message || 'Search failed');
+  } finally {
+    memoryBusy.value = '';
+  }
+}
+
+async function loadMemoryProfile() {
+  if (memoryBusy.value) return;
+  memoryBusy.value = 'profile';
+  try {
+    const savedMemory = writeRoomMemorySettings(memory);
+    Object.assign(memory, savedMemory);
+    const result = await readLive2DMemoryProfile(savedMemory);
+    setMemoryLifecycle(result);
+    setStatus(`Memory profile: ${(result.profile || []).length}, scenes: ${(result.scenes || []).length}`);
+  } catch (error) {
+    setStatus(error?.message || 'Profile load failed');
   } finally {
     memoryBusy.value = '';
   }
@@ -726,8 +771,19 @@ onUnmounted(() => {
             >
               Rebuild Index
             </button>
+            <button
+              class="studio-secondary-btn"
+              type="button"
+              :disabled="Boolean(memoryBusy)"
+              @click="runMemoryTool('consolidate', 'Memory consolidated')"
+            >
+              Consolidate
+            </button>
             <button class="studio-secondary-btn" type="button" :disabled="Boolean(memoryBusy)" @click="listMemoryNotes()">
               List Notes
+            </button>
+            <button class="studio-secondary-btn" type="button" :disabled="Boolean(memoryBusy)" @click="loadMemoryProfile">
+              Profile
             </button>
           </div>
 
@@ -767,7 +823,13 @@ onUnmounted(() => {
           <div class="studio-memory-results" aria-live="polite">
             <div class="studio-memory-results-head">
               <span>{{ memoryResultMode === 'search' ? 'Search Results' : 'Vault Notes' }}</span>
-              <small>{{ memoryNotes.length }} notes</small>
+              <small>{{ memoryStats.total }} notes · {{ memoryStats.cells }} cells · {{ memoryStats.scenes }} scenes</small>
+            </div>
+            <div v-if="memoryRecollection" class="studio-memory-stats">
+              <span>{{ memoryRecollection.queryType }}</span>
+              <span>{{ memoryRecollection.isSufficient ? 'sufficient' : 'partial' }}</span>
+              <span v-if="memoryStats.profile">{{ memoryStats.profile }} profile</span>
+              <span v-if="memoryStats.conflicts">{{ memoryStats.conflicts }} conflicts</span>
             </div>
             <div v-if="memoryNotes.length" class="studio-memory-note-list">
               <article

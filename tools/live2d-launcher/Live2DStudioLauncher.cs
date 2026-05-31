@@ -430,6 +430,16 @@ internal sealed class LocalStudioServer : IDisposable
                 return;
             }
 
+            if (method == "POST" && (
+                string.Equals(path, "/api/memory/record-turn", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(path, "/api/memory/consolidate", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(path, "/api/memory/profile", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(path, "/api/memory/traces", StringComparison.OrdinalIgnoreCase)))
+            {
+                WriteApiResponse(stream, DesktopApiProxy.MemoryDataRoute(path, request.Body));
+                return;
+            }
+
             if (method != "GET" && method != "HEAD")
             {
                 WritePlainResponse(stream, 405, "Method Not Allowed", "text/plain; charset=utf-8", "Method Not Allowed", false);
@@ -1372,6 +1382,15 @@ internal static class DesktopApiProxy
         {
             return JsonError(400, ex.Message);
         }
+    }
+
+    public static StudioApiResponse MemoryDataRoute(string route, byte[] body)
+    {
+        if (string.IsNullOrWhiteSpace(route) || !route.StartsWith("/api/memory/", StringComparison.OrdinalIgnoreCase))
+        {
+            return JsonError(404, "Unknown memory route.");
+        }
+        return ProxyMemoryDataService(route, body);
     }
 
     public static StudioApiResponse MemoryWrite(byte[] body)

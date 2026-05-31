@@ -102,6 +102,18 @@ function asBoolean(value) {
   return ['1', 'true', 'yes', 'on'].includes(text);
 }
 
+function readJsonValue(value, fallback) {
+  try {
+    return JSON.parse(value || '');
+  } catch (_) {
+    return fallback;
+  }
+}
+
+function stableJson(value) {
+  return JSON.stringify(value ?? null);
+}
+
 function normalizeTags(value) {
   const source = Array.isArray(value) ? value : String(value || '').split(/[,\s]+/u);
   return [...new Set(source
@@ -200,6 +212,108 @@ function openStore(settings) {
     CREATE INDEX IF NOT EXISTS idx_memories_source ON memories(source);
     CREATE INDEX IF NOT EXISTS idx_memories_type ON memories(type);
     CREATE INDEX IF NOT EXISTS idx_memories_active ON memories(disabled, deleted);
+
+    CREATE TABLE IF NOT EXISTS raw_messages (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL DEFAULT '',
+      turn_id TEXT NOT NULL DEFAULT '',
+      role TEXT NOT NULL,
+      content TEXT NOT NULL DEFAULT '',
+      source TEXT NOT NULL DEFAULT 'live2d',
+      emotion TEXT NOT NULL DEFAULT '',
+      created TEXT NOT NULL DEFAULT '',
+      metadata_json TEXT NOT NULL DEFAULT '{}'
+    );
+    CREATE INDEX IF NOT EXISTS idx_raw_messages_session ON raw_messages(session_id, created);
+    CREATE INDEX IF NOT EXISTS idx_raw_messages_turn ON raw_messages(turn_id);
+
+    CREATE TABLE IF NOT EXISTS mem_cells (
+      id TEXT PRIMARY KEY,
+      title TEXT NOT NULL,
+      type TEXT NOT NULL DEFAULT 'memory',
+      scope TEXT NOT NULL DEFAULT 'long_term',
+      episode TEXT NOT NULL DEFAULT '',
+      facts_json TEXT NOT NULL DEFAULT '[]',
+      foresight_json TEXT NOT NULL DEFAULT '[]',
+      source_turn_ids_json TEXT NOT NULL DEFAULT '[]',
+      source_memory_id TEXT NOT NULL DEFAULT '',
+      source TEXT NOT NULL DEFAULT 'runtime',
+      scene_id TEXT NOT NULL DEFAULT '',
+      importance REAL NOT NULL DEFAULT 0.45,
+      confidence REAL NOT NULL DEFAULT 0.65,
+      status TEXT NOT NULL DEFAULT 'active',
+      valid_from TEXT NOT NULL DEFAULT '',
+      valid_until TEXT NOT NULL DEFAULT '',
+      created TEXT NOT NULL DEFAULT '',
+      updated TEXT NOT NULL DEFAULT '',
+      content_hash TEXT NOT NULL DEFAULT '',
+      vector_json TEXT NOT NULL DEFAULT ''
+    );
+    CREATE INDEX IF NOT EXISTS idx_mem_cells_scene ON mem_cells(scene_id);
+    CREATE INDEX IF NOT EXISTS idx_mem_cells_source_memory ON mem_cells(source_memory_id);
+    CREATE INDEX IF NOT EXISTS idx_mem_cells_status ON mem_cells(status, valid_until);
+
+    CREATE TABLE IF NOT EXISTS mem_scenes (
+      id TEXT PRIMARY KEY,
+      title TEXT NOT NULL,
+      summary TEXT NOT NULL DEFAULT '',
+      keywords_json TEXT NOT NULL DEFAULT '[]',
+      centroid_vector_json TEXT NOT NULL DEFAULT '[]',
+      cell_count INTEGER NOT NULL DEFAULT 0,
+      importance REAL NOT NULL DEFAULT 0.45,
+      confidence REAL NOT NULL DEFAULT 0.65,
+      status TEXT NOT NULL DEFAULT 'active',
+      created TEXT NOT NULL DEFAULT '',
+      updated TEXT NOT NULL DEFAULT '',
+      last_cell_id TEXT NOT NULL DEFAULT ''
+    );
+    CREATE INDEX IF NOT EXISTS idx_mem_scenes_status ON mem_scenes(status, updated);
+
+    CREATE TABLE IF NOT EXISTS scene_cell_links (
+      scene_id TEXT NOT NULL,
+      cell_id TEXT NOT NULL,
+      created TEXT NOT NULL DEFAULT '',
+      PRIMARY KEY (scene_id, cell_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS user_profile (
+      id TEXT PRIMARY KEY,
+      category TEXT NOT NULL,
+      name TEXT NOT NULL,
+      value TEXT NOT NULL DEFAULT '',
+      confidence REAL NOT NULL DEFAULT 0.5,
+      evidence_json TEXT NOT NULL DEFAULT '[]',
+      status TEXT NOT NULL DEFAULT 'candidate',
+      valid_from TEXT NOT NULL DEFAULT '',
+      valid_until TEXT NOT NULL DEFAULT '',
+      updated TEXT NOT NULL DEFAULT ''
+    );
+    CREATE INDEX IF NOT EXISTS idx_user_profile_category ON user_profile(category, status);
+
+    CREATE TABLE IF NOT EXISTS memory_conflicts (
+      id TEXT PRIMARY KEY,
+      left_cell_id TEXT NOT NULL,
+      right_cell_id TEXT NOT NULL,
+      description TEXT NOT NULL DEFAULT '',
+      severity REAL NOT NULL DEFAULT 0.5,
+      status TEXT NOT NULL DEFAULT 'active',
+      created TEXT NOT NULL DEFAULT '',
+      updated TEXT NOT NULL DEFAULT ''
+    );
+
+    CREATE TABLE IF NOT EXISTS retrieval_traces (
+      id TEXT PRIMARY KEY,
+      query_text TEXT NOT NULL DEFAULT '',
+      query_type TEXT NOT NULL DEFAULT 'general',
+      scene_ids_json TEXT NOT NULL DEFAULT '[]',
+      cell_ids_json TEXT NOT NULL DEFAULT '[]',
+      note_ids_json TEXT NOT NULL DEFAULT '[]',
+      sufficient INTEGER NOT NULL DEFAULT 0,
+      missing_json TEXT NOT NULL DEFAULT '[]',
+      created TEXT NOT NULL DEFAULT '',
+      context_json TEXT NOT NULL DEFAULT '{}'
+    );
+    CREATE INDEX IF NOT EXISTS idx_retrieval_traces_created ON retrieval_traces(created);
   `);
   return db;
 }
@@ -492,6 +606,7 @@ function rowToNote(row) {
     deleted: Boolean(row.deleted),
     reviewStatus: row.review_status,
     updated: row.updated,
+    contentHash: row.content_hash,
     vector
   };
 }
@@ -501,6 +616,453 @@ function activeRows(db, includeDisabled = false, limit = MAX_MEMORY_ROWS) {
   return db.prepare(`SELECT * FROM memories WHERE ${where} ORDER BY source, type, title LIMIT ?`).all(limit)
     .map(rowToNote)
     .filter(Boolean);
+}
+
+function normalizeFactList(value, fallbackText = '') {
+  const source = Array.isArray(value) ? value : String(value || '')
+    .split(/[。.!?；;\n]+/u)
+    .map((item) => item.trim());
+  const facts = source
+    .map((item) => asText(item, 320))
+    .filter((item) => item.length >= 4)
+    .slice(0, 8);
+  if (facts.length) return facts;
+  const fallback = asText(fallbackText, 320);
+  return fallback ? [fallback] : [];
+}
+
+function normalizeForesightList(value, fallbackDate = '') {
+  const raw = Array.isArray(value) ? value : [];
+  return raw
+    .map((item) => {
+      if (typeof item === 'string') {
+        return {
+          content: asText(item, 360),
+          valid_from: fallbackDate,
+          valid_until: '',
+          confidence: 0.55,
+          evidence: []
+        };
+      }
+      if (!item || typeof item !== 'object') return null;
+      const content = asText(item.content || item.text || item.summary, 360);
+      if (!content) return null;
+      return {
+        content,
+        valid_from: asText(item.valid_from || item.validFrom || fallbackDate, 80),
+        valid_until: asText(item.valid_until || item.validUntil || '', 80),
+        confidence: asNumber(item.confidence, 0.55, 0, 1),
+        evidence: normalizeFactList(item.evidence || [], '')
+      };
+    })
+    .filter(Boolean)
+    .slice(0, 5);
+}
+
+function normalizeTurnIds(value) {
+  const source = Array.isArray(value) ? value : String(value || '').split(/[,\s]+/u);
+  return [...new Set(source.map((item) => asText(item, 120)).filter(Boolean))].slice(0, 20);
+}
+
+function cellEmbeddingText(cell) {
+  return [
+    cell.title,
+    cell.type,
+    cell.scope,
+    cell.episode,
+    ...(cell.facts || []),
+    ...(cell.foresight || []).map((item) => item.content)
+  ].filter(Boolean).join('\n').slice(0, 6000);
+}
+
+async function prepareCellForStore(cell, settings) {
+  const vector = await embeddingFor(cellEmbeddingText(cell), settings);
+  return { ...cell, vector };
+}
+
+function rowToCell(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    title: row.title,
+    type: row.type,
+    scope: row.scope,
+    episode: row.episode,
+    facts: readJsonValue(row.facts_json, []),
+    foresight: readJsonValue(row.foresight_json, []),
+    sourceTurnIds: readJsonValue(row.source_turn_ids_json, []),
+    sourceMemoryId: row.source_memory_id,
+    source: row.source,
+    sceneId: row.scene_id,
+    importance: Number(row.importance) || 0,
+    confidence: Number(row.confidence) || 0,
+    status: row.status,
+    validFrom: row.valid_from,
+    validUntil: row.valid_until,
+    created: row.created,
+    updated: row.updated,
+    contentHash: row.content_hash,
+    vector: readJsonValue(row.vector_json, [])
+  };
+}
+
+function rowToScene(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    title: row.title,
+    summary: row.summary,
+    keywords: readJsonValue(row.keywords_json, []),
+    centroidVector: readJsonValue(row.centroid_vector_json, []),
+    cellCount: Number(row.cell_count) || 0,
+    importance: Number(row.importance) || 0,
+    confidence: Number(row.confidence) || 0,
+    status: row.status,
+    created: row.created,
+    updated: row.updated,
+    lastCellId: row.last_cell_id
+  };
+}
+
+function rowToProfile(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    category: row.category,
+    name: row.name,
+    value: row.value,
+    confidence: Number(row.confidence) || 0,
+    evidence: readJsonValue(row.evidence_json, []),
+    status: row.status,
+    validFrom: row.valid_from,
+    validUntil: row.valid_until,
+    updated: row.updated
+  };
+}
+
+function cellPublic(cell, score = undefined, scene = null) {
+  const { vector, ...publicCell } = cell;
+  return {
+    ...publicCell,
+    sceneTitle: scene?.title || '',
+    ...(score === undefined ? {} : { score: Number(score.toFixed(4)) })
+  };
+}
+
+function scenePublic(scene, score = undefined) {
+  const { centroidVector, ...publicScene } = scene;
+  return {
+    ...publicScene,
+    ...(score === undefined ? {} : { score: Number(score.toFixed(4)) })
+  };
+}
+
+function memoryNoteToCell(note, settings) {
+  const now = new Date().toISOString();
+  const episode = asText(note.episode || note.summary || note.content, 900);
+  const facts = normalizeFactList(note.facts || [], note.summary || note.content);
+  const foresight = normalizeForesightList(note.foresight || [], note.updated || now);
+  const sourceMemoryId = note.id || '';
+  return {
+    id: `cell-${sha1(sourceMemoryId || `${note.title}:${episode}`).slice(0, 24)}`,
+    title: asText(note.title || 'Memory event', 140),
+    type: asText(note.type || 'memory', 40).toLowerCase().replace(/[\s-]+/g, '_'),
+    scope: asText(note.scope || inferScopeFromType(note.type), 40).toLowerCase().replace(/[\s-]+/g, '_'),
+    episode,
+    facts,
+    foresight,
+    sourceTurnIds: normalizeTurnIds(note.sourceTurnIds || note.turnIds || []),
+    sourceMemoryId,
+    source: asText(note.source || 'runtime', 60),
+    sceneId: '',
+    importance: asNumber(note.importance, 0.45, 0, 1),
+    confidence: asNumber(note.confidence, 0.65, 0, 1),
+    status: note.disabled || note.deleted ? 'archived' : 'active',
+    validFrom: asText(note.validFrom || note.valid_from || note.updated || now, 80),
+    validUntil: asText(note.validUntil || note.valid_until || '', 80),
+    created: asText(note.created || now, 80),
+    updated: asText(note.updated || now, 80),
+    contentHash: note.contentHash || sha1(`${note.title}\n${note.content || note.summary}`),
+    vector: [],
+    settingsDimension: settings.embeddingDimension
+  };
+}
+
+function cellKeywords(cell) {
+  return [...new Set([
+    cell.type,
+    cell.scope,
+    ...normalizeTags(cell.tags || []),
+    ...textKeywords(`${cell.title} ${cell.episode} ${(cell.facts || []).join(' ')}`)
+  ].filter(Boolean))].slice(0, 20);
+}
+
+function keywordOverlapScore(left = [], right = []) {
+  const leftSet = new Set(left);
+  const rightSet = new Set(right);
+  if (!leftSet.size || !rightSet.size) return 0;
+  let hits = 0;
+  for (const item of leftSet) {
+    if (rightSet.has(item)) hits += 1;
+  }
+  return hits / Math.max(leftSet.size, rightSet.size);
+}
+
+function sceneTitleFromCell(cell) {
+  const keywords = cellKeywords(cell).filter((item) => !['memory', 'long_term', 'session'].includes(item));
+  const topic = keywords.slice(0, 3).join(' / ') || cell.type || 'memory';
+  return `${topic} memory`;
+}
+
+function averageVectors(vectors = [], dimension = DEFAULT_DIMENSION) {
+  const valid = vectors.filter((vector) => Array.isArray(vector) && vector.length);
+  if (!valid.length) return [];
+  const size = Math.max(...valid.map((vector) => vector.length), dimension);
+  const sum = new Array(size).fill(0);
+  for (const vector of valid) {
+    for (let index = 0; index < size; index += 1) {
+      sum[index] += Number(vector[index % vector.length]) || 0;
+    }
+  }
+  let norm = Math.sqrt(sum.reduce((total, item) => total + item * item, 0));
+  if (!norm) norm = 1;
+  return sum.map((item) => Number((item / norm).toFixed(6)));
+}
+
+function upsertCell(db, cell) {
+  db.prepare(`
+    INSERT INTO mem_cells (
+      id, title, type, scope, episode, facts_json, foresight_json, source_turn_ids_json,
+      source_memory_id, source, scene_id, importance, confidence, status, valid_from,
+      valid_until, created, updated, content_hash, vector_json
+    )
+    VALUES (
+      @id, @title, @type, @scope, @episode, @factsJson, @foresightJson, @sourceTurnIdsJson,
+      @sourceMemoryId, @source, @sceneId, @importance, @confidence, @status, @validFrom,
+      @validUntil, @created, @updated, @contentHash, @vectorJson
+    )
+    ON CONFLICT(id) DO UPDATE SET
+      title = excluded.title,
+      type = excluded.type,
+      scope = excluded.scope,
+      episode = excluded.episode,
+      facts_json = excluded.facts_json,
+      foresight_json = excluded.foresight_json,
+      source_turn_ids_json = excluded.source_turn_ids_json,
+      source_memory_id = excluded.source_memory_id,
+      source = excluded.source,
+      scene_id = excluded.scene_id,
+      importance = excluded.importance,
+      confidence = excluded.confidence,
+      status = excluded.status,
+      valid_from = excluded.valid_from,
+      valid_until = excluded.valid_until,
+      updated = excluded.updated,
+      content_hash = excluded.content_hash,
+      vector_json = excluded.vector_json
+  `).run({
+    id: cell.id,
+    title: cell.title,
+    type: cell.type,
+    scope: cell.scope,
+    episode: cell.episode,
+    factsJson: stableJson(cell.facts || []),
+    foresightJson: stableJson(cell.foresight || []),
+    sourceTurnIdsJson: stableJson(cell.sourceTurnIds || []),
+    sourceMemoryId: cell.sourceMemoryId || '',
+    source: cell.source || 'runtime',
+    sceneId: cell.sceneId || '',
+    importance: Number(cell.importance) || 0.45,
+    confidence: Number(cell.confidence) || 0.65,
+    status: cell.status || 'active',
+    validFrom: cell.validFrom || '',
+    validUntil: cell.validUntil || '',
+    created: cell.created || new Date().toISOString(),
+    updated: cell.updated || new Date().toISOString(),
+    contentHash: cell.contentHash || sha1(cellEmbeddingText(cell)),
+    vectorJson: stableJson(cell.vector || [])
+  });
+}
+
+function activeScenes(db) {
+  return db.prepare("SELECT * FROM mem_scenes WHERE status = 'active' ORDER BY updated DESC LIMIT ?").all(MAX_MEMORY_ROWS)
+    .map(rowToScene)
+    .filter(Boolean);
+}
+
+function activeCells(db) {
+  return db.prepare("SELECT * FROM mem_cells WHERE status IN ('active', 'candidate') ORDER BY updated DESC LIMIT ?").all(MAX_MEMORY_ROWS)
+    .map(rowToCell)
+    .filter(Boolean);
+}
+
+function chooseSceneForCell(db, cell) {
+  const keywords = cellKeywords(cell);
+  const scenes = activeScenes(db);
+  let best = null;
+  for (const scene of scenes) {
+    const score = cosine(cell.vector, scene.centroidVector) * 0.74 + keywordOverlapScore(keywords, scene.keywords) * 0.26;
+    if (!best || score > best.score) best = { scene, score };
+  }
+  if (best && best.score >= 0.62) return best.scene;
+  const now = new Date().toISOString();
+  const id = `scene-${safeSlug(sceneTitleFromCell(cell)).slice(0, 48)}-${sha1(cell.id).slice(0, 8)}`;
+  const scene = {
+    id,
+    title: sceneTitleFromCell(cell),
+    summary: asText(cell.episode, 640),
+    keywords,
+    centroidVector: cell.vector || [],
+    cellCount: 0,
+    importance: cell.importance,
+    confidence: cell.confidence,
+    status: 'active',
+    created: now,
+    updated: now,
+    lastCellId: cell.id
+  };
+  db.prepare(`
+    INSERT OR IGNORE INTO mem_scenes (
+      id, title, summary, keywords_json, centroid_vector_json, cell_count,
+      importance, confidence, status, created, updated, last_cell_id
+    )
+    VALUES (@id, @title, @summary, @keywordsJson, @centroidVectorJson, @cellCount,
+      @importance, @confidence, @status, @created, @updated, @lastCellId)
+  `).run({
+    ...scene,
+    keywordsJson: stableJson(scene.keywords),
+    centroidVectorJson: stableJson(scene.centroidVector)
+  });
+  return scene;
+}
+
+function recomputeScene(db, sceneId, settings) {
+  const rows = db.prepare(`
+    SELECT * FROM mem_cells
+    WHERE scene_id = ? AND status IN ('active', 'candidate')
+    ORDER BY updated DESC
+    LIMIT ?
+  `).all(sceneId, MAX_MEMORY_ROWS).map(rowToCell).filter(Boolean);
+  if (!rows.length) return null;
+  const scene = db.prepare('SELECT * FROM mem_scenes WHERE id = ?').get(sceneId);
+  const keywords = [...new Set(rows.flatMap(cellKeywords))].slice(0, 30);
+  const summary = rows
+    .slice(0, 5)
+    .map((cell) => cell.episode)
+    .filter(Boolean)
+    .join(' ')
+    .slice(0, 900);
+  const centroid = averageVectors(rows.map((cell) => cell.vector), settings.embeddingDimension);
+  const importance = rows.reduce((max, cell) => Math.max(max, Number(cell.importance) || 0), 0.45);
+  const confidence = rows.reduce((sum, cell) => sum + (Number(cell.confidence) || 0), 0) / rows.length;
+  const now = new Date().toISOString();
+  db.prepare(`
+    UPDATE mem_scenes SET
+      summary = ?, keywords_json = ?, centroid_vector_json = ?, cell_count = ?,
+      importance = ?, confidence = ?, updated = ?, last_cell_id = ?
+    WHERE id = ?
+  `).run(summary || scene?.summary || '', stableJson(keywords), stableJson(centroid), rows.length,
+    importance, confidence, now, rows[0].id, sceneId);
+  return rowToScene(db.prepare('SELECT * FROM mem_scenes WHERE id = ?').get(sceneId));
+}
+
+function linkCellToScene(db, sceneId, cellId) {
+  db.prepare('INSERT OR IGNORE INTO scene_cell_links (scene_id, cell_id, created) VALUES (?, ?, ?)')
+    .run(sceneId, cellId, new Date().toISOString());
+}
+
+function profileCategoryForCell(cell) {
+  if (cell.type === 'viewer') return 'viewer';
+  if (cell.type === 'profile') return 'explicit_fact';
+  if (cell.type === 'style') return 'preference';
+  if (cell.type === 'policy') return 'constraint';
+  if (cell.scope === 'temporary' || cell.type === 'session') return 'time_varying_state';
+  return '';
+}
+
+function updateProfileFromCell(db, cell) {
+  const category = profileCategoryForCell(cell);
+  if (!category || cell.confidence < 0.58) return null;
+  const name = safeSlug(cell.title || cell.type).slice(0, 80) || cell.type;
+  const id = `profile-${category}-${sha1(name).slice(0, 16)}`;
+  const existing = rowToProfile(db.prepare('SELECT * FROM user_profile WHERE id = ?').get(id));
+  const evidence = [...new Set([...(existing?.evidence || []), cell.id])].slice(-12);
+  const confidence = Math.min(1, Math.max(existing?.confidence || 0, cell.confidence) + Math.max(0, evidence.length - 1) * 0.04);
+  const status = evidence.length >= 2 || cell.confidence >= 0.78 ? 'active' : 'candidate';
+  db.prepare(`
+    INSERT INTO user_profile (
+      id, category, name, value, confidence, evidence_json, status, valid_from, valid_until, updated
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET
+      value = excluded.value,
+      confidence = excluded.confidence,
+      evidence_json = excluded.evidence_json,
+      status = excluded.status,
+      valid_from = excluded.valid_from,
+      valid_until = excluded.valid_until,
+      updated = excluded.updated
+  `).run(id, category, name, cell.episode, confidence, stableJson(evidence), status,
+    cell.validFrom || cell.created || '', cell.validUntil || '', new Date().toISOString());
+  return rowToProfile(db.prepare('SELECT * FROM user_profile WHERE id = ?').get(id));
+}
+
+function looksNegativeConstraint(text) {
+  return /(不要|不能|不再|避免|禁止|停止|暂停|过期|临时|正在服用|antibiotic|avoid|stop|cannot|don't|do not)/iu.test(text || '');
+}
+
+function detectConflictsForCell(db, cell) {
+  const text = `${cell.title}\n${cell.episode}\n${(cell.facts || []).join('\n')}`;
+  if (!looksNegativeConstraint(text)) return [];
+  const keywords = cellKeywords(cell).filter((item) => item.length >= 3);
+  if (!keywords.length) return [];
+  const candidates = activeCells(db)
+    .filter((other) => other.id !== cell.id && other.status === 'active')
+    .filter((other) => keywordOverlapScore(keywords, cellKeywords(other)) >= 0.18)
+    .slice(0, 3);
+  const conflicts = [];
+  for (const other of candidates) {
+    const id = `conflict-${sha1([cell.id, other.id].sort().join(':')).slice(0, 20)}`;
+    const description = `Potential time-sensitive conflict between "${cell.title}" and "${other.title}".`;
+    db.prepare(`
+      INSERT INTO memory_conflicts (id, left_cell_id, right_cell_id, description, severity, status, created, updated)
+      VALUES (?, ?, ?, ?, ?, 'active', ?, ?)
+      ON CONFLICT(id) DO UPDATE SET description = excluded.description, updated = excluded.updated
+    `).run(id, cell.id, other.id, description, 0.62, new Date().toISOString(), new Date().toISOString());
+    conflicts.push({ id, leftCellId: cell.id, rightCellId: other.id, description, severity: 0.62, status: 'active' });
+  }
+  return conflicts;
+}
+
+async function consolidateNoteToCell(db, note, settings) {
+  let cell = await prepareCellForStore(memoryNoteToCell(note, settings), settings);
+  const scene = chooseSceneForCell(db, cell);
+  cell = { ...cell, sceneId: scene.id };
+  upsertCell(db, cell);
+  linkCellToScene(db, scene.id, cell.id);
+  const updatedScene = recomputeScene(db, scene.id, settings) || scene;
+  const profile = updateProfileFromCell(db, cell);
+  const conflicts = detectConflictsForCell(db, cell);
+  return { cell: cellPublic(cell, undefined, updatedScene), scene: scenePublic(updatedScene), profile, conflicts };
+}
+
+async function ensureLifecycleForNotes(db, notes, settings) {
+  let created = 0;
+  let updated = 0;
+  for (const note of notes) {
+    const existing = db.prepare('SELECT content_hash FROM mem_cells WHERE source_memory_id = ?').get(note.id);
+    if (existing && existing.content_hash === note.contentHash) continue;
+    await consolidateNoteToCell(db, note, settings);
+    if (existing) updated += 1;
+    else created += 1;
+  }
+  return {
+    cellsCreated: created,
+    cellsUpdated: updated,
+    scenes: db.prepare("SELECT COUNT(*) AS count FROM mem_scenes WHERE status = 'active'").get().count || 0,
+    profile: db.prepare("SELECT COUNT(*) AS count FROM user_profile WHERE status IN ('candidate', 'active')").get().count || 0,
+    conflicts: db.prepare("SELECT COUNT(*) AS count FROM memory_conflicts WHERE status = 'active'").get().count || 0
+  };
 }
 
 async function importSources(db, settings) {
@@ -880,6 +1442,171 @@ function scoreNote(note, query, options = {}) {
   return score;
 }
 
+function queryTypeFor(queryText) {
+  const text = String(queryText || '').toLowerCase();
+  if (/现在|当前|today|currently|right now|最近/u.test(text)) return 'current_state';
+  if (/喜欢|偏好|prefer|favorite|style/u.test(text)) return 'preference';
+  if (/为什么|原因|决策|建议|应该|how should|recommend/u.test(text)) return 'decision';
+  if (/什么时候|时间|之前|以后|timeline|when/u.test(text)) return 'time_reasoning';
+  if (/项目|任务|进度|计划|workflow|architecture|架构/u.test(text)) return 'project_context';
+  if (/我是谁|用户|画像|profile/u.test(text)) return 'profile';
+  return 'fact_recall';
+}
+
+function isCellExpired(cell, now = new Date()) {
+  if (!cell.validUntil) return false;
+  const until = Date.parse(cell.validUntil);
+  return Number.isFinite(until) && until < now.getTime();
+}
+
+function scoreScene(scene, queryVector, queryKeywords) {
+  return cosine(queryVector, scene.centroidVector) * 0.72 +
+    keywordOverlapScore(queryKeywords, scene.keywords) * 0.22 +
+    Math.min(0.06, Number(scene.importance || 0) * 0.06);
+}
+
+function scoreCell(cell, query, queryVector, sceneBoost = 0) {
+  const queryText = String(query.text || '').toLowerCase();
+  const queryTags = normalizeTags(query.tags || []);
+  const queryKeywords = normalizeTags([...(query.keywords || []), ...textKeywords(queryText)]);
+  const haystack = [cell.title, cell.type, cell.scope, cell.episode, ...(cell.facts || []), ...(cell.foresight || []).map((item) => item.content)]
+    .join('\n')
+    .toLowerCase();
+  let score = cosine(queryVector, cell.vector) * 0.42 + sceneBoost;
+  score += keywordOverlapScore(queryKeywords, textKeywords(haystack)) * 0.18;
+  for (const tag of queryTags) {
+    if (haystack.includes(tag)) score += 0.06;
+  }
+  if (queryText && haystack.includes(queryText.slice(0, 80))) score += 0.08;
+  if (cell.scope === 'temporary' || cell.type === 'session') score += 0.03;
+  score += Math.min(0.14, Number(cell.importance || 0) * 0.08 + Number(cell.confidence || 0) * 0.06);
+  if (isCellExpired(cell)) score *= 0.18;
+  return score;
+}
+
+function relevantProfileRows(db, queryText, limit = 6) {
+  const queryKeywords = textKeywords(queryText);
+  return db.prepare("SELECT * FROM user_profile WHERE status IN ('active', 'candidate') ORDER BY confidence DESC, updated DESC LIMIT ?")
+    .all(80)
+    .map(rowToProfile)
+    .filter(Boolean)
+    .map((profile) => {
+      const haystack = `${profile.category} ${profile.name} ${profile.value}`.toLowerCase();
+      const score = keywordOverlapScore(queryKeywords, textKeywords(haystack)) + Number(profile.confidence || 0) * 0.36;
+      return { profile, score };
+    })
+    .filter((item) => item.score > 0.12 || !queryKeywords.length)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, limit)
+    .map((item) => item.profile);
+}
+
+function missingInformationFor(queryType) {
+  if (queryType === 'project_context') return ['project goal', 'current constraints', 'recent decisions'];
+  if (queryType === 'decision') return ['current state', 'active constraints', 'stable preferences'];
+  if (queryType === 'profile') return ['confirmed profile evidence'];
+  return ['more directly relevant memory evidence'];
+}
+
+function cellAsNote(cell, scene, score) {
+  return {
+    id: cell.id,
+    title: cell.title,
+    type: cell.type,
+    scope: cell.scope,
+    tags: cellKeywords(cell).slice(0, 8),
+    summary: cell.episode,
+    content: (cell.facts || []).join('\n'),
+    source: 'memcell',
+    path: cell.id,
+    importance: cell.importance,
+    confidence: cell.confidence,
+    disabled: false,
+    deleted: false,
+    reviewStatus: cell.status,
+    updated: cell.updated,
+    score: Number(score.toFixed(4)),
+    sceneId: scene?.id || cell.sceneId,
+    sceneTitle: scene?.title || '',
+    facts: cell.facts || [],
+    foresight: cell.foresight || []
+  };
+}
+
+function insertRetrievalTrace(db, trace) {
+  const id = `trace-${sha1(`${Date.now()}:${trace.queryText}:${stableJson(trace.cellIds)}`).slice(0, 24)}`;
+  const created = new Date().toISOString();
+  db.prepare(`
+    INSERT INTO retrieval_traces (
+      id, query_text, query_type, scene_ids_json, cell_ids_json, note_ids_json,
+      sufficient, missing_json, created, context_json
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(id, trace.queryText || '', trace.queryType || 'general', stableJson(trace.sceneIds || []),
+    stableJson(trace.cellIds || []), stableJson(trace.noteIds || []), trace.sufficient ? 1 : 0,
+    stableJson(trace.missing || []), created, stableJson(trace.context || {}));
+  return id;
+}
+
+async function buildRecollection(db, settings, input, legacyNotes) {
+  const query = input.query || {};
+  const queryText = String(query.text || '').trim();
+  const queryType = queryTypeFor(queryText);
+  const queryVector = await embeddingFor(queryText, settings);
+  let cells = activeCells(db);
+  if (!cells.length) {
+    const notes = activeRows(db, false, MAX_MEMORY_ROWS);
+    await ensureLifecycleForNotes(db, notes, settings);
+    cells = activeCells(db);
+  }
+  const scenes = activeScenes(db);
+  const queryKeywords = normalizeTags([...(query.keywords || []), ...textKeywords(queryText), ...(query.tags || [])]);
+  const sceneScores = scenes
+    .map((scene) => ({ scene, score: scoreScene(scene, queryVector, queryKeywords) }))
+    .filter((item) => item.score > 0.22 || !queryText)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 5);
+  const sceneMap = new Map(scenes.map((scene) => [scene.id, scene]));
+  const candidateSceneIds = new Set(sceneScores.map((item) => item.scene.id));
+  const cellScores = cells
+    .filter((cell) => !candidateSceneIds.size || candidateSceneIds.has(cell.sceneId) || queryText.length < 2)
+    .map((cell) => {
+      const sceneScore = sceneScores.find((item) => item.scene.id === cell.sceneId)?.score || 0;
+      return { cell, score: scoreCell(cell, query, queryVector, sceneScore * 0.18) };
+    })
+    .filter((item) => item.score > 0.18 || !queryText)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, Math.max(settings.maxNotes, 6));
+
+  const profile = relevantProfileRows(db, queryText, 6);
+  const topScore = cellScores[0]?.score || legacyNotes[0]?.score || 0;
+  const sufficient = Boolean(topScore > 0.42 && (cellScores.length || legacyNotes.length));
+  const missing = sufficient ? [] : missingInformationFor(queryType);
+  const traceId = insertRetrievalTrace(db, {
+    queryText,
+    queryType,
+    sceneIds: sceneScores.map((item) => item.scene.id),
+    cellIds: cellScores.map((item) => item.cell.id),
+    noteIds: legacyNotes.map((note) => note.id).filter(Boolean),
+    sufficient,
+    missing,
+    context: {
+      maxNotes: settings.maxNotes,
+      profile: profile.map((item) => item.id)
+    }
+  });
+  return {
+    traceId,
+    queryType,
+    isSufficient: sufficient,
+    missingInformation: missing,
+    scenes: sceneScores.map((item) => scenePublic(item.scene, item.score)),
+    cells: cellScores.map((item) => cellPublic(item.cell, item.score, sceneMap.get(item.cell.sceneId))),
+    profile,
+    notesFromCells: cellScores.map((item) => cellAsNote(item.cell, sceneMap.get(item.cell.sceneId), item.score))
+  };
+}
+
 async function handleInit(input) {
   const settings = normalizeSettings(input);
   const db = openStore(settings);
@@ -892,12 +1619,14 @@ async function handleInit(input) {
     } catch (error) {
       milvus = { enabled: true, synced: 0, error: error.message };
     }
+    const lifecycle = await ensureLifecycleForNotes(db, notes, settings);
     return {
       success: true,
       provider: 'sqlite-milvus',
       databasePath: settings.databasePath,
       indexed: notes.length,
       imported,
+      lifecycle,
       milvus
     };
   } finally {
@@ -919,7 +1648,25 @@ async function handleList(input) {
       const { vector, ...publicNote } = note;
       return publicNote;
     });
-    return { success: true, notes, databasePath: settings.databasePath };
+    const cells = activeCells(db).slice(0, maxNotes).map((cell) => cellPublic(cell));
+    const scenes = activeScenes(db).slice(0, maxNotes).map((scene) => scenePublic(scene));
+    const profile = db.prepare("SELECT * FROM user_profile WHERE status IN ('candidate', 'active') ORDER BY updated DESC LIMIT ?")
+      .all(Math.min(maxNotes, 200))
+      .map(rowToProfile)
+      .filter(Boolean);
+    const conflicts = db.prepare("SELECT * FROM memory_conflicts WHERE status = 'active' ORDER BY updated DESC LIMIT ?")
+      .all(Math.min(maxNotes, 200))
+      .map((row) => ({
+        id: row.id,
+        leftCellId: row.left_cell_id,
+        rightCellId: row.right_cell_id,
+        description: row.description,
+        severity: Number(row.severity) || 0,
+        status: row.status,
+        created: row.created,
+        updated: row.updated
+      }));
+    return { success: true, notes, cells, scenes, profile, conflicts, databasePath: settings.databasePath };
   } finally {
     db.close();
   }
@@ -958,7 +1705,19 @@ async function handleSearch(input) {
         const { score, ...publicNote } = note;
         return { ...publicNote, score: Number(score.toFixed(4)) };
       });
-    return { success: true, notes: scored, databasePath: settings.databasePath };
+    await ensureLifecycleForNotes(db, notes, settings);
+    const recollection = await buildRecollection(db, settings, input, scored);
+    const noteIds = new Set();
+    const merged = [...recollection.notesFromCells, ...scored]
+      .filter((note) => {
+        const key = note.id || note.path;
+        if (!key || noteIds.has(key)) return false;
+        noteIds.add(key);
+        return true;
+      })
+      .slice(0, settings.maxNotes);
+    const { notesFromCells, ...publicRecollection } = recollection;
+    return { success: true, notes: merged, recollection: publicRecollection, databasePath: settings.databasePath };
   } finally {
     db.close();
   }
@@ -1004,12 +1763,20 @@ async function handleWrite(input) {
     } catch (error) {
       milvus = { enabled: true, synced: 0, error: error.message };
     }
+    const lifecycle = await consolidateNoteToCell(db, {
+      ...note,
+      episode: memory.episode,
+      facts: memory.facts,
+      foresight: memory.foresight,
+      sourceTurnIds: memory.sourceTurnIds || memory.turnIds
+    }, settings);
     return {
       success: true,
       approved: note.reviewStatus === 'approved',
       path: note.path,
       id: note.id,
       databasePath: settings.databasePath,
+      lifecycle,
       milvus
     };
   } finally {
@@ -1025,6 +1792,8 @@ async function handleDisable(input) {
   const db = openStore(settings);
   try {
     const result = db.prepare('UPDATE memories SET disabled = ? WHERE path = ? OR id = ?').run(disabled, key, key);
+    db.prepare("UPDATE mem_cells SET status = ? WHERE source_memory_id IN (SELECT id FROM memories WHERE path = ? OR id = ?)")
+      .run(disabled ? 'archived' : 'active', key, key);
     return { success: true, path: key, disabled: Boolean(disabled), changed: result.changes };
   } finally {
     db.close();
@@ -1038,7 +1807,114 @@ async function handleDelete(input) {
   const db = openStore(settings);
   try {
     const result = db.prepare('UPDATE memories SET deleted = 1 WHERE path = ? OR id = ?').run(key, key);
+    db.prepare("UPDATE mem_cells SET status = 'archived' WHERE source_memory_id IN (SELECT id FROM memories WHERE path = ? OR id = ?)")
+      .run(key, key);
     return { success: true, path: key, deletedPath: key, changed: result.changes };
+  } finally {
+    db.close();
+  }
+}
+
+async function handleRecordTurn(input) {
+  const settings = normalizeSettings(input);
+  const db = openStore(settings);
+  try {
+    const now = asText(input.at || input.created || new Date().toISOString(), 80);
+    const sessionId = asText(input.sessionId || input.session_id || 'live2d-default', 120);
+    const turnId = asText(input.turnId || input.turn_id || `turn-${sha1(`${sessionId}:${now}:${input.input || ''}`).slice(0, 16)}`, 120);
+    const source = asText(input.source || 'live2d', 60);
+    const emotion = asText(input.emotion || '', 40);
+    const metadata = {
+      model: asText(input.model || '', 120),
+      mode: asText(input.mode || '', 80),
+      tags: normalizeTags(input.tags || [])
+    };
+    const rows = [
+      { role: 'user', content: asText(input.input || input.message || '', 2400) },
+      { role: 'assistant', content: asText(input.reply || input.response || '', 2400) }
+    ].filter((row) => row.content);
+    const insert = db.prepare(`
+      INSERT OR IGNORE INTO raw_messages (
+        id, session_id, turn_id, role, content, source, emotion, created, metadata_json
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    const ids = [];
+    for (const row of rows) {
+      const id = `raw-${sha1(`${sessionId}:${turnId}:${row.role}:${row.content}`).slice(0, 24)}`;
+      insert.run(id, sessionId, turnId, row.role, row.content, source, emotion, now, stableJson(metadata));
+      ids.push(id);
+    }
+    return { success: true, sessionId, turnId, rawIds: ids, recorded: ids.length, databasePath: settings.databasePath };
+  } finally {
+    db.close();
+  }
+}
+
+async function handleConsolidate(input) {
+  const settings = normalizeSettings(input);
+  const db = openStore(settings);
+  try {
+    let notes = activeRows(db, false, MAX_MEMORY_ROWS);
+    if (!notes.length) {
+      await importSources(db, settings);
+      notes = activeRows(db, false, MAX_MEMORY_ROWS);
+    }
+    const lifecycle = await ensureLifecycleForNotes(db, notes, settings);
+    return { success: true, lifecycle, databasePath: settings.databasePath };
+  } finally {
+    db.close();
+  }
+}
+
+async function handleProfile(input) {
+  const settings = normalizeSettings(input);
+  const db = openStore(settings);
+  try {
+    const maxItems = Math.round(asNumber(input.maxItems || input.maxNotes, 80, 1, 500));
+    const profile = db.prepare("SELECT * FROM user_profile WHERE status IN ('candidate', 'active') ORDER BY category, confidence DESC, updated DESC LIMIT ?")
+      .all(maxItems)
+      .map(rowToProfile)
+      .filter(Boolean);
+    const scenes = activeScenes(db).slice(0, maxItems).map((scene) => scenePublic(scene));
+    const conflicts = db.prepare("SELECT * FROM memory_conflicts WHERE status = 'active' ORDER BY severity DESC, updated DESC LIMIT ?")
+      .all(maxItems)
+      .map((row) => ({
+        id: row.id,
+        leftCellId: row.left_cell_id,
+        rightCellId: row.right_cell_id,
+        description: row.description,
+        severity: Number(row.severity) || 0,
+        status: row.status,
+        created: row.created,
+        updated: row.updated
+      }));
+    return { success: true, profile, scenes, conflicts, databasePath: settings.databasePath };
+  } finally {
+    db.close();
+  }
+}
+
+async function handleTraces(input) {
+  const settings = normalizeSettings(input);
+  const db = openStore(settings);
+  try {
+    const maxItems = Math.round(asNumber(input.maxItems || input.maxNotes, 30, 1, 200));
+    const traces = db.prepare('SELECT * FROM retrieval_traces ORDER BY created DESC LIMIT ?')
+      .all(maxItems)
+      .map((row) => ({
+        id: row.id,
+        queryText: row.query_text,
+        queryType: row.query_type,
+        sceneIds: readJsonValue(row.scene_ids_json, []),
+        cellIds: readJsonValue(row.cell_ids_json, []),
+        noteIds: readJsonValue(row.note_ids_json, []),
+        isSufficient: Boolean(row.sufficient),
+        missingInformation: readJsonValue(row.missing_json, []),
+        created: row.created,
+        context: readJsonValue(row.context_json, {})
+      }));
+    return { success: true, traces, databasePath: settings.databasePath };
   } finally {
     db.close();
   }
@@ -1066,9 +1942,13 @@ async function dispatch(route, input) {
   if (route.endsWith('/shutdown')) return handleShutdown(input);
   if (route.endsWith('/init')) return handleInit(input);
   if (route.endsWith('/reindex')) return handleReindex(input);
+  if (route.endsWith('/consolidate')) return handleConsolidate(input);
   if (route.endsWith('/search')) return handleSearch(input);
   if (route.endsWith('/write')) return handleWrite(input);
+  if (route.endsWith('/record-turn')) return handleRecordTurn(input);
   if (route.endsWith('/list')) return handleList(input);
+  if (route.endsWith('/profile')) return handleProfile(input);
+  if (route.endsWith('/traces')) return handleTraces(input);
   if (route.endsWith('/disable')) return handleDisable(input);
   if (route.endsWith('/delete')) return handleDelete(input);
   throw new Error('Unknown memory route.');
