@@ -63,7 +63,7 @@ Start-Live2D-Studio.exe
       ├─ 行为控制器
       ├─ VTube Studio Bridge
       ├─ 本地 Cubism 预览 Bridge
-      └─ Obsidian Memory Client
+      └─ SQLite/Milvus Memory Kernel Client
 ```
 
 桌面壳代码在 `tools/live2d-launcher/Live2DStudioLauncher.cs`。
@@ -77,7 +77,7 @@ Start-Live2D-Studio.exe
 ```text
 观众输入 / 自动直播话题
   ↓
-Obsidian Memory 检索相关长期记忆
+SQLite/Milvus Memory Kernel 重构相关长期记忆
   ↓
 拼接八千代核心人格 + 用户额外 systemPrompt + 记忆摘要 + 控制协议
   ↓
@@ -91,7 +91,7 @@ CONTROL JSON 里的 emotion/actions 进入语义行为控制器
   ↓
 VTube Studio Bridge 每帧采样动作并注入 VTS 参数
   ↓
-低风险 memory_writes 和 session summary 进入 Obsidian inbox
+Raw Log / MemCell / MemScene / Profile 写入 SQLite，并同步到 Milvus 向量索引
 ```
 
 关键原则：
@@ -243,10 +243,10 @@ E:\visualstudio\yachiyo_novel_detailed_corpus.txt
    - 文件：`src/frontend/constants/room/yachiyoPersonalityPrompt.js`
    - 每轮都会注入，保证基础人格不丢。
 
-2. Obsidian seed 长期记忆
+2. 人格 seed Markdown
    - 目录：`memory-seeds/obsidian/`
    - 由 `tools/memory/generate-yachiyo-memory-seeds.mjs` 从语料文件生成。
-   - 初始化 vault 时复制到用户的 Obsidian vault。
+   - 作为最底层人格文件，可导入 SQLite/Milvus，也可复制到 Obsidian vault 供用户编辑和跨端同步。
 
 seed 笔记覆盖：
 
@@ -423,11 +423,13 @@ C# LocalStudioServer
 托管 Node memory data service
   ↓
 SQLite 记忆库 + 托管 Milvus 向量检索
+  ↓
+Obsidian / Markdown 文件层（人格 seed、人工编辑、跨端同步）
 ```
 
 默认配置为 `sqlite-milvus`：点开 `Start-Live2D-Studio.exe` 时，启动器会后台启动 memory data service，并请求项目托管的 `yachiyo-milvus-standalone` Docker 容器；如果 Docker Desktop 已安装但尚未运行，sidecar 会先尝试拉起 Docker Desktop。关闭启动器时会请求 sidecar 停止 Milvus 容器。首次启动需要本机 Docker 可用，并可能拉取 `milvusdb/milvus:latest` 镜像。
 
-Obsidian 仍作为可选 provider 保留。选择 Obsidian 时，Obsidian 本身不需要提供 API，本项目直接读写 vault 里的 `.md` 和 `.json` 文件。
+Obsidian 不再是默认运行时记忆引擎。它在当前架构里是最底层 Markdown 文件层：保存八千代人格 seed、让用户手动编辑记忆、通过 Obsidian Sync/Git/网盘等方式做跨端同步。运行时检索、写入、巩固、画像和 trace 以 SQLite + Milvus 为准；Obsidian 文件可作为导入源或人工治理出口。
 
 SQLite/Milvus provider 采用 EverMemOS 风格生命周期：
 
@@ -437,17 +439,18 @@ SQLite/Milvus provider 采用 EverMemOS 风格生命周期：
 - Profile：从 profile/viewer/style/policy/session 等 MemCell 慢更新候选画像，保留 evidence。
 - Recollection：`/api/memory/search` 先检索 scene，再 rerank cell，返回 sufficiency、missing information 和 retrieval trace。
 
-### Vault 初始化
+### 文件层初始化
 
 在 Settings > Memory 中配置：
 
 - Memory provider
-- SQLite/Milvus 或 Obsidian 相关路径
+- SQLite/Milvus 路径
+- 可选 Obsidian / Markdown vault 导入路径
 - Retrieval mode
 - Write mode
 - Max notes per turn
 
-点击 `Initialize Vault` 后会创建结构：
+需要生成可编辑人格/同步文件层时，点击 `Initialize Vault` 后会创建结构：
 
 ```text
 00_Inbox/
@@ -462,7 +465,7 @@ SQLite/Milvus provider 采用 EverMemOS 风格生命周期：
 .yachiyo-index/
 ```
 
-并从 `memory-seeds/obsidian/` 写入八千代人格 seed 笔记。
+并从 `memory-seeds/obsidian/` 写入八千代人格 seed 笔记。默认运行时会把这些 seed 导入 SQLite/Milvus；Obsidian 侧主要用于用户阅读、编辑和跨端同步。
 
 如果目标文件已经被你手动编辑过，不会覆盖。只有旧的 TODO 占位文件会被 seed 替换。
 
@@ -477,7 +480,7 @@ SQLite/Milvus provider 采用 EverMemOS 风格生命周期：
 5. 生成 sufficiency check；证据不足时返回 missing information。
 6. 前端格式化为 `Reconstructed long-term memory`，包含 scene、facts、foresight 后注入 prompt。
 
-默认不会读取整个 vault。
+默认不会读取整个 vault；只有初始化、导入或用户主动配置 Markdown vault 时，文件层才进入索引流程。
 
 ### 写入
 
@@ -491,30 +494,34 @@ LLM 只能输出结构化 `memory_writes`，不能直接写文件。
 - 敏感信息过滤
 - viewer/session 开关
 
-默认 `writeMode = inbox-only`，会写入：
+默认 `writeMode = auto-approved`。运行时低风险记忆会先写入 SQLite `memories`，随后形成 MemCell、归入 MemScene，并同步 Milvus 向量索引；Raw Log 会保留原始 turn 证据。
+
+当用户需要人工编辑或跨端同步时，可以把人格 seed / 记忆文件放在 Obsidian vault 中作为 Markdown 文件层。文件层的 inbox 结构仍保留：
 
 ```text
 00_Inbox/pending-memory.md
 ```
 
-`auto-approved` 模式下，低风险内容可写入正式目录；涉及 canon、profile、lore、policy 或冲突风险的内容仍进入 `pending-review.md`。
+涉及 canon、profile、lore、policy 或冲突风险的内容，应通过 Profile、Conflict 和 Markdown 文件层进行人工治理。
 
 ### 治理
 
 Memory 面板支持：
 
 - List Notes
+- Consolidate
+- Profile
 - Disable
 - Enable
 - Delete
 
-禁用记录写入：
+SQLite/Milvus 运行时禁用或删除会更新 `memories` 与关联 MemCell 状态；Obsidian / Markdown 文件层保留以下治理文件用于人工同步：
 
 ```text
 .yachiyo-index/disabled-memory.json
 ```
 
-删除不会直接物理删除，而是移动到：
+文件层删除不会直接物理删除，而是移动到：
 
 ```text
 00_Inbox/deleted/
