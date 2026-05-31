@@ -6,25 +6,26 @@ const ROOM_ACT_EVENT = 'tsukuyomi:room-act';
 const STAGE_ACTUATOR_STATE_KEY = '__TSUKUYOMI_LIVE2D_STAGE_BODY_ACTUATOR_STATE__';
 const DEFAULT_STAGE_MOTION_SCALE = 1.16;
 const DEFAULT_STAGE_IDLE_SCALE = 1.18;
-const STAGE_MOTION_FADE_OUT_MS = 420;
+const STAGE_MOTION_FADE_OUT_MS = 620;
+const STAGE_MOTION_RELEASE_PROGRESS = 0.86;
 const STAGE_POSE_MAX_STEP = {
-  x: 14,
-  y: 9,
-  rotate: 1.35,
-  scale: 0.012
+  x: 12,
+  y: 7.8,
+  rotate: 1.12,
+  scale: 0.01
 };
 const STAGE_LERP_PROFILES = {
   idle: {
-    x: 310,
-    y: 390,
-    rotate: 370,
-    scale: 440
+    x: 350,
+    y: 430,
+    rotate: 420,
+    scale: 500
   },
   motion: {
-    x: 245,
-    y: 320,
-    rotate: 310,
-    scale: 380
+    x: 285,
+    y: 365,
+    rotate: 360,
+    scale: 440
   }
 };
 const BODY_PARAMETER_HINTS = [
@@ -609,6 +610,19 @@ export function mountLive2DStageBodyActuator(containerSelector = '#live2d-contai
     frameId = 0;
   }
 
+  function releaseActiveMotion(now, progress, fadeOutMs = STAGE_MOTION_FADE_OUT_MS) {
+    if (!activeMotion) return;
+    const progressAtRelease = clamp(progress, 0, 1, 0);
+    outgoingMotion = {
+      ...activeMotion,
+      releasedAt: now,
+      progressAtRelease,
+      fadeOutMs,
+      releasedPose: sampleLive2DStagePose(activeMotion, progressAtRelease, readStageMotionScale())
+    };
+    activeMotion = null;
+  }
+
   function render(now = performance.now()) {
     const deltaMs = lastRenderAt ? Math.min(Math.max(now - lastRenderAt, 8), 64) : 1000 / 60;
     lastRenderAt = now;
@@ -632,16 +646,21 @@ export function mountLive2DStageBodyActuator(containerSelector = '#live2d-contai
         outgoingMotion = null;
       } else {
         const progress = outgoingMotion.progressAtRelease + age / outgoingMotion.durationMs;
+        const trailingPose = outgoingMotion.releasedPose ||
+          sampleLive2DStagePose(outgoingMotion, progress, readStageMotionScale());
         pose = combineCanvasPoses(
           pose,
-          scaleCanvasPose(sampleLive2DStagePose(outgoingMotion, progress, readStageMotionScale()), fade)
+          scaleCanvasPose(trailingPose, fade)
         );
       }
     }
     if (floatEnabled && activeMotion && !planDrivenMotion) {
-      const progress = (now - startMs) / activeMotion.durationMs;
+      const rawProgress = (now - startMs) / activeMotion.durationMs;
+      const progress = clamp(rawProgress, 0, 1, 0);
       pose = combineCanvasPoses(pose, sampleLive2DStagePose(activeMotion, progress, readStageMotionScale()));
-      if (progress >= 1) activeMotion = null;
+      if (rawProgress >= STAGE_MOTION_RELEASE_PROGRESS) {
+        releaseActiveMotion(now, progress);
+      }
     }
     pose = {
       ...pose,
@@ -662,12 +681,7 @@ export function mountLive2DStageBodyActuator(containerSelector = '#live2d-contai
   function startMotion(motion) {
     const now = performance.now();
     if (activeMotion) {
-      outgoingMotion = {
-        ...activeMotion,
-        releasedAt: now,
-        progressAtRelease: clamp((now - startMs) / activeMotion.durationMs, 0, 1, 0),
-        fadeOutMs: STAGE_MOTION_FADE_OUT_MS
-      };
+      releaseActiveMotion(now, (now - startMs) / activeMotion.durationMs);
     }
     activeMotion = motion;
     startMs = now;
