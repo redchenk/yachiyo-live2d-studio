@@ -1,3 +1,5 @@
+import { naturalAutoBlinkOpen } from './live2dBlinkTiming';
+
 const FACE_CAPTURE_EVENT = 'tsukuyomi:live2d-face';
 const ROOM_ACT_EVENT = 'tsukuyomi:room-act';
 const MOUTH_EVENT = 'tsukuyomi:live2d-mouth';
@@ -87,12 +89,7 @@ function readFaceCaptureScale() {
 }
 
 function blinkOpenAt(timeSeconds, expressionEye = 0.94) {
-  const cycle = 3.7 + 0.35 * Math.sin(timeSeconds * 0.19);
-  const phase = ((timeSeconds + 0.31 * Math.sin(timeSeconds * 0.41)) % cycle + cycle) % cycle;
-  if (phase < 0.055) return expressionEye * (1 - phase / 0.055);
-  if (phase < 0.095) return 0.02;
-  if (phase < 0.22) return expressionEye * ((phase - 0.095) / 0.125);
-  return expressionEye;
+  return naturalAutoBlinkOpen(Number(timeSeconds) * 1000, expressionEye);
 }
 
 export function sampleLive2DFaceCapture(nowMs, state = {}) {

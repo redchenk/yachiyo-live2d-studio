@@ -25,6 +25,7 @@ import {
   publishRoomLive2DDebugState,
   summarizeDebugParameters
 } from './live2dDebug';
+import { naturalAutoBlinkOpen } from './live2dBlinkTiming';
 
 const ROOM_ACT_EVENT = 'tsukuyomi:room-act';
 const FACE_CAPTURE_EVENT = 'tsukuyomi:live2d-face';
@@ -972,14 +973,7 @@ function activeBehaviorSamples(actions, elapsedMs) {
 }
 
 function autoBlinkOpen(nowMs, baseOpen = 0.92) {
-  const seconds = Number(nowMs || 0) / 1000;
-  const cycle = 3.35 + 0.28 * Math.sin(seconds * 0.17);
-  const phase = ((seconds + 0.41 * Math.sin(seconds * 0.31)) % cycle + cycle) % cycle;
-  const open = clampFallback(baseOpen, 0.62, 1, 0.92);
-  if (phase < 0.085) return open * (1 - phase / 0.085);
-  if (phase < 0.165) return 0.015;
-  if (phase < 0.35) return open * ((phase - 0.165) / 0.185);
-  return open;
+  return naturalAutoBlinkOpen(nowMs, baseOpen);
 }
 
 function pickDominantMotion(samples) {
