@@ -6,6 +6,7 @@ export const ROOM_MODEL_SETTINGS_KEY = 'roomModelSettings';
 export const ROOM_VTS_SETTINGS_KEY = 'roomVTubeStudioSettings';
 export const ROOM_MEMORY_SETTINGS_KEY = 'roomMemorySettings';
 export const ROOM_ASR_SETTINGS_KEY = 'roomASRSettings';
+export const ROOM_MUSIC_SETTINGS_KEY = 'roomMusicSettings';
 const ROOM_MODEL_STAGE_DEFAULTS_MIGRATION_KEY = 'roomModelStageDefaultsMigratedV2';
 const ROOM_MODEL_RENDER_DEFAULTS_MIGRATION_KEY = 'roomModelRenderDefaultsMigratedV2';
 const ROOM_MEMORY_MANAGED_MILVUS_DEFAULTS_MIGRATION_KEY = 'roomMemoryManagedMilvusDefaultsMigratedV1';
@@ -92,6 +93,15 @@ export const DEFAULT_ROOM_MEMORY_SETTINGS = {
   maxNotesPerTurn: 4,
   allowViewerMemory: true,
   allowSessionMemory: true
+};
+
+export const DEFAULT_ROOM_MUSIC_SETTINGS = {
+  enabled: false,
+  provider: 'apple-music',
+  developerToken: '',
+  musicUserToken: '',
+  storefront: 'cn',
+  autoAuthorize: true
 };
 
 function clone(value) {
@@ -275,6 +285,23 @@ export function normalizeRoomMemorySettings(settings = {}) {
   };
 }
 
+export function normalizeRoomMusicSettings(settings = {}) {
+  const merged = { ...DEFAULT_ROOM_MUSIC_SETTINGS, ...(settings || {}) };
+  const provider = asText(merged.provider) === 'apple-music'
+    ? 'apple-music'
+    : DEFAULT_ROOM_MUSIC_SETTINGS.provider;
+  const storefront = asText(merged.storefront).toLowerCase().replace(/[^a-z]/g, '').slice(0, 2) ||
+    DEFAULT_ROOM_MUSIC_SETTINGS.storefront;
+  return {
+    enabled: asBoolean(merged.enabled),
+    provider,
+    developerToken: String(merged.developerToken || '').trim(),
+    musicUserToken: String(merged.musicUserToken || '').trim(),
+    storefront,
+    autoAuthorize: asBoolean(merged.autoAuthorize)
+  };
+}
+
 function upgradeLegacyRoomMemoryDefaults(settings, rawSettings = {}) {
   if (typeof localStorage === 'undefined') return settings;
   try {
@@ -337,6 +364,10 @@ export function readRoomMemorySettings() {
   );
 }
 
+export function readRoomMusicSettings() {
+  return normalizeRoomMusicSettings(readJson(ROOM_MUSIC_SETTINGS_KEY, clone(DEFAULT_ROOM_MUSIC_SETTINGS)));
+}
+
 export function writeRoomLLMSettings(settings) {
   const normalized = normalizeRoomLLMSettings(settings);
   writeJson(ROOM_LLM_SETTINGS_KEY, normalized);
@@ -373,6 +404,12 @@ export function writeRoomMemorySettings(settings) {
   return normalized;
 }
 
+export function writeRoomMusicSettings(settings) {
+  const normalized = normalizeRoomMusicSettings(settings);
+  writeJson(ROOM_MUSIC_SETTINGS_KEY, normalized);
+  return normalized;
+}
+
 export function readRoomStudioSettings() {
   return {
     llm: readRoomLLMSettings(),
@@ -380,6 +417,7 @@ export function readRoomStudioSettings() {
     asr: readRoomASRSettings(),
     model: readRoomModelSettings(),
     vts: readRoomVTubeStudioSettings(),
-    memory: readRoomMemorySettings()
+    memory: readRoomMemorySettings(),
+    music: readRoomMusicSettings()
   };
 }

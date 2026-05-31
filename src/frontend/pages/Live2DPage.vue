@@ -19,6 +19,7 @@ import {
   readRoomLive2DDebugState
 } from '../services/room/live2dDebug';
 import { createLive2DAsrRecorder } from '../services/room/live2dAsr';
+import { executeLive2DMusicCommand } from '../services/room/live2dMusic';
 import { createLive2DSpeechPlayer } from '../services/room/live2dSpeech';
 import { cleanLive2DReply } from '../services/room/live2dText';
 import {
@@ -416,6 +417,35 @@ function pushLog(role, text, meta = {}) {
   ].slice(-10);
 }
 
+async function executeMusicFromLLMResult(result, source = 'manual') {
+  if (!result?.music) return null;
+  try {
+    const musicResult = await executeLive2DMusicCommand(result.music);
+    if (!musicResult || musicResult.status === 'disabled') return musicResult;
+    if (musicResult.status === 'playing') {
+      pushLog('system', `Apple Music playing: ${musicResult.title || musicResult.songId || 'song'}`, {
+        music: musicResult,
+        source
+      });
+    } else {
+      pushLog('system', `Apple Music ${musicResult.status}.`, {
+        music: musicResult,
+        source
+      });
+    }
+    return musicResult;
+  } catch (error) {
+    const message = error?.message || 'Apple Music failed';
+    llmState.value = {
+      ...llmState.value,
+      error: message
+    };
+    if (source === 'live') liveDirector.error = message;
+    pushLog('system', `Apple Music: ${message}`, { source });
+    return null;
+  }
+}
+
 function shouldJoinWithSpace(left, right) {
   return /[A-Za-z0-9]$/.test(String(left || '').trim()) && /^[A-Za-z0-9]/.test(String(right || '').trim());
 }
@@ -615,6 +645,7 @@ async function performLLMAct(message, source = 'manual', options = {}) {
         arousal: 0.62
       });
     }
+    await executeMusicFromLLMResult(result, source);
     return { ...result, reply: visibleReply };
   } catch (error) {
     llmState.value = {
@@ -761,6 +792,7 @@ async function performStreamingLiveTurn(message) {
       live2d: finalResult.live2d
     };
     liveDirector.turn += 1;
+    await executeMusicFromLLMResult(finalResult, 'live');
     await Promise.allSettled(playbackPromises);
     if (queuedSpeechCount > 0 && finalResult.live2d && queuedLive2DCount > 0 && dispatchedStreamLive2DCount < 1) {
       dispatchRoomLive2D(alignLive2DToSpeech(finalResult.live2d, Number(finalResult.live2d.durationMs) || 0));

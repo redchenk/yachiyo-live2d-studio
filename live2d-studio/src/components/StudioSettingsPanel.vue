@@ -6,6 +6,7 @@ import {
   DEFAULT_ROOM_ASR_SETTINGS,
   DEFAULT_ROOM_MEMORY_SETTINGS,
   DEFAULT_ROOM_MODEL_SETTINGS,
+  DEFAULT_ROOM_MUSIC_SETTINGS,
   DEFAULT_ROOM_TTS_SETTINGS,
   DEFAULT_ROOM_VTS_SETTINGS,
   DEFAULT_MIMO_TTS_API_URL,
@@ -15,21 +16,28 @@ import {
   normalizeRoomASRSettings,
   normalizeRoomMemorySettings,
   normalizeRoomModelSettings,
+  normalizeRoomMusicSettings,
   normalizeRoomTTSSettings,
   normalizeRoomVTubeStudioSettings,
   readRoomLLMSettings,
   readRoomASRSettings,
   readRoomMemorySettings,
   readRoomModelSettings,
+  readRoomMusicSettings,
   readRoomTTSSettings,
   readRoomVTubeStudioSettings,
   writeRoomLLMSettings,
   writeRoomASRSettings,
   writeRoomMemorySettings,
   writeRoomModelSettings,
+  writeRoomMusicSettings,
   writeRoomTTSSettings,
   writeRoomVTubeStudioSettings
 } from '@frontend/services/room/roomSettings';
+import {
+  authorizeLive2DMusic,
+  unauthorizeLive2DMusic
+} from '@frontend/services/room/live2dMusic';
 import {
   consolidateLive2DMemory,
   deleteLive2DMemoryNote,
@@ -49,6 +57,7 @@ const tabs = [
   { id: 'asr', label: 'ASR' },
   { id: 'model', label: 'Model' },
   { id: 'vts', label: 'VTS' },
+  { id: 'music', label: 'Music' },
   { id: 'memory', label: 'Memory' }
 ];
 
@@ -107,6 +116,7 @@ const memoryBusy = ref('');
 const memoryManagePath = ref('');
 const memorySearchQuery = ref('');
 const memoryNotes = ref([]);
+const musicBusy = ref('');
 const memoryCells = ref([]);
 const memoryScenes = ref([]);
 const memoryProfile = ref([]);
@@ -118,12 +128,14 @@ const tts = reactive(readRoomTTSSettings());
 const asr = reactive(readRoomASRSettings());
 const model = reactive(readRoomModelSettings());
 const vts = reactive(readRoomVTubeStudioSettings());
+const music = reactive(readRoomMusicSettings());
 const memory = reactive(readRoomMemorySettings());
 
 let statusTimer = 0;
 
 const localTts = computed(() => tts.provider === 'gpt-sovits');
 const sqliteMemory = computed(() => memory.provider === 'sqlite-milvus' || memory.provider === 'sqlite');
+const musicAuthorized = computed(() => Boolean(music.musicUserToken));
 const memoryStats = computed(() => {
   const notes = Array.isArray(memoryNotes.value) ? memoryNotes.value : [];
   const disabled = notes.filter((note) => note?.disabled).length;
@@ -164,6 +176,7 @@ function reloadSettings() {
   Object.assign(asr, readRoomASRSettings());
   Object.assign(model, readRoomModelSettings());
   Object.assign(vts, readRoomVTubeStudioSettings());
+  Object.assign(music, readRoomMusicSettings());
   Object.assign(memory, readRoomMemorySettings());
   setStatus('Reloaded');
 }
@@ -179,6 +192,8 @@ function resetCurrentTab() {
     Object.assign(model, normalizeRoomModelSettings(DEFAULT_ROOM_MODEL_SETTINGS));
   } else if (activeTab.value === 'vts') {
     Object.assign(vts, normalizeRoomVTubeStudioSettings(DEFAULT_ROOM_VTS_SETTINGS));
+  } else if (activeTab.value === 'music') {
+    Object.assign(music, normalizeRoomMusicSettings(DEFAULT_ROOM_MUSIC_SETTINGS));
   } else {
     Object.assign(memory, normalizeRoomMemorySettings(DEFAULT_ROOM_MEMORY_SETTINGS));
   }
@@ -236,6 +251,7 @@ function saveSettings() {
   const savedASR = writeRoomASRSettings(asr);
   const savedModel = writeRoomModelSettings(model);
   const savedVTS = writeRoomVTubeStudioSettings(vts);
+  const savedMusic = writeRoomMusicSettings(music);
   const savedMemory = writeRoomMemorySettings(memory);
 
   Object.assign(llm, savedLLM);
@@ -243,11 +259,44 @@ function saveSettings() {
   Object.assign(asr, savedASR);
   Object.assign(model, savedModel);
   Object.assign(vts, savedVTS);
+  Object.assign(music, savedMusic);
   Object.assign(memory, savedMemory);
   window.dispatchEvent(new CustomEvent('tsukuyomi:studio-settings-saved', {
-    detail: { llm: savedLLM, tts: savedTTS, asr: savedASR, model: savedModel, vts: savedVTS, memory: savedMemory }
+    detail: { llm: savedLLM, tts: savedTTS, asr: savedASR, model: savedModel, vts: savedVTS, music: savedMusic, memory: savedMemory }
   }));
   setStatus('Saved');
+}
+
+async function authorizeMusic() {
+  if (musicBusy.value) return;
+  musicBusy.value = 'authorize';
+  try {
+    const savedMusic = writeRoomMusicSettings(music);
+    Object.assign(music, savedMusic);
+    const authorized = await authorizeLive2DMusic(savedMusic);
+    Object.assign(music, authorized);
+    setStatus('Apple Music authorized');
+  } catch (error) {
+    setStatus(error?.message || 'Apple Music authorization failed');
+  } finally {
+    musicBusy.value = '';
+  }
+}
+
+async function disconnectMusic() {
+  if (musicBusy.value) return;
+  musicBusy.value = 'disconnect';
+  try {
+    const savedMusic = writeRoomMusicSettings(music);
+    Object.assign(music, savedMusic);
+    const disconnected = await unauthorizeLive2DMusic(savedMusic);
+    Object.assign(music, disconnected);
+    setStatus('Apple Music disconnected');
+  } catch (error) {
+    setStatus(error?.message || 'Apple Music disconnect failed');
+  } finally {
+    musicBusy.value = '';
+  }
 }
 
 function noteTitle(note) {
@@ -639,6 +688,54 @@ onUnmounted(() => {
           <input v-model="vts.injectMouth" type="checkbox">
           <span>Mouth sync</span>
         </label>
+      </section>
+
+      <section v-else-if="activeTab === 'music'" class="studio-settings-section">
+        <label class="studio-check-row">
+          <input v-model="music.enabled" type="checkbox">
+          <span>Enable music control</span>
+        </label>
+        <label>
+          <span>Provider</span>
+          <select v-model="music.provider">
+            <option value="apple-music">Apple Music</option>
+          </select>
+        </label>
+        <label>
+          <span>Storefront</span>
+          <input v-model="music.storefront" type="text" maxlength="2" spellcheck="false" placeholder="cn">
+        </label>
+        <label class="studio-check-row">
+          <input v-model="music.autoAuthorize" type="checkbox">
+          <span>Auto authorize</span>
+        </label>
+        <label class="studio-wide-field">
+          <span>Developer Token</span>
+          <input v-model="music.developerToken" type="password" spellcheck="false" placeholder="JWT developer token">
+        </label>
+        <label class="studio-wide-field">
+          <span>Music User Token</span>
+          <input v-model="music.musicUserToken" type="password" spellcheck="false" placeholder="Stored after authorization">
+        </label>
+        <div class="studio-memory-actions studio-wide-field">
+          <button
+            class="studio-primary-btn"
+            type="button"
+            :disabled="Boolean(musicBusy) || !music.developerToken.trim()"
+            @click="authorizeMusic"
+          >
+            <TsIcon name="music" :size="16" />
+            <span>{{ musicAuthorized ? 'Reauthorize' : 'Authorize' }}</span>
+          </button>
+          <button
+            class="studio-secondary-btn"
+            type="button"
+            :disabled="Boolean(musicBusy) || !musicAuthorized"
+            @click="disconnectMusic"
+          >
+            Disconnect
+          </button>
+        </div>
       </section>
 
       <section v-else class="studio-settings-section">

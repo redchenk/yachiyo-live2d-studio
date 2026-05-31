@@ -22,6 +22,7 @@ import {
   sanitizeMemoryWrites,
   writePendingLive2DMemories
 } from './live2dMemory';
+import { normalizeLive2DMusicCommand } from './live2dMusic';
 import { readJson, writeJson } from './roomStorage';
 
 const HISTORY_KEY = 'live2dLLMControlHistory';
@@ -713,6 +714,7 @@ export function parseLive2DControlPayload(rawText) {
     return {
       reply: reply || 'OK.',
       live2d,
+      music: normalizeLive2DMusicCommand(data.music || data.appleMusic || data.song_request || data.songRequest),
       memoryWrites: normalizeMemoryWritesFromPayload(data),
       raw: data
     };
@@ -725,6 +727,7 @@ export function parseLive2DControlPayload(rawText) {
     return {
       reply,
       live2d: mergeBehaviorAndExplicitIntent(behaviorLive2D, inferredLive2D),
+      music: null,
       memoryWrites: [],
       raw: rawText
     };
@@ -904,7 +907,7 @@ export function live2DControlSystemPrompt() {
     'Yachiyo is being tested as an autonomous AI VTuber streamer: keep her present, reactive, playful, and concise.',
     'Return exactly one JSON object. Do not use Markdown. Do not add prose outside JSON.',
     'JSON schema:',
-    `{"reply":"short visible reply","emotion":"${SEMANTIC_EMOTION_ID_LIST}","intensity":0.72,"actions":[{"type":"look_at_chat","duration":1.2},{"type":"smirk","duration":2.0},{"type":"head_tilt","side":"right","duration":1.5}],"interruptPolicy":{"mode":"blend","priority":4},"speech_style":{"speed":1.05,"pitch":0.08,"pause":"playful"},"memory_writes":[]}`,
+    `{"reply":"short visible reply","emotion":"${SEMANTIC_EMOTION_ID_LIST}","intensity":0.72,"actions":[{"type":"look_at_chat","duration":1.2},{"type":"smirk","duration":2.0},{"type":"head_tilt","side":"right","duration":1.5}],"interruptPolicy":{"mode":"blend","priority":4},"speech_style":{"speed":1.05,"pitch":0.08,"pause":"playful"},"music":null,"memory_writes":[]}`,
     'The reply field must contain only natural dialogue. Never put stage directions, parenthesized action hints, asterisk actions, action labels, or pose descriptions in reply.',
     'The actions field is required and must contain at least 2 semantic actions. If the moment is calm, use look_at_chat + breathe.',
     'Actions must match the reply meaning and mood. Vary action combos between turns; do not repeat the same body action unless the dialogue specifically calls for it.',
@@ -912,6 +915,8 @@ export function live2DControlSystemPrompt() {
     `Choose 2-5 actions per live-stream turn. Good combos: ${behaviorActionComboPrompt()}.`,
     'Use intensity 0.45-0.85 for normal talking, 0.85-1.0 for punchlines or surprise.',
     'Optional interruptPolicy controls action orchestration: use mode blend for normal replies, replace for urgent reactions, protect for moments that should finish; priority is 0-10.',
+    'Optional music controls Apple Music playback. Only include it when the user explicitly asks to play, pause, resume, or stop music; otherwise set music to null.',
+    'Music schema examples: {"action":"play","query":"song title artist","storefront":"cn"}, {"action":"pause"}, {"action":"resume"}, {"action":"stop"}. Never include tokens or credentials.',
     'Use duration in seconds. Overlapping actions are allowed by repeating similar delay values; omit delay for a natural staggered performance.',
     'Only when a durable, low-risk memory is clearly confirmed, include memory_writes items with scope, type, title, text, optional episode, facts, foresight, importance, confidence, and tags. Otherwise use an empty array.',
     'Memory facts must be atomic and verifiable. Foresight must be conservative, evidence-based, and include confidence when useful.',
@@ -933,7 +938,7 @@ export function live2DStreamingControlSystemPrompt() {
     'For TTS stability, do not use tiny fragments; the first VOICE should include at least one short phrase, not only a filler.',
     'VOICE: next natural Japanese clause or short sentence, normally about 18-32 Japanese characters.',
     'VOICE: combine tiny comma clauses instead of making every comma its own TTS chunk; prefer one stable phrase over many tiny fragments.',
-    `CONTROL: {"reply":"same Japanese spoken text without VOICE labels","emotion":"${SEMANTIC_EMOTION_ID_LIST}","intensity":0.72,"actions":[{"type":"look_at_chat","duration":1.2},{"type":"smirk","duration":2.0}],"interruptPolicy":{"mode":"blend","priority":4},"speech_style":{"speed":1.05,"pitch":0.08,"pause":"playful"},"memory_writes":[]}`,
+    `CONTROL: {"reply":"same Japanese spoken text without VOICE labels","emotion":"${SEMANTIC_EMOTION_ID_LIST}","intensity":0.72,"actions":[{"type":"look_at_chat","duration":1.2},{"type":"smirk","duration":2.0}],"interruptPolicy":{"mode":"blend","priority":4},"speech_style":{"speed":1.05,"pitch":0.08,"pause":"playful"},"music":null,"memory_writes":[]}`,
     'Each BEAT must be a single-line JSON object and must appear immediately before the VOICE it controls.',
     'BEAT contains only semantic fields: emotion, intensity, actions, and speech_style. Keep it short so the first VOICE can start quickly.',
     'The VOICE lines must come before CONTROL. Emit the first BEAT and VOICE before planning the full answer. Do not wait for CONTROL before speaking.',
@@ -946,6 +951,7 @@ export function live2DStreamingControlSystemPrompt() {
     `Good action combos: ${behaviorActionComboPrompt()}.`,
     'Use intensity 0.45-0.85 for normal talking, 0.85-1.0 for punchlines or surprise.',
     'Optional interruptPolicy controls action orchestration: mode blend for normal replies, replace for urgent reactions, protect for a beat that should complete; priority is 0-10.',
+    'Optional music controls Apple Music playback in the final CONTROL only. Use it only when the user explicitly asks for music; otherwise set music to null. Examples: {"action":"play","query":"song title artist","storefront":"cn"}, {"action":"pause"}, {"action":"resume"}, {"action":"stop"}. Never include tokens or credentials.',
     'Only when a durable, low-risk memory is clearly confirmed, include memory_writes items with scope, type, title, text, optional episode, facts, foresight, importance, confidence, and tags. Otherwise use an empty array.',
     'Memory facts must be atomic and verifiable. Foresight must be conservative, evidence-based, and include confidence when useful.',
     'Never propose secrets, API keys, sensitive personal data, raw chat dumps, guesses about a user, or negative personality labels as memory.',
