@@ -44,14 +44,23 @@ body.vue-live2d-route {
 }
 
 .live2d-model {
+    --live2d-user-x: 0px;
+    --live2d-user-y: 0px;
+    --live2d-user-scale: 1;
     position: absolute;
     left: 50%;
     bottom: -2.8vh;
     width: min(54vw, 820px);
     height: min(91vh, 920px);
-    transform: translateX(-50%);
+    transform: translate(calc(-50% + var(--live2d-user-x)), var(--live2d-user-y)) scale(var(--live2d-user-scale));
     transform-origin: 50% 84%;
+    cursor: grab;
+    user-select: none;
     transition: opacity 0.18s ease, filter 0.18s ease;
+}
+
+.live2d-model.dragging {
+    cursor: grabbing;
 }
 
 .live2d-model::before {

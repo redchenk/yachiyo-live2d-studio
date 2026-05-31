@@ -33,6 +33,13 @@ const muted = ref(false);
 const modelHidden = ref(false);
 const modelLocked = ref(false);
 const micGain = ref(70);
+const modelContainerRef = ref(null);
+const modelViewport = reactive({
+  x: 0,
+  y: 0,
+  scale: 1,
+  dragging: false
+});
 const llmState = ref({
   loading: false,
   error: '',
@@ -63,10 +70,19 @@ const debugPanelOpen = ref(
 );
 const live2dDebug = ref(readRoomLive2DDebugState());
 
+const MODEL_VIEWPORT_STORAGE_KEY = 'yachiyo:live2d:modelViewport';
+const MODEL_VIEWPORT_LIMITS = Object.freeze({
+  minScale: 0.55,
+  maxScale: 2.4,
+  maxX: 900,
+  maxY: 680
+});
+
 let liveTimer = 0;
 let liveTurnInFlight = false;
 let speechPlayer = null;
 let asrRecorder = null;
+let modelDragState = null;
 const CHARACTER_STATE_EVENT = 'tsukuyomi:live2d-character-state';
 const SETTINGS_SAVED_EVENT = 'tsukuyomi:studio-settings-saved';
 
@@ -146,6 +162,116 @@ function toggleLive2DDebugPanel() {
   if (typeof localStorage !== 'undefined') {
     localStorage.setItem('roomLive2DDebugPanelOpen', debugPanelOpen.value ? 'true' : 'false');
   }
+}
+
+function clampModelViewportNumber(value, min, max, fallback = 0) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return fallback;
+  return Math.min(Math.max(numeric, min), max);
+}
+
+function normalizeModelViewport(value = {}) {
+  return {
+    x: clampModelViewportNumber(value.x, -MODEL_VIEWPORT_LIMITS.maxX, MODEL_VIEWPORT_LIMITS.maxX),
+    y: clampModelViewportNumber(value.y, -MODEL_VIEWPORT_LIMITS.maxY, MODEL_VIEWPORT_LIMITS.maxY),
+    scale: clampModelViewportNumber(
+      value.scale,
+      MODEL_VIEWPORT_LIMITS.minScale,
+      MODEL_VIEWPORT_LIMITS.maxScale,
+      1
+    )
+  };
+}
+
+function saveModelViewport() {
+  if (typeof localStorage === 'undefined') return;
+  localStorage.setItem(MODEL_VIEWPORT_STORAGE_KEY, JSON.stringify({
+    x: Math.round(modelViewport.x),
+    y: Math.round(modelViewport.y),
+    scale: Number(modelViewport.scale.toFixed(3))
+  }));
+}
+
+function applyModelViewportTransform({ persist = false } = {}) {
+  const container = modelContainerRef.value;
+  if (container) {
+    container.style.setProperty('--live2d-user-x', `${modelViewport.x.toFixed(2)}px`);
+    container.style.setProperty('--live2d-user-y', `${modelViewport.y.toFixed(2)}px`);
+    container.style.setProperty('--live2d-user-scale', modelViewport.scale.toFixed(4));
+  }
+  if (persist) saveModelViewport();
+}
+
+function setModelViewport(patch, options = {}) {
+  const next = normalizeModelViewport({
+    x: patch.x ?? modelViewport.x,
+    y: patch.y ?? modelViewport.y,
+    scale: patch.scale ?? modelViewport.scale
+  });
+  modelViewport.x = next.x;
+  modelViewport.y = next.y;
+  modelViewport.scale = next.scale;
+  applyModelViewportTransform(options);
+}
+
+function loadModelViewport() {
+  if (typeof localStorage !== 'undefined') {
+    try {
+      setModelViewport(JSON.parse(localStorage.getItem(MODEL_VIEWPORT_STORAGE_KEY) || '{}') || {});
+      return;
+    } catch (_) {
+      localStorage.removeItem(MODEL_VIEWPORT_STORAGE_KEY);
+    }
+  }
+  applyModelViewportTransform();
+}
+
+function startModelDrag(event) {
+  if (modelLocked.value || (event.pointerType === 'mouse' && event.button !== 0)) return;
+  modelDragState = {
+    pointerId: event.pointerId,
+    startX: event.clientX,
+    startY: event.clientY,
+    originX: modelViewport.x,
+    originY: modelViewport.y
+  };
+  modelViewport.dragging = true;
+  try {
+    event.currentTarget?.setPointerCapture?.(event.pointerId);
+  } catch (_) {}
+  event.preventDefault();
+}
+
+function dragModel(event) {
+  if (!modelDragState || event.pointerId !== modelDragState.pointerId) return;
+  setModelViewport({
+    x: modelDragState.originX + event.clientX - modelDragState.startX,
+    y: modelDragState.originY + event.clientY - modelDragState.startY
+  });
+  event.preventDefault();
+}
+
+function endModelDrag(event) {
+  if (!modelDragState || event.pointerId !== modelDragState.pointerId) return;
+  try {
+    if (event.currentTarget?.hasPointerCapture?.(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+  } catch (_) {}
+  modelDragState = null;
+  modelViewport.dragging = false;
+  saveModelViewport();
+}
+
+function zoomModel(event) {
+  if (modelLocked.value) return;
+  const factor = Math.exp(-Number(event.deltaY || 0) * 0.0012);
+  setModelViewport({ scale: modelViewport.scale * factor }, { persist: true });
+  event.preventDefault();
+}
+
+function resetModelViewport() {
+  setModelViewport({ x: 0, y: 0, scale: 1 }, { persist: true });
 }
 
 const statusLabel = computed(() => {
@@ -799,6 +925,7 @@ function handleLive2DDebugEvent(event) {
 onMounted(() => {
   window.addEventListener(SETTINGS_SAVED_EVENT, handleStudioSettingsSaved);
   window.addEventListener(ROOM_LIVE2D_DEBUG_EVENT, handleLive2DDebugEvent);
+  loadModelViewport();
   live2dDebug.value = readRoomLive2DDebugState();
   init();
 });
@@ -806,6 +933,8 @@ onMounted(() => {
 onUnmounted(() => {
   window.removeEventListener(SETTINGS_SAVED_EVENT, handleStudioSettingsSaved);
   window.removeEventListener(ROOM_LIVE2D_DEBUG_EVENT, handleLive2DDebugEvent);
+  modelDragState = null;
+  modelViewport.dragging = false;
   stopLiveDirector();
   speechPlayer?.destroy();
   asrRecorder?.destroy();
@@ -826,9 +955,18 @@ onUnmounted(() => {
     <section class="live2d-stage" aria-label="Yachiyo Live2D stage">
       <div
         id="live2d-container"
+        ref="modelContainerRef"
         class="live2d-model"
-        :class="{ hidden: modelHidden, locked: modelLocked }"
+        :class="{ hidden: modelHidden, locked: modelLocked, dragging: modelViewport.dragging }"
         :data-speaking="speechState.status === 'playing' ? 'true' : undefined"
+        title="拖动模型，滚轮缩放"
+        @pointerdown="startModelDrag"
+        @pointermove="dragModel"
+        @pointerup="endModelDrag"
+        @pointercancel="endModelDrag"
+        @lostpointercapture="endModelDrag"
+        @wheel.prevent="zoomModel"
+        @dblclick="resetModelViewport"
       ></div>
       <div v-if="live2d.error.value" class="live2d-error" role="alert">{{ live2d.error.value }}</div>
 

@@ -530,9 +530,10 @@ function applyModelContainerPose(container, pose) {
   container.style.transformOrigin = '50% 84%';
   container.style.willChange = 'transform';
   container.style.transform = [
-    `translate(calc(-50% + ${pose.x.toFixed(2)}px), ${pose.y.toFixed(2)}px)`,
+    `translate(calc(-50% + ${pose.x.toFixed(2)}px + var(--live2d-user-x, 0px)), calc(${pose.y.toFixed(2)}px + var(--live2d-user-y, 0px)))`,
     `rotate(${pose.rotate.toFixed(3)}deg)`,
-    `scale(${pose.scale.toFixed(4)})`
+    `scale(${pose.scale.toFixed(4)})`,
+    'scale(var(--live2d-user-scale, 1))'
   ].join(' ');
   setStageActuatorState({
     mounted: true,
