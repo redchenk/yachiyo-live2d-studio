@@ -432,6 +432,8 @@ function bodyPosePerformanceSequence(baseStep, manifest) {
   const peakFactor = bodyPosePeakFactors[baseStep.bodyPose] ?? 1.16;
 
   const windup = normalizeLive2DStep({
+    source: baseStep.source,
+    speechStyle: baseStep.speechStyle,
     emotion: baseStep.emotion,
     expression: baseStep.expression,
     expressionMix: baseStep.expressionMix,
@@ -448,6 +450,8 @@ function bodyPosePerformanceSequence(baseStep, manifest) {
     delayMs: 0
   }, manifest);
   const settle = normalizeLive2DStep({
+    source: baseStep.source,
+    speechStyle: baseStep.speechStyle,
     parameters: transformPoseTargets(poseTargets, 0, settleDuration, manifest, 0.72),
     intensity: 0.5,
     durationMs: settleDuration,
@@ -514,6 +518,7 @@ function normalizeLive2DStep(input, manifest = roomLive2DManifest) {
     parameters,
     behaviorActions,
     speechStyle: input.speechStyle || input.speech_style || null,
+    source: String(input.source || input.origin || '').trim().slice(0, 64) || null,
     priority: Number.isFinite(Number(input.priority)) ? Number(input.priority) : null,
     interruptPolicy: input.interruptPolicy || input.interrupt || null,
     intensity,

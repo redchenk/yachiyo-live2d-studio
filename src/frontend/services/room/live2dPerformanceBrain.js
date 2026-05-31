@@ -29,6 +29,10 @@ function clamp(value, min, max, fallback = min) {
   return Math.min(Math.max(numeric, min), max);
 }
 
+function isStreamingSpeechSource(source) {
+  return String(source || '').trim().toLowerCase() === 'streaming-speech';
+}
+
 function resolveExpression(detail = {}) {
   return normalizeSemanticExpressionId(
     detail.expression ||
@@ -135,11 +139,14 @@ export function createLive2DPerformanceBrain() {
     }
     behaviorPlan = nextPlan;
     invalidateFrameCache();
-    characterState.setMode('acting', {
+    const speechSynchronized = isStreamingSpeechSource(nextPlan.source || options.source);
+    characterState.setMode(speechSynchronized ? 'speaking' : 'acting', {
       now,
-      holdMs: nextPlan.durationMs + 420,
-      attention: 0.86,
-      arousal: 0.72
+      holdMs: nextPlan.durationMs + (speechSynchronized ? 760 : 420),
+      emotion: speechSynchronized ? (options.emotion || expression) : null,
+      emotionHoldMs: speechSynchronized ? nextPlan.durationMs + 960 : null,
+      attention: speechSynchronized ? 0.88 : 0.86,
+      arousal: speechSynchronized ? 0.68 : 0.72
     });
     appendRoomLive2DDebugEvent('behavior-plan-start', {
       source: nextPlan.source || options.source || 'room-act',
@@ -161,9 +168,23 @@ export function createLive2DPerformanceBrain() {
       return lastRoomActResult;
     }
     invalidateFrameCache();
-    characterState.onRoomAct(detail, at);
     const behaviorActions = resolveBehaviorActions(detail);
     const expression = resolveExpression(detail);
+    const source = detail.source || 'room-act';
+    const speechSynchronized = isStreamingSpeechSource(source);
+    if (speechSynchronized) {
+      const durationMs = clamp(detail.durationMs || detail.duration, 800, 12000, 2600);
+      characterState.onExternalState({
+        mode: 'speaking',
+        holdMs: durationMs + 760,
+        emotionHoldMs: durationMs + 960,
+        emotion: detail.emotion || detail.mood || expression,
+        attention: 0.88,
+        arousal: detail.emotion === 'sad' || detail.emotion === 'crying' ? 0.5 : 0.68
+      }, at);
+    } else {
+      characterState.onRoomAct(detail, at);
+    }
     let nextPlan = null;
     if (behaviorActions.length) {
       nextPlan = startBehaviorPlan(behaviorActions, detail.durationMs || detail.duration, {
@@ -172,7 +193,7 @@ export function createLive2DPerformanceBrain() {
         emotion: detail.emotion || detail.mood,
         intensity: detail.intensity,
         priority: detail.priority,
-        source: detail.source || 'room-act',
+        source,
         interruptPolicy: detail.interruptPolicy || detail.interrupt,
         speechStyle: detail.speechStyle || detail.speech_style
       });
