@@ -10,6 +10,11 @@ import {
 } from '../services/room/live2dLlmControl';
 import { dispatchRoomLive2D } from '../services/room/live2dControl';
 import {
+  alignLive2DIntentToStreamingSpeech,
+  createLive2DStreamingSpeechSession,
+  streamingSpeechHoldMs
+} from '../services/room/live2dStreamingSpeechSession';
+import {
   ROOM_LIVE2D_DEBUG_EVENT,
   readRoomLive2DDebugState
 } from '../services/room/live2dDebug';
@@ -82,6 +87,7 @@ const MODEL_VIEWPORT_LIMITS = Object.freeze({
 let liveTimer = 0;
 let liveTurnInFlight = false;
 let speechPlayer = null;
+let streamingSpeechSession = null;
 let asrRecorder = null;
 let modelDragState = null;
 const CHARACTER_STATE_EVENT = 'tsukuyomi:live2d-character-state';
@@ -456,13 +462,32 @@ function dispatchCharacterState(mode, detail = {}) {
   }));
 }
 
+function dispatchStreamingSpeechStart(durationMs = 0, detail = {}) {
+  if (streamingSpeechSession) {
+    streamingSpeechSession.lineStarted({ durationMs, ...detail });
+    return;
+  }
+  dispatchCharacterState('speaking', {
+    holdMs: streamingSpeechHoldMs(durationMs),
+    emotion: detail.emotion,
+    emotionHoldMs: Math.max(Number(durationMs) || 0, 1800),
+    attention: detail.attention ?? 0.88,
+    arousal: detail.arousal ?? (detail.emotion === 'sad' || detail.emotion === 'crying' ? 0.5 : 0.72)
+  });
+}
+
 async function init() {
   if (booted.value) return;
   booted.value = true;
   window.TSUKUYOMI_LIVE2D_DISABLE_POINTER = true;
+  streamingSpeechSession = createLive2DStreamingSpeechSession({
+    dispatchCharacterState,
+    isLiveDirectorRunning: () => liveDirector.running
+  });
   speechPlayer = createLive2DSpeechPlayer({
     onState: (patch) => {
       speechState.value = { ...speechState.value, ...patch };
+      if (streamingSpeechSession?.handleSpeechStatePatch(patch)) return;
       if (patch.status === 'loading') {
         dispatchCharacterState('thinking', { holdMs: 1800, attention: 0.78, arousal: 0.46 });
       } else if (patch.status === 'playing') {
@@ -517,47 +542,8 @@ function runParameterTargets(parameters) {
   });
 }
 
-function behaviorActionEndMs(actions = []) {
-  return Math.max(
-    0,
-    ...actions.map((action) => (Number(action.delayMs) || 0) + (Number(action.durationMs) || 0))
-  );
-}
-
-function stretchBehaviorActions(actions = [], targetDurationMs = 0) {
-  const currentEndMs = behaviorActionEndMs(actions);
-  if (!Array.isArray(actions) || !actions.length || !currentEndMs || !targetDurationMs) return actions;
-  const scale = Math.min(Math.max(targetDurationMs / currentEndMs, 1), 3.2);
-  if (scale <= 1.08) return actions;
-  return actions.map((action) => ({
-    ...action,
-    delayMs: Math.round((Number(action.delayMs) || 0) * scale),
-    durationMs: Math.round(Math.min(Math.max((Number(action.durationMs) || 1000) * scale, 360), 6800))
-  }));
-}
-
 function alignLive2DToSpeech(intent, speechDurationMs = 0) {
-  if (!intent || typeof intent !== 'object') return intent;
-  const currentEndMs = Math.max(
-    Number(intent.durationMs) || 0,
-    behaviorActionEndMs(intent.behaviorActions)
-  );
-  const targetDurationMs = Math.min(Math.max(Number(speechDurationMs) || 0, currentEndMs, 1400), 14000);
-  const alignStep = (step) => {
-    if (!step || typeof step !== 'object') return step;
-    const behaviorActions = Array.isArray(step.behaviorActions)
-      ? stretchBehaviorActions(step.behaviorActions, targetDurationMs)
-      : step.behaviorActions;
-    return {
-      ...step,
-      durationMs: Math.max(Number(step.durationMs) || 0, targetDurationMs),
-      behaviorActions
-    };
-  };
-  return {
-    ...alignStep(intent),
-    sequence: Array.isArray(intent.sequence) ? intent.sequence.map(alignStep) : intent.sequence
-  };
+  return alignLive2DIntentToStreamingSpeech(intent, speechDurationMs);
 }
 
 function runGreeting() {
@@ -648,7 +634,10 @@ async function performStreamingLiveTurn(message) {
   let streamedReply = '';
   let finalResult = null;
   let queuedSpeechCount = 0;
+  let queuedLive2DCount = 0;
+  let dispatchedStreamLive2DCount = 0;
 
+  streamingSpeechSession?.begin();
   dispatchCharacterState('thinking', { holdMs: 2400, attention: 0.82, arousal: 0.5 });
   llmState.value = {
     ...llmState.value,
@@ -681,15 +670,17 @@ async function performStreamingLiveTurn(message) {
               live2d: sentence.live2d
             };
           });
-          if (sentence.live2d) dispatchRoomLive2D(alignLive2DToSpeech(sentence.live2d, durationMs));
-          dispatchCharacterState('speaking', {
-            holdMs: Math.max(durationMs || 0, 1200),
+          if (sentence.live2d) {
+            dispatchedStreamLive2DCount += 1;
+            dispatchRoomLive2D(alignLive2DToSpeech(sentence.live2d, durationMs));
+          }
+          dispatchStreamingSpeechStart(durationMs, {
             emotion: sentence.emotion,
-            emotionHoldMs: Math.max(durationMs || 0, 1800),
             attention: 0.88,
             arousal: sentence.emotion === 'sad' || sentence.emotion === 'crying' ? 0.5 : 0.72
           });
         };
+        if (sentence.live2d) queuedLive2DCount += 1;
         llmState.value = {
           loading: true,
           error: '',
@@ -699,6 +690,7 @@ async function performStreamingLiveTurn(message) {
         };
         liveDirector.status = 'speaking';
         queuedSpeechCount += 1;
+        streamingSpeechSession?.queueLine();
         playbackPromises.push(speechPlayer.enqueue(speechSentence, {
           emotion: sentence.emotion,
           speechStyle: sentence.speechStyle,
@@ -706,6 +698,8 @@ async function performStreamingLiveTurn(message) {
         }).catch((error) => {
           if (error?.name === 'AbortError') return;
           speechState.value = { status: 'error', error: error.message || 'TTS failed' };
+        }).finally(() => {
+          streamingSpeechSession?.lineSettled();
         }));
       }
     });
@@ -713,7 +707,7 @@ async function performStreamingLiveTurn(message) {
     const visibleReply = queuedSpeechCount < 1
       ? visibleYachiyoText(await translateLive2DReplyToChinese(finalResult.reply).catch(() => '')) || 'OK.'
       : streamedReply;
-    if (queuedSpeechCount > 0 && finalResult.live2d) {
+    if (queuedSpeechCount > 0 && finalResult.live2d && queuedLive2DCount < 1) {
       dispatchRoomLive2D(alignLive2DToSpeech(finalResult.live2d, Number(finalResult.live2d.durationMs) || 0));
     }
     if (queuedSpeechCount < 1 && visibleReply) {
@@ -721,6 +715,7 @@ async function performStreamingLiveTurn(message) {
       const finalCaptionPromise = translateLive2DReplyToChinese(finalSpeech)
         .then((caption) => visibleYachiyoText(caption))
         .catch(() => visibleReply);
+      streamingSpeechSession?.queueLine();
       playbackPromises.push(speechPlayer.enqueue(finalSpeech, {
         emotion: finalResult.live2d?.emotion || finalResult.live2d?.expression || 'neutral',
         speechStyle: finalResult.live2d?.speechStyle || null,
@@ -741,10 +736,15 @@ async function performStreamingLiveTurn(message) {
             };
           });
           if (finalResult.live2d) dispatchRoomLive2D(alignLive2DToSpeech(finalResult.live2d, durationMs));
+          dispatchStreamingSpeechStart(durationMs, {
+            emotion: finalResult.live2d?.emotion || finalResult.live2d?.expression || 'neutral'
+          });
         }
       }).catch((error) => {
         if (error?.name === 'AbortError') return;
         speechState.value = { status: 'error', error: error.message || 'TTS failed' };
+      }).finally(() => {
+        streamingSpeechSession?.lineSettled();
       }));
     } else if (visibleReply) {
       upsertLogLine(logId, 'yachiyo', visibleReply, {
@@ -762,9 +762,13 @@ async function performStreamingLiveTurn(message) {
     };
     liveDirector.turn += 1;
     await Promise.allSettled(playbackPromises);
-    dispatchCharacterState('listening', { holdMs: 1000, attention: 0.62 });
+    if (queuedSpeechCount > 0 && finalResult.live2d && queuedLive2DCount > 0 && dispatchedStreamLive2DCount < 1) {
+      dispatchRoomLive2D(alignLive2DToSpeech(finalResult.live2d, Number(finalResult.live2d.durationMs) || 0));
+    }
+    streamingSpeechSession?.finish({ delayMs: 520 });
     return { ...finalResult, reply: visibleReply };
   } catch (error) {
+    streamingSpeechSession?.cancel({ dispatchState: true });
     llmState.value = {
       ...llmState.value,
       loading: false,
@@ -870,6 +874,7 @@ function stopLiveDirector() {
   liveDirector.status = 'idle';
   window.clearTimeout(liveTimer);
   liveTimer = 0;
+  streamingSpeechSession?.cancel();
   speechPlayer?.stop();
   dispatchCharacterState('idle', { holdMs: 1200, attention: 0.32, arousal: 0.28 });
   pushLog('system', 'Live director stopped.');
@@ -937,9 +942,11 @@ onUnmounted(() => {
   modelDragState = null;
   modelViewport.dragging = false;
   stopLiveDirector();
+  streamingSpeechSession?.cancel();
   speechPlayer?.destroy();
   asrRecorder?.destroy();
   speechPlayer = null;
+  streamingSpeechSession = null;
   asrRecorder = null;
   delete window.TSUKUYOMI_LIVE2D_DISABLE_POINTER;
 });
