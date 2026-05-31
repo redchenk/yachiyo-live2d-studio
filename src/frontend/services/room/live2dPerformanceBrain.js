@@ -17,6 +17,7 @@ import {
 } from './live2dDebug';
 
 let sharedPerformanceBrain = null;
+const STREAMING_QUEUE_HANDOFF_GRACE_MS = 1200;
 
 function nowMs() {
   if (typeof performance !== 'undefined' && typeof performance.now === 'function') return performance.now();
@@ -63,6 +64,7 @@ export function createLive2DPerformanceBrain() {
   const characterState = createLive2DCharacterStateMachine();
   let behaviorPlan = null;
   let outgoingPlan = null;
+  let recentReleasedPlan = null;
   let cachedFrameKey = -1;
   let cachedFrame = null;
   let lastRoomActDetail = null;
@@ -77,6 +79,12 @@ export function createLive2DPerformanceBrain() {
   function releaseBehaviorPlan(plan, at, fadeOutMs = 0) {
     if (!plan) return;
     const elapsedAtRelease = Math.max(0, at - (Number(plan.startedAt) || at));
+    recentReleasedPlan = {
+      plan,
+      releasedAt: at,
+      elapsedAtRelease,
+      expiresAt: at + STREAMING_QUEUE_HANDOFF_GRACE_MS
+    };
     outgoingPlan = {
       plan,
       releasedAt: at,
@@ -119,6 +127,17 @@ export function createLive2DPerformanceBrain() {
     if (!isStreamingSpeechSource(currentPlan.source) || !isStreamingSpeechSource(nextPlan.source)) return false;
     const elapsed = Math.max(0, at - (Number(currentPlan.startedAt) || at));
     return elapsed <= Number(currentPlan.durationMs || 0) + 1200;
+  }
+
+  function recentStreamingHandoffPlan(nextPlan, at) {
+    if (!recentReleasedPlan || !nextPlan) return null;
+    if (at > Number(recentReleasedPlan.expiresAt || 0)) {
+      recentReleasedPlan = null;
+      return null;
+    }
+    return shouldExtendStreamingBehaviorPlan(recentReleasedPlan.plan, nextPlan, at)
+      ? recentReleasedPlan.plan
+      : null;
   }
 
   function extendStreamingBehaviorPlan(currentPlan, nextPlan, at, options = {}) {
@@ -186,6 +205,15 @@ export function createLive2DPerformanceBrain() {
     });
     if (shouldExtendStreamingBehaviorPlan(behaviorPlan, nextPlan, now)) {
       return extendStreamingBehaviorPlan(behaviorPlan, nextPlan, now, options);
+    }
+    const handoffPlan = behaviorPlan ? null : recentStreamingHandoffPlan(nextPlan, now);
+    if (handoffPlan) {
+      outgoingPlan = null;
+      recentReleasedPlan = null;
+      return extendStreamingBehaviorPlan(handoffPlan, nextPlan, now, {
+        ...options,
+        source: options.source || 'streaming-speech'
+      });
     }
     if (!shouldInterruptLive2DBehaviorPlan(behaviorPlan, nextPlan, now)) {
       appendRoomLive2DDebugEvent('behavior-plan-protected', {
@@ -292,6 +320,9 @@ export function createLive2DPerformanceBrain() {
     const frameKey = `${Math.floor(Number(now) / 16)}:${intensityScale.toFixed(3)}`;
     if (cachedFrame && cachedFrameKey === frameKey) return cachedFrame;
     const currentPlan = behaviorPlan;
+    if (recentReleasedPlan && now > Number(recentReleasedPlan.expiresAt || 0)) {
+      recentReleasedPlan = null;
+    }
     const elapsedMs = currentPlan ? now - currentPlan.startedAt : 0;
     if (currentPlan && elapsedMs >= currentPlan.durationMs) {
       releaseBehaviorPlan(currentPlan, now, currentPlan.interruptPolicy?.blendOutMs);
