@@ -1,11 +1,5 @@
 # Yachiyo Live2D Studio
 
-## Memory Runtime Note
-
-As of 2026-06-01, the default runtime memory layer is SQLite + Milvus. The persona corpus at `E:\visualstudio\yachiyo_novel_detailed_corpus.txt` is imported as stable `persona` source data; Obsidian remains the bottom Markdown layer for seed files, manual editing, and cross-device sync.
-
-Runtime memory is persistent and self-updating: `/api/memory/record-turn` stores raw turns and updates a durable session rollup MemCell, `/api/memory/write` promotes important events into `memory_anchors`, `/api/memory/search` boosts anchored recall and updates recall counters, and `/api/memory/gc` protects persona/seed/vault/profile/policy/anchored memories while archiving or forgetting low-value expired runtime noise.
-
 八千代 Live2D 本地桌面工作室，面向 AI VTuber / Neuro-sama 风格直播实验。
 
 本项目的核心目标不是只渲染一个 Live2D 模型，而是把 LLM、TTS、语义动作、VTube Studio 参数注入、长期记忆和八千代人格资料整合成一套可本地一键启动的直播控制台。
