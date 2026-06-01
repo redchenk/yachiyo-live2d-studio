@@ -2,9 +2,11 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
+using System.Drawing.Imaging;
 using System.IO;
 using System.Net;
 using System.Net.Sockets;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
 using System.Windows.Forms;
@@ -388,6 +390,12 @@ internal sealed class LocalStudioServer : IDisposable
                 return;
             }
 
+            if (method == "POST" && string.Equals(path, "/api/vision/context", StringComparison.OrdinalIgnoreCase))
+            {
+                WriteApiResponse(stream, DesktopApiProxy.VisionContext(request.Body));
+                return;
+            }
+
             if (method == "POST" && string.Equals(path, "/api/memory/search", StringComparison.OrdinalIgnoreCase))
             {
                 WriteApiResponse(stream, DesktopApiProxy.MemorySearch(request.Body));
@@ -768,6 +776,49 @@ internal static class DesktopApiProxy
     private static readonly object AsrServiceLock = new object();
     private static Process memoryDataServiceProcess;
     private static Process asrServiceProcess;
+    private const int DefaultVisionCropSize = 768;
+    private const int MaxVisionCropSize = 1400;
+    private const uint GA_ROOT = 2;
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct NativePoint
+    {
+        public int X;
+        public int Y;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct NativeRect
+    {
+        public int Left;
+        public int Top;
+        public int Right;
+        public int Bottom;
+    }
+
+    [DllImport("user32.dll")]
+    private static extern bool GetCursorPos(out NativePoint point);
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr WindowFromPoint(NativePoint point);
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr GetForegroundWindow();
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr GetAncestor(IntPtr hWnd, uint gaFlags);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern int GetWindowText(IntPtr hWnd, StringBuilder text, int maxCount);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern int GetClassName(IntPtr hWnd, StringBuilder className, int maxCount);
+
+    [DllImport("user32.dll")]
+    private static extern bool GetWindowRect(IntPtr hWnd, out NativeRect rect);
+
+    [DllImport("user32.dll")]
+    private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
 
     public static void Configure(string root)
     {
@@ -830,6 +881,214 @@ internal static class DesktopApiProxy
                 // Best-effort cleanup for the optional ASR sidecar.
             }
         }
+    }
+
+    public static StudioApiResponse VisionContext(byte[] body)
+    {
+        try
+        {
+            var input = ParseObject(body);
+            if (!GetBoolean(input, "enabled", true))
+            {
+                return JsonOk(new Dictionary<string, object>
+                {
+                    { "success", true },
+                    { "enabled", false }
+                });
+            }
+
+            NativePoint nativePoint;
+            if (!GetCursorPos(out nativePoint))
+            {
+                return JsonError(500, "Unable to read cursor position.");
+            }
+
+            var cursor = new Point(nativePoint.X, nativePoint.Y);
+            var cropSize = (int)Math.Round(GetDouble(input, "cropSize", DefaultVisionCropSize, 256, MaxVisionCropSize));
+            var includeImages = GetBoolean(input, "includeImages", true) && GetBoolean(input, "sendScreenshot", true);
+            var includeFullScreen = GetBoolean(input, "includeFullScreen", false);
+            var pointerWindow = DescribeWindow(WindowFromPoint(nativePoint), "pointer");
+            var foregroundWindow = DescribeWindow(GetForegroundWindow(), "foreground");
+            var redacted = LooksSensitiveVisionWindow(pointerWindow) || LooksSensitiveVisionWindow(foregroundWindow);
+            var screenBounds = SystemInformation.VirtualScreen;
+            var payload = new Dictionary<string, object>
+            {
+                { "success", true },
+                { "enabled", true },
+                { "capturedAt", DateTime.UtcNow.ToString("o") },
+                { "cursor", new Dictionary<string, object> { { "x", cursor.X }, { "y", cursor.Y } } },
+                { "screen", RectPayload(screenBounds) },
+                { "pointerWindow", pointerWindow },
+                { "foregroundWindow", foregroundWindow },
+                { "redacted", redacted }
+            };
+
+            if (redacted)
+            {
+                payload["redactionReason"] = "sensitive-window";
+            }
+            else if (includeImages)
+            {
+                payload["image"] = CaptureVisionImages(cursor, cropSize, includeFullScreen);
+            }
+
+            return JsonOk(payload);
+        }
+        catch (Exception ex)
+        {
+            return JsonError(500, ex.Message);
+        }
+    }
+
+    private static Dictionary<string, object> CaptureVisionImages(Point cursor, int cropSize, bool includeFullScreen)
+    {
+        var virtualBounds = SystemInformation.VirtualScreen;
+        var cropRect = ClampRectAroundPoint(cursor, cropSize, virtualBounds);
+        var image = new Dictionary<string, object>
+        {
+            { "mimeType", "image/png" },
+            { "cursorCropRect", RectPayload(cropRect) }
+        };
+
+        using (var crop = new Bitmap(cropRect.Width, cropRect.Height, PixelFormat.Format32bppArgb))
+        using (var graphics = Graphics.FromImage(crop))
+        {
+            graphics.CopyFromScreen(new Point(cropRect.Left, cropRect.Top), Point.Empty, cropRect.Size);
+            DrawCursorMarker(graphics, new Point(cursor.X - cropRect.Left, cursor.Y - cropRect.Top));
+            image["cursorCropBase64"] = BitmapToPngBase64(crop);
+        }
+
+        if (includeFullScreen)
+        {
+            using (var full = new Bitmap(virtualBounds.Width, virtualBounds.Height, PixelFormat.Format32bppArgb))
+            using (var graphics = Graphics.FromImage(full))
+            {
+                graphics.CopyFromScreen(new Point(virtualBounds.Left, virtualBounds.Top), Point.Empty, virtualBounds.Size);
+                DrawCursorMarker(graphics, new Point(cursor.X - virtualBounds.Left, cursor.Y - virtualBounds.Top));
+                image["fullScreenBase64"] = BitmapToPngBase64(full);
+                image["fullScreenRect"] = RectPayload(virtualBounds);
+            }
+        }
+
+        return image;
+    }
+
+    private static Rectangle ClampRectAroundPoint(Point point, int size, Rectangle bounds)
+    {
+        var width = Math.Min(Math.Max(1, size), Math.Max(1, bounds.Width));
+        var height = Math.Min(Math.Max(1, size), Math.Max(1, bounds.Height));
+        var left = point.X - width / 2;
+        var top = point.Y - height / 2;
+        if (left < bounds.Left) left = bounds.Left;
+        if (top < bounds.Top) top = bounds.Top;
+        if (left + width > bounds.Right) left = bounds.Right - width;
+        if (top + height > bounds.Bottom) top = bounds.Bottom - height;
+        return new Rectangle(left, top, width, height);
+    }
+
+    private static void DrawCursorMarker(Graphics graphics, Point point)
+    {
+        using (var pen = new Pen(Color.FromArgb(230, 255, 64, 96), 3))
+        using (var brush = new SolidBrush(Color.FromArgb(72, 255, 64, 96)))
+        {
+            graphics.DrawLine(pen, point.X - 22, point.Y, point.X + 22, point.Y);
+            graphics.DrawLine(pen, point.X, point.Y - 22, point.X, point.Y + 22);
+            graphics.FillEllipse(brush, point.X - 18, point.Y - 18, 36, 36);
+            graphics.DrawEllipse(pen, point.X - 18, point.Y - 18, 36, 36);
+        }
+    }
+
+    private static string BitmapToPngBase64(Bitmap bitmap)
+    {
+        using (var stream = new MemoryStream())
+        {
+            bitmap.Save(stream, ImageFormat.Png);
+            return Convert.ToBase64String(stream.ToArray());
+        }
+    }
+
+    private static Dictionary<string, object> DescribeWindow(IntPtr handle, string relation)
+    {
+        if (handle == IntPtr.Zero)
+        {
+            return new Dictionary<string, object> { { "relation", relation }, { "available", false } };
+        }
+
+        var root = GetAncestor(handle, GA_ROOT);
+        if (root == IntPtr.Zero) root = handle;
+        uint processId;
+        GetWindowThreadProcessId(root, out processId);
+        var title = ReadWindowText(root);
+        if (string.IsNullOrWhiteSpace(title)) title = ReadWindowText(handle);
+        var className = ReadClassName(root);
+        NativeRect nativeRect;
+        var bounds = GetWindowRect(root, out nativeRect)
+            ? RectPayload(new Rectangle(nativeRect.Left, nativeRect.Top, Math.Max(0, nativeRect.Right - nativeRect.Left), Math.Max(0, nativeRect.Bottom - nativeRect.Top)))
+            : new Dictionary<string, object>();
+        var processName = string.Empty;
+        var processPath = string.Empty;
+        try
+        {
+            var process = Process.GetProcessById((int)processId);
+            processName = process.ProcessName;
+            try { processPath = process.MainModule != null ? process.MainModule.FileName : string.Empty; } catch { processPath = string.Empty; }
+        }
+        catch
+        {
+            processName = string.Empty;
+        }
+
+        return new Dictionary<string, object>
+        {
+            { "relation", relation },
+            { "available", true },
+            { "title", title },
+            { "className", className },
+            { "processId", processId },
+            { "processName", processName },
+            { "processPath", processPath },
+            { "bounds", bounds }
+        };
+    }
+
+    private static string ReadWindowText(IntPtr handle)
+    {
+        var builder = new StringBuilder(512);
+        GetWindowText(handle, builder, builder.Capacity);
+        return builder.ToString();
+    }
+
+    private static string ReadClassName(IntPtr handle)
+    {
+        var builder = new StringBuilder(256);
+        GetClassName(handle, builder, builder.Capacity);
+        return builder.ToString();
+    }
+
+    private static Dictionary<string, object> RectPayload(Rectangle rect)
+    {
+        return new Dictionary<string, object>
+        {
+            { "x", rect.Left },
+            { "y", rect.Top },
+            { "width", rect.Width },
+            { "height", rect.Height },
+            { "right", rect.Right },
+            { "bottom", rect.Bottom }
+        };
+    }
+
+    private static bool LooksSensitiveVisionWindow(Dictionary<string, object> window)
+    {
+        if (window == null || !GetBoolean(window, "available", false)) return false;
+        var text = string.Join(" ", new[]
+        {
+            GetString(window, "title"),
+            GetString(window, "className"),
+            GetString(window, "processName"),
+            GetString(window, "processPath")
+        });
+        return RegexContains(text, @"password|passwd|secret|token|credential|1password|bitwarden|keepass|authenticator|private browsing|incognito|银行|支付|密码|验证码|令牌|密钥");
     }
 
     public static StudioApiResponse Chat(byte[] body)
@@ -2666,6 +2925,7 @@ internal static class DesktopApiProxy
     private static Dictionary<string, object> BuildChatPayload(Dictionary<string, object> input, string apiUrl, string model, string systemPrompt, string message)
     {
         var history = new List<object>();
+        var vision = GetObject(input, "vision");
         var rawHistory = GetArray(input, "conversation");
         if (rawHistory != null)
         {
@@ -2686,7 +2946,7 @@ internal static class DesktopApiProxy
             {
                 inputList.Add(item);
             }
-            inputList.Add(new Dictionary<string, object> { { "role", "user" }, { "content", message } });
+            inputList.Add(new Dictionary<string, object> { { "role", "user" }, { "content", BuildVisionUserContent(message, vision, true) } });
             return new Dictionary<string, object>
             {
                 { "model", string.IsNullOrWhiteSpace(model) ? "gpt-4o-mini" : model },
@@ -2705,7 +2965,7 @@ internal static class DesktopApiProxy
         {
             messages.Add(item);
         }
-        messages.Add(new Dictionary<string, object> { { "role", "user" }, { "content", message } });
+        messages.Add(new Dictionary<string, object> { { "role", "user" }, { "content", BuildVisionUserContent(message, vision, false) } });
 
         return new Dictionary<string, object>
         {
@@ -2714,6 +2974,40 @@ internal static class DesktopApiProxy
             { "temperature", RegexContains(apiUrl + " " + model, @"moonshot|kimi") ? 1 : 0.4 },
             { "max_tokens", 1000 },
             { "stream", false }
+        };
+    }
+
+    private static object BuildVisionUserContent(string message, Dictionary<string, object> vision, bool responsesApi)
+    {
+        if (vision == null || !GetBoolean(vision, "includeImage", true)) return message;
+        var imageBase64 = GetString(vision, "imageBase64");
+        if (string.IsNullOrWhiteSpace(imageBase64)) imageBase64 = GetString(vision, "cursorCropBase64");
+        if (string.IsNullOrWhiteSpace(imageBase64)) return message;
+        var mimeType = GetString(vision, "mimeType");
+        if (string.IsNullOrWhiteSpace(mimeType)) mimeType = "image/png";
+        var detail = GetString(vision, "detail");
+        if (string.IsNullOrWhiteSpace(detail)) detail = "low";
+        var dataUrl = imageBase64.StartsWith("data:", StringComparison.OrdinalIgnoreCase)
+            ? imageBase64
+            : "data:" + mimeType + ";base64," + imageBase64;
+
+        if (responsesApi)
+        {
+            return new List<object>
+            {
+                new Dictionary<string, object> { { "type", "input_text" }, { "text", message } },
+                new Dictionary<string, object> { { "type", "input_image" }, { "image_url", dataUrl }, { "detail", detail } }
+            };
+        }
+
+        return new List<object>
+        {
+            new Dictionary<string, object> { { "type", "text" }, { "text", message } },
+            new Dictionary<string, object>
+            {
+                { "type", "image_url" },
+                { "image_url", new Dictionary<string, object> { { "url", dataUrl }, { "detail", detail } } }
+            }
         };
     }
 

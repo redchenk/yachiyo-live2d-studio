@@ -7,6 +7,7 @@ export const ROOM_VTS_SETTINGS_KEY = 'roomVTubeStudioSettings';
 export const ROOM_MEMORY_SETTINGS_KEY = 'roomMemorySettings';
 export const ROOM_ASR_SETTINGS_KEY = 'roomASRSettings';
 export const ROOM_MUSIC_SETTINGS_KEY = 'roomMusicSettings';
+export const ROOM_VISION_SETTINGS_KEY = 'roomVisionSettings';
 const ROOM_MODEL_STAGE_DEFAULTS_MIGRATION_KEY = 'roomModelStageDefaultsMigratedV2';
 const ROOM_MODEL_RENDER_DEFAULTS_MIGRATION_KEY = 'roomModelRenderDefaultsMigratedV2';
 const ROOM_MEMORY_MANAGED_MILVUS_DEFAULTS_MIGRATION_KEY = 'roomMemoryManagedMilvusDefaultsMigratedV1';
@@ -109,6 +110,15 @@ export const DEFAULT_ROOM_MUSIC_SETTINGS = {
   musicUserToken: '',
   storefront: 'cn',
   autoAuthorize: true
+};
+
+export const DEFAULT_ROOM_VISION_SETTINGS = {
+  enabled: true,
+  includeScreenshot: true,
+  includeFullScreen: false,
+  cropSize: 768,
+  detail: 'low',
+  maxPromptChars: 1600
 };
 
 function clone(value) {
@@ -316,6 +326,21 @@ export function normalizeRoomMusicSettings(settings = {}) {
   };
 }
 
+export function normalizeRoomVisionSettings(settings = {}) {
+  const merged = { ...DEFAULT_ROOM_VISION_SETTINGS, ...(settings || {}) };
+  const detail = ['low', 'high', 'auto'].includes(asText(merged.detail))
+    ? asText(merged.detail)
+    : DEFAULT_ROOM_VISION_SETTINGS.detail;
+  return {
+    enabled: asBoolean(merged.enabled),
+    includeScreenshot: asBoolean(merged.includeScreenshot),
+    includeFullScreen: asBoolean(merged.includeFullScreen),
+    cropSize: Math.round(asNumber(merged.cropSize, DEFAULT_ROOM_VISION_SETTINGS.cropSize, 256, 1400)),
+    detail,
+    maxPromptChars: Math.round(asNumber(merged.maxPromptChars, DEFAULT_ROOM_VISION_SETTINGS.maxPromptChars, 400, 4000))
+  };
+}
+
 function upgradeLegacyRoomMemoryDefaults(settings, rawSettings = {}) {
   if (typeof localStorage === 'undefined') return settings;
   try {
@@ -382,6 +407,10 @@ export function readRoomMusicSettings() {
   return normalizeRoomMusicSettings(readJson(ROOM_MUSIC_SETTINGS_KEY, clone(DEFAULT_ROOM_MUSIC_SETTINGS)));
 }
 
+export function readRoomVisionSettings() {
+  return normalizeRoomVisionSettings(readJson(ROOM_VISION_SETTINGS_KEY, clone(DEFAULT_ROOM_VISION_SETTINGS)));
+}
+
 export function writeRoomLLMSettings(settings) {
   const normalized = normalizeRoomLLMSettings(settings);
   writeJson(ROOM_LLM_SETTINGS_KEY, normalized);
@@ -424,6 +453,12 @@ export function writeRoomMusicSettings(settings) {
   return normalized;
 }
 
+export function writeRoomVisionSettings(settings) {
+  const normalized = normalizeRoomVisionSettings(settings);
+  writeJson(ROOM_VISION_SETTINGS_KEY, normalized);
+  return normalized;
+}
+
 export function readRoomStudioSettings() {
   return {
     llm: readRoomLLMSettings(),
@@ -432,6 +467,7 @@ export function readRoomStudioSettings() {
     model: readRoomModelSettings(),
     vts: readRoomVTubeStudioSettings(),
     memory: readRoomMemorySettings(),
-    music: readRoomMusicSettings()
+    music: readRoomMusicSettings(),
+    vision: readRoomVisionSettings()
   };
 }

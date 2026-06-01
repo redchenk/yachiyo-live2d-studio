@@ -22,6 +22,7 @@ import {
   sanitizeMemoryWrites,
   writePendingLive2DMemories
 } from './live2dMemory';
+import { buildLive2DVisionPrompt } from './live2dVision';
 import { normalizeLive2DMusicCommand } from './live2dMusic';
 import { readJson, writeJson } from './roomStorage';
 
@@ -845,7 +846,30 @@ export async function translateLive2DReplyToChinese(text) {
   return promise;
 }
 
-function buildDirectRequestBody(settings, systemPrompt, history, message) {
+function visionUserContent(message, visionPayload, responsesApi = false) {
+  if (!visionPayload?.imageBase64) return String(message || '');
+  const imageUrl = String(visionPayload.imageBase64 || '').startsWith('data:')
+    ? visionPayload.imageBase64
+    : `data:${visionPayload.mimeType || 'image/png'};base64,${visionPayload.imageBase64}`;
+  if (responsesApi) {
+    return [
+      { type: 'input_text', text: String(message || '') },
+      { type: 'input_image', image_url: imageUrl, detail: visionPayload.detail || 'low' }
+    ];
+  }
+  return [
+    { type: 'text', text: String(message || '') },
+    {
+      type: 'image_url',
+      image_url: {
+        url: imageUrl,
+        detail: visionPayload.detail || 'low'
+      }
+    }
+  ];
+}
+
+function buildDirectRequestBody(settings, systemPrompt, history, message, visionPayload = null) {
   const apiUrl = normalizeOpenAIUrl(settings.apiUrl || '');
   const model = settings.model || 'gpt-4o-mini';
   if (isOpenAIResponsesApi(apiUrl)) {
@@ -854,7 +878,7 @@ function buildDirectRequestBody(settings, systemPrompt, history, message) {
       instructions: systemPrompt,
       input: [
         ...history.map((item) => ({ role: item.role === 'assistant' ? 'assistant' : 'user', content: String(item.content || '') })),
-        { role: 'user', content: String(message || '') }
+        { role: 'user', content: visionUserContent(message, visionPayload, true) }
       ],
       max_output_tokens: 1000
     };
@@ -864,16 +888,16 @@ function buildDirectRequestBody(settings, systemPrompt, history, message) {
     messages: [
       { role: 'system', content: systemPrompt },
       ...history.map((item) => ({ role: item.role, content: String(item.content || '') })),
-      { role: 'user', content: String(message || '') }
+      { role: 'user', content: visionUserContent(message, visionPayload, false) }
     ],
     temperature: isKimiChatTarget(apiUrl, model) ? 1 : 0.4,
     max_tokens: 1000
   };
 }
 
-function buildStreamingDirectRequestBody(settings, systemPrompt, history, message) {
+function buildStreamingDirectRequestBody(settings, systemPrompt, history, message, visionPayload = null) {
   return {
-    ...buildDirectRequestBody(settings, systemPrompt, history, message),
+    ...buildDirectRequestBody(settings, systemPrompt, history, message, visionPayload),
     stream: true
   };
 }
@@ -978,7 +1002,8 @@ export async function requestLive2DControl(message) {
 
   const history = readLive2DLLMHistory();
   const memoryPrompt = await buildLive2DMemoryPrompt(message);
-  const systemPrompt = [yachiyoCorePersonalityPrompt(), settings.systemPrompt, memoryPrompt, live2DControlSystemPrompt()].filter(Boolean).join('\n\n');
+  const visionContext = await buildLive2DVisionPrompt();
+  const systemPrompt = [yachiyoCorePersonalityPrompt(), settings.systemPrompt, memoryPrompt, visionContext.prompt, live2DControlSystemPrompt()].filter(Boolean).join('\n\n');
   let rawReply = '';
 
   if (settings.useProxy) {
@@ -991,7 +1016,8 @@ export async function requestLive2DControl(message) {
         apiKey: settings.apiKey,
         apiUrl: settings.apiUrl,
         model: settings.model,
-        systemPrompt
+        systemPrompt,
+        vision: visionContext.payload
       })
     });
     const result = await response.json().catch(() => ({}));
@@ -1006,7 +1032,7 @@ export async function requestLive2DControl(message) {
         Authorization: `Bearer ${settings.apiKey}`,
         ...openRouterHeaders(apiUrl)
       },
-      body: JSON.stringify(buildDirectRequestBody({ ...settings, apiUrl }, systemPrompt, history, message))
+      body: JSON.stringify(buildDirectRequestBody({ ...settings, apiUrl }, systemPrompt, history, message, visionContext.payload))
     });
     if (!response.ok) throw new Error(`LLM ${response.status}`);
     rawReply = pickReply(await response.json());
@@ -1023,7 +1049,8 @@ export async function requestLive2DControlStream(message, handlers = {}) {
 
   const history = readLive2DLLMHistory();
   const memoryPrompt = await buildLive2DMemoryPrompt(message);
-  const systemPrompt = [yachiyoCorePersonalityPrompt(), settings.systemPrompt, memoryPrompt, live2DStreamingControlSystemPrompt()].filter(Boolean).join('\n\n');
+  const visionContext = await buildLive2DVisionPrompt();
+  const systemPrompt = [yachiyoCorePersonalityPrompt(), settings.systemPrompt, memoryPrompt, visionContext.prompt, live2DStreamingControlSystemPrompt()].filter(Boolean).join('\n\n');
   const sentenceEmitter = createReplySentenceEmitter(handlers);
   let rawReply = '';
 
@@ -1037,7 +1064,8 @@ export async function requestLive2DControlStream(message, handlers = {}) {
         apiKey: settings.apiKey,
         apiUrl: settings.apiUrl,
         model: settings.model,
-        systemPrompt
+        systemPrompt,
+        vision: visionContext.payload
       })
     });
     if (!response.ok) {
@@ -1066,7 +1094,7 @@ export async function requestLive2DControlStream(message, handlers = {}) {
         Authorization: `Bearer ${settings.apiKey}`,
         ...openRouterHeaders(apiUrl)
       },
-      body: JSON.stringify(buildStreamingDirectRequestBody({ ...settings, apiUrl }, systemPrompt, history, message))
+      body: JSON.stringify(buildStreamingDirectRequestBody({ ...settings, apiUrl }, systemPrompt, history, message, visionContext.payload))
     });
     if (!response.ok) throw new Error(`LLM ${response.status}`);
     rawReply = await readStreamingTextResponse(response, {

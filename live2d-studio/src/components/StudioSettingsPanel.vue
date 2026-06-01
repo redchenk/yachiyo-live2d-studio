@@ -8,6 +8,7 @@ import {
   DEFAULT_ROOM_MODEL_SETTINGS,
   DEFAULT_ROOM_MUSIC_SETTINGS,
   DEFAULT_ROOM_TTS_SETTINGS,
+  DEFAULT_ROOM_VISION_SETTINGS,
   DEFAULT_ROOM_VTS_SETTINGS,
   DEFAULT_MIMO_TTS_API_URL,
   DEFAULT_MIMO_TTS_MODEL,
@@ -18,6 +19,7 @@ import {
   normalizeRoomModelSettings,
   normalizeRoomMusicSettings,
   normalizeRoomTTSSettings,
+  normalizeRoomVisionSettings,
   normalizeRoomVTubeStudioSettings,
   readRoomLLMSettings,
   readRoomASRSettings,
@@ -25,6 +27,7 @@ import {
   readRoomModelSettings,
   readRoomMusicSettings,
   readRoomTTSSettings,
+  readRoomVisionSettings,
   readRoomVTubeStudioSettings,
   writeRoomLLMSettings,
   writeRoomASRSettings,
@@ -32,6 +35,7 @@ import {
   writeRoomModelSettings,
   writeRoomMusicSettings,
   writeRoomTTSSettings,
+  writeRoomVisionSettings,
   writeRoomVTubeStudioSettings
 } from '@frontend/services/room/roomSettings';
 import {
@@ -51,6 +55,7 @@ import {
   rebuildLive2DMemoryIndex,
   startManagedLive2DMemoryMilvus
 } from '@frontend/services/room/live2dMemory';
+import { readLive2DVisionContext } from '@frontend/services/room/live2dVision';
 
 defineEmits(['close']);
 
@@ -60,6 +65,7 @@ const tabs = [
   { id: 'asr', label: 'ASR' },
   { id: 'model', label: 'Model' },
   { id: 'vts', label: 'VTS' },
+  { id: 'vision', label: 'Vision' },
   { id: 'music', label: 'Music' },
   { id: 'memory', label: 'Memory' }
 ];
@@ -120,6 +126,8 @@ const memoryManagePath = ref('');
 const memorySearchQuery = ref('');
 const memoryNotes = ref([]);
 const musicBusy = ref('');
+const visionBusy = ref('');
+const visionLastContext = ref(null);
 const memoryCells = ref([]);
 const memoryScenes = ref([]);
 const memoryAnchors = ref([]);
@@ -133,6 +141,7 @@ const asr = reactive(readRoomASRSettings());
 const model = reactive(readRoomModelSettings());
 const vts = reactive(readRoomVTubeStudioSettings());
 const music = reactive(readRoomMusicSettings());
+const vision = reactive(readRoomVisionSettings());
 const memory = reactive(readRoomMemorySettings());
 
 let statusTimer = 0;
@@ -197,6 +206,7 @@ function reloadSettings() {
   Object.assign(model, readRoomModelSettings());
   Object.assign(vts, readRoomVTubeStudioSettings());
   Object.assign(music, readRoomMusicSettings());
+  Object.assign(vision, readRoomVisionSettings());
   Object.assign(memory, readRoomMemorySettings());
   setStatus('Reloaded');
 }
@@ -214,6 +224,8 @@ function resetCurrentTab() {
     Object.assign(vts, normalizeRoomVTubeStudioSettings(DEFAULT_ROOM_VTS_SETTINGS));
   } else if (activeTab.value === 'music') {
     Object.assign(music, normalizeRoomMusicSettings(DEFAULT_ROOM_MUSIC_SETTINGS));
+  } else if (activeTab.value === 'vision') {
+    Object.assign(vision, normalizeRoomVisionSettings(DEFAULT_ROOM_VISION_SETTINGS));
   } else {
     Object.assign(memory, normalizeRoomMemorySettings(DEFAULT_ROOM_MEMORY_SETTINGS));
   }
@@ -272,6 +284,7 @@ function saveSettings() {
   const savedModel = writeRoomModelSettings(model);
   const savedVTS = writeRoomVTubeStudioSettings(vts);
   const savedMusic = writeRoomMusicSettings(music);
+  const savedVision = writeRoomVisionSettings(vision);
   const savedMemory = writeRoomMemorySettings(memory);
 
   Object.assign(llm, savedLLM);
@@ -280,9 +293,10 @@ function saveSettings() {
   Object.assign(model, savedModel);
   Object.assign(vts, savedVTS);
   Object.assign(music, savedMusic);
+  Object.assign(vision, savedVision);
   Object.assign(memory, savedMemory);
   window.dispatchEvent(new CustomEvent('tsukuyomi:studio-settings-saved', {
-    detail: { llm: savedLLM, tts: savedTTS, asr: savedASR, model: savedModel, vts: savedVTS, music: savedMusic, memory: savedMemory }
+    detail: { llm: savedLLM, tts: savedTTS, asr: savedASR, model: savedModel, vts: savedVTS, music: savedMusic, vision: savedVision, memory: savedMemory }
   }));
   setStatus('Saved');
 }
@@ -316,6 +330,23 @@ async function disconnectMusic() {
     setStatus(error?.message || 'Apple Music disconnect failed');
   } finally {
     musicBusy.value = '';
+  }
+}
+
+async function probeVisionContext() {
+  if (visionBusy.value) return;
+  visionBusy.value = 'probe';
+  try {
+    const savedVision = writeRoomVisionSettings(vision);
+    Object.assign(vision, savedVision);
+    const result = await readLive2DVisionContext(savedVision);
+    visionLastContext.value = result;
+    const title = result.pointerWindow?.title || result.foregroundWindow?.title || 'desktop';
+    setStatus(result.redacted ? 'Vision redacted sensitive window' : `Vision: ${title}`);
+  } catch (error) {
+    setStatus(error?.message || 'Vision probe failed');
+  } finally {
+    visionBusy.value = '';
   }
 }
 
@@ -760,6 +791,47 @@ onUnmounted(() => {
           <input v-model="vts.injectMouth" type="checkbox">
           <span>Mouth sync</span>
         </label>
+      </section>
+
+      <section v-else-if="activeTab === 'vision'" class="studio-settings-section">
+        <label class="studio-check-row">
+          <input v-model="vision.enabled" type="checkbox">
+          <span>Enable desktop vision</span>
+        </label>
+        <label class="studio-check-row">
+          <input v-model="vision.includeScreenshot" type="checkbox">
+          <span>Attach cursor screenshot</span>
+        </label>
+        <label class="studio-check-row">
+          <input v-model="vision.includeFullScreen" type="checkbox">
+          <span>Include full screen</span>
+        </label>
+        <label>
+          <span>Crop Size</span>
+          <input v-model.number="vision.cropSize" type="number" min="256" max="1400" step="64">
+        </label>
+        <label>
+          <span>Image Detail</span>
+          <select v-model="vision.detail">
+            <option value="low">low</option>
+            <option value="auto">auto</option>
+            <option value="high">high</option>
+          </select>
+        </label>
+        <label>
+          <span>Prompt Limit</span>
+          <input v-model.number="vision.maxPromptChars" type="number" min="400" max="4000" step="100">
+        </label>
+        <div class="studio-memory-actions studio-wide-field">
+          <button class="studio-primary-btn" type="button" :disabled="Boolean(visionBusy)" @click="probeVisionContext">
+            <TsIcon name="image" :size="16" />
+            <span>Probe Vision</span>
+          </button>
+        </div>
+        <div v-if="visionLastContext" class="studio-memory-selected studio-wide-field">
+          <span>{{ visionLastContext.redacted ? 'Redacted' : 'Last capture' }}</span>
+          <strong>{{ visionLastContext.pointerWindow?.title || visionLastContext.foregroundWindow?.title || 'Desktop' }}</strong>
+        </div>
       </section>
 
       <section v-else-if="activeTab === 'music'" class="studio-settings-section">
