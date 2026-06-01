@@ -78,6 +78,7 @@ export const DEFAULT_ROOM_MEMORY_SETTINGS = {
   provider: 'sqlite-milvus',
   vaultPath: '',
   databasePath: '',
+  personaCorpusPath: 'E:\\visualstudio\\yachiyo_novel_detailed_corpus.txt',
   milvusEnabled: true,
   milvusManaged: true,
   milvusUrl: 'http://127.0.0.1:19530',
@@ -92,7 +93,13 @@ export const DEFAULT_ROOM_MEMORY_SETTINGS = {
   retrievalMode: 'hybrid',
   maxNotesPerTurn: 4,
   allowViewerMemory: true,
-  allowSessionMemory: true
+  allowSessionMemory: true,
+  sessionRollupEnabled: true,
+  gcEnabled: true,
+  gcArchiveDays: 30,
+  gcForgetDays: 120,
+  rawRetentionDays: 120,
+  anchorImportanceThreshold: 0.72
 };
 
 export const DEFAULT_ROOM_MUSIC_SETTINGS = {
@@ -267,6 +274,7 @@ export function normalizeRoomMemorySettings(settings = {}) {
     provider,
     vaultPath: String(merged.vaultPath || '').trim(),
     databasePath: String(merged.databasePath || '').trim(),
+    personaCorpusPath: String(merged.personaCorpusPath || '').trim() || DEFAULT_ROOM_MEMORY_SETTINGS.personaCorpusPath,
     milvusEnabled: asBoolean(merged.milvusEnabled),
     milvusManaged: asBoolean(merged.milvusManaged),
     milvusUrl: asText(merged.milvusUrl) || DEFAULT_ROOM_MEMORY_SETTINGS.milvusUrl,
@@ -281,7 +289,13 @@ export function normalizeRoomMemorySettings(settings = {}) {
     retrievalMode,
     maxNotesPerTurn: asNumber(merged.maxNotesPerTurn, DEFAULT_ROOM_MEMORY_SETTINGS.maxNotesPerTurn, 1, 8),
     allowViewerMemory: asBoolean(merged.allowViewerMemory),
-    allowSessionMemory: asBoolean(merged.allowSessionMemory)
+    allowSessionMemory: asBoolean(merged.allowSessionMemory),
+    sessionRollupEnabled: asBoolean(merged.sessionRollupEnabled),
+    gcEnabled: asBoolean(merged.gcEnabled),
+    gcArchiveDays: asNumber(merged.gcArchiveDays, DEFAULT_ROOM_MEMORY_SETTINGS.gcArchiveDays, 1, 3650),
+    gcForgetDays: asNumber(merged.gcForgetDays, DEFAULT_ROOM_MEMORY_SETTINGS.gcForgetDays, 7, 3650),
+    rawRetentionDays: asNumber(merged.rawRetentionDays, DEFAULT_ROOM_MEMORY_SETTINGS.rawRetentionDays, 7, 3650),
+    anchorImportanceThreshold: asNumber(merged.anchorImportanceThreshold, DEFAULT_ROOM_MEMORY_SETTINGS.anchorImportanceThreshold, 0.1, 1)
   };
 }
 

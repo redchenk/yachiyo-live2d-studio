@@ -42,8 +42,10 @@ import {
   consolidateLive2DMemory,
   deleteLive2DMemoryNote,
   initializeLive2DMemoryVault,
+  listLive2DMemoryAnchors,
   listLive2DMemoryNotes,
   readLive2DMemoryProfile,
+  runLive2DMemoryGarbageCollection,
   searchLive2DMemory,
   setLive2DMemoryNoteDisabled,
   rebuildLive2DMemoryIndex,
@@ -120,6 +122,7 @@ const memoryNotes = ref([]);
 const musicBusy = ref('');
 const memoryCells = ref([]);
 const memoryScenes = ref([]);
+const memoryAnchors = ref([]);
 const memoryProfile = ref([]);
 const memoryConflicts = ref([]);
 const memoryRecollection = ref(null);
@@ -147,6 +150,7 @@ const memoryStats = computed(() => {
     disabled,
     cells: memoryCells.value.length,
     scenes: memoryScenes.value.length,
+    anchors: memoryAnchors.value.length,
     profile: memoryProfile.value.length,
     conflicts: memoryConflicts.value.length
   };
@@ -361,6 +365,7 @@ function setMemoryNotes(notes, mode) {
 function setMemoryLifecycle(result = {}) {
   memoryCells.value = Array.isArray(result.cells) ? result.cells.filter(Boolean) : [];
   memoryScenes.value = Array.isArray(result.scenes) ? result.scenes.filter(Boolean) : [];
+  memoryAnchors.value = Array.isArray(result.anchors) ? result.anchors.filter(Boolean) : [];
   memoryProfile.value = Array.isArray(result.profile) ? result.profile.filter(Boolean) : [];
   memoryConflicts.value = Array.isArray(result.conflicts) ? result.conflicts.filter(Boolean) : [];
 }
@@ -456,6 +461,7 @@ async function searchMemoryNotes() {
     });
     memoryCells.value = notes.recollection?.cells || [];
     memoryScenes.value = notes.recollection?.scenes || [];
+    memoryAnchors.value = notes.recollection?.anchors || [];
     memoryProfile.value = notes.recollection?.profile || [];
     memoryConflicts.value = [];
     setMemoryNotes(notes, 'search');
@@ -478,6 +484,40 @@ async function loadMemoryProfile() {
     setStatus(`Memory profile: ${(result.profile || []).length}, scenes: ${(result.scenes || []).length}`);
   } catch (error) {
     setStatus(error?.message || 'Profile load failed');
+  } finally {
+    memoryBusy.value = '';
+  }
+}
+
+async function loadMemoryAnchors() {
+  if (memoryBusy.value) return;
+  memoryBusy.value = 'anchors';
+  try {
+    const savedMemory = writeRoomMemorySettings(memory);
+    Object.assign(memory, savedMemory);
+    const result = await listLive2DMemoryAnchors({ maxItems: 120 }, savedMemory);
+    memoryAnchors.value = result.anchors || [];
+    setStatus(`Memory anchors: ${(result.anchors || []).length}`);
+  } catch (error) {
+    setStatus(error?.message || 'Anchor load failed');
+  } finally {
+    memoryBusy.value = '';
+  }
+}
+
+async function runMemoryGc() {
+  if (memoryBusy.value) return;
+  memoryBusy.value = 'gc';
+  try {
+    const savedMemory = writeRoomMemorySettings(memory);
+    Object.assign(memory, savedMemory);
+    const result = await runLive2DMemoryGarbageCollection(savedMemory);
+    const gc = result.gc || {};
+    setStatus(`GC: ${gc.archived || 0} archived, ${gc.forgotten || 0} forgotten`);
+    memoryBusy.value = '';
+    await listMemoryNotes(true);
+  } catch (error) {
+    setStatus(error?.message || 'Memory GC failed');
   } finally {
     memoryBusy.value = '';
   }
@@ -816,6 +856,11 @@ onUnmounted(() => {
               <span>Notes</span>
               <strong>{{ memoryStats.active }} / {{ memoryStats.total }}</strong>
             </article>
+            <article class="studio-memory-status-card">
+              <TsIcon name="star" :size="16" />
+              <span>Anchors</span>
+              <strong>{{ memoryStats.anchors }}</strong>
+            </article>
           </div>
 
           <div class="studio-memory-block">
@@ -853,6 +898,37 @@ onUnmounted(() => {
             </div>
           </div>
 
+          <div v-if="sqliteMemory" class="studio-memory-block">
+            <header class="studio-memory-block-head">
+              <TsIcon name="star" :size="16" />
+              <h3>Lifecycle</h3>
+            </header>
+            <div class="studio-memory-switches">
+              <label class="studio-check-row">
+                <input v-model="memory.sessionRollupEnabled" type="checkbox">
+                <span>Session rollup</span>
+              </label>
+              <label class="studio-check-row">
+                <input v-model="memory.gcEnabled" type="checkbox">
+                <span>Selective GC</span>
+              </label>
+            </div>
+            <div class="studio-memory-grid">
+              <label>
+                <span>Archive Days</span>
+                <input v-model.number="memory.gcArchiveDays" type="number" min="1" max="3650">
+              </label>
+              <label>
+                <span>Forget Days</span>
+                <input v-model.number="memory.gcForgetDays" type="number" min="7" max="3650">
+              </label>
+              <label>
+                <span>Anchor Score</span>
+                <input v-model.number="memory.anchorImportanceThreshold" type="number" min="0.1" max="1" step="0.01">
+              </label>
+            </div>
+          </div>
+
           <div class="studio-memory-block">
             <header class="studio-memory-block-head">
               <TsIcon name="folder" :size="16" />
@@ -866,6 +942,10 @@ onUnmounted(() => {
               <label>
                 <span>SQLite Path</span>
                 <input v-model="memory.databasePath" type="text" spellcheck="false" placeholder="%LOCALAPPDATA%\YachiyoLive2DStudio\MemoryData\yachiyo-memory.sqlite">
+              </label>
+              <label>
+                <span>Persona Corpus</span>
+                <input v-model="memory.personaCorpusPath" type="text" spellcheck="false" placeholder="E:\visualstudio\yachiyo_novel_detailed_corpus.txt">
               </label>
               <label>
                 <span>Import Vault Path</span>
@@ -981,6 +1061,10 @@ onUnmounted(() => {
                 <TsIcon name="sparkles" :size="15" />
                 <span>Consolidate</span>
               </button>
+              <button class="studio-secondary-btn" type="button" :disabled="Boolean(memoryBusy) || !sqliteMemory" @click="runMemoryGc">
+                <TsIcon name="trash" :size="15" />
+                <span>Run GC</span>
+              </button>
               <button class="studio-secondary-btn" type="button" :disabled="Boolean(memoryBusy)" @click="listMemoryNotes()">
                 <TsIcon name="list" :size="15" />
                 <span>List Notes</span>
@@ -988,6 +1072,10 @@ onUnmounted(() => {
               <button class="studio-secondary-btn" type="button" :disabled="Boolean(memoryBusy)" @click="loadMemoryProfile">
                 <TsIcon name="userRound" :size="15" />
                 <span>Profile</span>
+              </button>
+              <button class="studio-secondary-btn" type="button" :disabled="Boolean(memoryBusy)" @click="loadMemoryAnchors">
+                <TsIcon name="star" :size="15" />
+                <span>Anchors</span>
               </button>
             </div>
           </div>
@@ -1048,8 +1136,12 @@ onUnmounted(() => {
               <div v-if="memoryRecollection" class="studio-memory-stats">
                 <span>{{ memoryRecollection.queryType }}</span>
                 <span>{{ memoryRecollection.isSufficient ? 'sufficient' : 'partial' }}</span>
+                <span v-if="memoryStats.anchors">{{ memoryStats.anchors }} anchors</span>
                 <span v-if="memoryStats.profile">{{ memoryStats.profile }} profile</span>
                 <span v-if="memoryStats.conflicts">{{ memoryStats.conflicts }} conflicts</span>
+              </div>
+              <div v-else-if="memoryStats.anchors" class="studio-memory-stats">
+                <span>{{ memoryStats.anchors }} anchors</span>
               </div>
               <div v-if="memoryNotes.length" class="studio-memory-note-list">
                 <article

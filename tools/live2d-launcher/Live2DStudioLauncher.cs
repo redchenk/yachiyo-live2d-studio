@@ -435,7 +435,9 @@ internal sealed class LocalStudioServer : IDisposable
                 string.Equals(path, "/api/memory/consolidate", StringComparison.OrdinalIgnoreCase) ||
                 string.Equals(path, "/api/memory/managed-milvus/start", StringComparison.OrdinalIgnoreCase) ||
                 string.Equals(path, "/api/memory/profile", StringComparison.OrdinalIgnoreCase) ||
-                string.Equals(path, "/api/memory/traces", StringComparison.OrdinalIgnoreCase)))
+                string.Equals(path, "/api/memory/traces", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(path, "/api/memory/anchors", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(path, "/api/memory/gc", StringComparison.OrdinalIgnoreCase)))
             {
                 WriteApiResponse(stream, DesktopApiProxy.MemoryDataRoute(path, request.Body));
                 return;
@@ -1185,6 +1187,7 @@ internal static class DesktopApiProxy
             start.EnvironmentVariables["YACHIYO_MEMORY_AUTOSTART_MANAGED_MILVUS"] = "1";
             start.EnvironmentVariables["YACHIYO_MEMORY_MILVUS_URL"] = "http://127.0.0.1:19530";
             start.EnvironmentVariables["YACHIYO_MEMORY_MILVUS_IMAGE"] = "milvusdb/milvus:latest";
+            start.EnvironmentVariables["YACHIYO_PERSONA_CORPUS_PATH"] = Path.GetFullPath(Path.Combine(repoRoot, "..", "yachiyo_novel_detailed_corpus.txt"));
             memoryDataServiceProcess = Process.Start(start);
             WaitForMemoryDataService();
         }
@@ -1192,10 +1195,12 @@ internal static class DesktopApiProxy
 
     private static string ManagedMemorySettingsJson()
     {
+        var personaCorpusPath = Path.GetFullPath(Path.Combine(repoRoot, "..", "yachiyo_novel_detailed_corpus.txt"));
         return Json.Serialize(new Dictionary<string, object>
         {
             { "provider", "sqlite-milvus" },
             { "enabled", true },
+            { "personaCorpusPath", personaCorpusPath },
             { "milvusEnabled", true },
             { "milvusManaged", true },
             { "milvusUrl", "http://127.0.0.1:19530" },
@@ -1204,7 +1209,13 @@ internal static class DesktopApiProxy
             { "embeddingDimension", 384 },
             { "retrievalMode", "hybrid" },
             { "writeMode", "auto-approved" },
-            { "maxNotesPerTurn", 4 }
+            { "maxNotesPerTurn", 4 },
+            { "sessionRollupEnabled", true },
+            { "gcEnabled", true },
+            { "gcArchiveDays", 30 },
+            { "gcForgetDays", 120 },
+            { "rawRetentionDays", 120 },
+            { "anchorImportanceThreshold", 0.72 }
         });
     }
 

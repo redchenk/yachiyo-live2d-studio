@@ -81,6 +81,7 @@ function memoryApiSettings(settings) {
     provider: settings.provider,
     vaultPath: settings.vaultPath,
     databasePath: settings.databasePath,
+    personaCorpusPath: settings.personaCorpusPath,
     milvusEnabled: settings.milvusEnabled,
     milvusManaged: settings.milvusManaged,
     milvusUrl: settings.milvusUrl,
@@ -93,7 +94,13 @@ function memoryApiSettings(settings) {
     embeddingDimension: settings.embeddingDimension,
     writeMode: settings.writeMode,
     retrievalMode: settings.retrievalMode,
-    maxNotesPerTurn: settings.maxNotesPerTurn
+    maxNotesPerTurn: settings.maxNotesPerTurn,
+    sessionRollupEnabled: settings.sessionRollupEnabled,
+    gcEnabled: settings.gcEnabled,
+    gcArchiveDays: settings.gcArchiveDays,
+    gcForgetDays: settings.gcForgetDays,
+    rawRetentionDays: settings.rawRetentionDays,
+    anchorImportanceThreshold: settings.anchorImportanceThreshold
   };
 }
 
@@ -535,6 +542,16 @@ export function listLive2DMemoryTraces(options = {}, settingsOverrides = {}) {
   return postMemoryAction('/api/memory/traces', {
     maxItems: Number(options.maxItems) || 30
   }, settingsOverrides);
+}
+
+export function listLive2DMemoryAnchors(options = {}, settingsOverrides = {}) {
+  return postMemoryAction('/api/memory/anchors', {
+    maxItems: Number(options.maxItems) || 80
+  }, settingsOverrides);
+}
+
+export function runLive2DMemoryGarbageCollection(settingsOverrides = {}) {
+  return postMemoryTool('/api/memory/gc', settingsOverrides);
 }
 
 export function listLive2DMemoryNotes(options = {}, settingsOverrides = {}) {
