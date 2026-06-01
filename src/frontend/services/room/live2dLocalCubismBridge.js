@@ -8,6 +8,7 @@ import {
 const FACE_CAPTURE_EVENT = 'tsukuyomi:live2d-face';
 const LOCAL_BRIDGE_STATE_KEY = '__TSUKUYOMI_LOCAL_CUBISM_BRIDGE_STATE__';
 const LOCAL_CUBISM_FRAME_FLUSH_MS = 1000 / 60;
+const LOCAL_CUBISM_RELEASE_EPSILON = 0.0015;
 
 const LOCAL_CUBISM_BODY_DRIVER_IDS = new Set([
   'ParamSwitchCtrl_BodyX',
@@ -162,7 +163,44 @@ function localFrameSmoothingProfile(id) {
   return { alpha: 0.34, step: 0.12 };
 }
 
-function smoothLocalCubismFrame(parameters, now = nowMs()) {
+function localCubismReleaseTarget(id) {
+  if (id === 'ParamBreath') return 0.46;
+  if (id === 'ParamBreath2') return 0.43;
+  if (id === 'ParamBreath3') return 0.41;
+  if (id === 'ParamEyeLOpen' || id === 'ParamEyeROpen' || id.includes('EyeOpen')) return 1;
+  return 0;
+}
+
+function smoothLocalCubismValue(id, value, frameScale) {
+  const previous = lastSmoothedFrame.get(id);
+  const { alpha, step, accel } = localFrameSmoothingProfile(id);
+  const blendedValue = previous === undefined ? value : previous + (value - previous) * alpha;
+  const maxStep = step * frameScale;
+  const previousVelocity = lastVelocityFrame.get(id) || 0;
+  const targetStep = previous === undefined
+    ? 0
+    : Math.min(Math.max(blendedValue - previous, -maxStep), maxStep);
+  const maxAccel = Number(accel) > 0 ? Number(accel) * frameScale : 0;
+  const nextStep = previous === undefined
+    ? 0
+    : (maxAccel
+      ? Math.min(Math.max(targetStep, previousVelocity - maxAccel), previousVelocity + maxAccel)
+      : targetStep);
+  return {
+    value: previous === undefined ? value : previous + nextStep,
+    step: nextStep
+  };
+}
+
+export function __resetLocalCubismSmoothingForTests() {
+  lastSmoothedFrame = new Map();
+  lastVelocityFrame = new Map();
+  lastSmoothedAt = 0;
+  pendingFrame = new Map();
+  flushTimer = 0;
+}
+
+export function smoothLocalCubismFrame(parameters, now = nowMs()) {
   if (!Array.isArray(parameters)) return [];
 
   const nextFrameIds = new Set();
@@ -175,37 +213,38 @@ function smoothLocalCubismFrame(parameters, now = nowMs()) {
     const value = Number(item?.value);
     if (!id || !Number.isFinite(value) || isLocalCubismSuppressedId(id)) continue;
 
-    const previous = lastSmoothedFrame.get(id);
-    const { alpha, step, accel } = localFrameSmoothingProfile(id);
-    const blendedValue = previous === undefined ? value : previous + (value - previous) * alpha;
-    const maxStep = step * frameScale;
-    const previousVelocity = lastVelocityFrame.get(id) || 0;
-    const targetStep = previous === undefined
-      ? 0
-      : Math.min(Math.max(blendedValue - previous, -maxStep), maxStep);
-    const maxAccel = Number(accel) > 0 ? Number(accel) * frameScale : 0;
-    const nextStep = previous === undefined
-      ? 0
-      : (maxAccel
-        ? Math.min(Math.max(targetStep, previousVelocity - maxAccel), previousVelocity + maxAccel)
-        : targetStep);
-    const nextValue = previous === undefined ? value : previous + nextStep;
+    const next = smoothLocalCubismValue(id, value, frameScale);
     const weight = Number(item?.weight);
-    lastSmoothedFrame.set(id, nextValue);
-    lastVelocityFrame.set(id, nextStep);
+    lastSmoothedFrame.set(id, next.value);
+    lastVelocityFrame.set(id, next.step);
     nextFrameIds.add(id);
     smoothed.push({
       ...item,
       id,
-      value: Math.abs(nextValue) < 0.0005 ? 0 : nextValue,
+      value: Math.abs(next.value) < 0.0005 ? 0 : next.value,
       weight: Number.isFinite(weight) ? Math.min(Math.max(weight, 0.01), 1) : item?.weight
     });
   }
 
-  for (const id of lastSmoothedFrame.keys()) {
+  for (const id of [...lastSmoothedFrame.keys()]) {
     if (!nextFrameIds.has(id)) {
-      lastSmoothedFrame.delete(id);
-      lastVelocityFrame.delete(id);
+      const releaseTarget = localCubismReleaseTarget(id);
+      const next = smoothLocalCubismValue(id, releaseTarget, frameScale);
+      if (
+        Math.abs(next.value - releaseTarget) <= LOCAL_CUBISM_RELEASE_EPSILON &&
+        Math.abs(next.step) <= LOCAL_CUBISM_RELEASE_EPSILON
+      ) {
+        lastSmoothedFrame.delete(id);
+        lastVelocityFrame.delete(id);
+        continue;
+      }
+      lastSmoothedFrame.set(id, next.value);
+      lastVelocityFrame.set(id, next.step);
+      smoothed.push({
+        id,
+        value: Math.abs(next.value) < 0.0005 ? 0 : next.value,
+        weight: 0.58
+      });
     }
   }
   return smoothed;
