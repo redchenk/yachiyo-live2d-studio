@@ -433,6 +433,7 @@ internal sealed class LocalStudioServer : IDisposable
             if (method == "POST" && (
                 string.Equals(path, "/api/memory/record-turn", StringComparison.OrdinalIgnoreCase) ||
                 string.Equals(path, "/api/memory/consolidate", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(path, "/api/memory/managed-milvus/start", StringComparison.OrdinalIgnoreCase) ||
                 string.Equals(path, "/api/memory/profile", StringComparison.OrdinalIgnoreCase) ||
                 string.Equals(path, "/api/memory/traces", StringComparison.OrdinalIgnoreCase)))
             {

@@ -523,6 +523,10 @@ export function consolidateLive2DMemory(settingsOverrides = {}) {
   return postMemoryTool('/api/memory/consolidate', settingsOverrides);
 }
 
+export function startManagedLive2DMemoryMilvus(settingsOverrides = {}) {
+  return postMemoryTool('/api/memory/managed-milvus/start', settingsOverrides);
+}
+
 export function readLive2DMemoryProfile(settingsOverrides = {}) {
   return postMemoryTool('/api/memory/profile', settingsOverrides);
 }

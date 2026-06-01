@@ -46,7 +46,8 @@ import {
   readLive2DMemoryProfile,
   searchLive2DMemory,
   setLive2DMemoryNoteDisabled,
-  rebuildLive2DMemoryIndex
+  rebuildLive2DMemoryIndex,
+  startManagedLive2DMemoryMilvus
 } from '@frontend/services/room/live2dMemory';
 
 defineEmits(['close']);
@@ -150,6 +151,21 @@ const memoryStats = computed(() => {
     conflicts: memoryConflicts.value.length
   };
 });
+const memoryProviderLabel = computed(() => (
+  memoryProviderOptions.find((option) => option.value === memory.provider)?.label || memory.provider || 'Memory'
+));
+const memoryRetrievalLabel = computed(() => (
+  retrievalModeOptions.find((option) => option.value === memory.retrievalMode)?.label || memory.retrievalMode || 'off'
+));
+const memoryWriteLabel = computed(() => (
+  writeModeOptions.find((option) => option.value === memory.writeMode)?.label || memory.writeMode || 'off'
+));
+const memoryMilvusLabel = computed(() => {
+  if (!sqliteMemory.value) return 'Obsidian only';
+  if (!memory.milvusEnabled) return 'Milvus off';
+  return memory.milvusManaged ? 'Managed Milvus' : 'External Milvus';
+});
+const memoryStorageLabel = computed(() => (sqliteMemory.value ? 'SQLite primary' : 'Obsidian vault'));
 const selectedMemoryNote = computed(() => {
   const path = memoryManagePath.value.trim();
   if (!path) return null;
@@ -388,6 +404,22 @@ async function runMemoryTool(action, label) {
     memoryBusy.value = '';
   }
   if (shouldRefreshNotes) await listMemoryNotes(true);
+}
+
+async function startMemoryMilvus() {
+  if (memoryBusy.value || !sqliteMemory.value || !memory.milvusEnabled || !memory.milvusManaged) return;
+  memoryBusy.value = 'milvus';
+  try {
+    const savedMemory = writeRoomMemorySettings(memory);
+    Object.assign(memory, savedMemory);
+    const result = await startManagedLive2DMemoryMilvus(savedMemory);
+    const collection = result.collection?.collection || savedMemory.milvusCollection || 'yachiyo_memory';
+    setStatus(`Milvus ready: ${collection}`);
+  } catch (error) {
+    setStatus(error?.message || 'Milvus start failed');
+  } finally {
+    memoryBusy.value = '';
+  }
 }
 
 async function listMemoryNotes(silent = false) {
@@ -738,41 +770,115 @@ onUnmounted(() => {
         </div>
       </section>
 
-      <section v-else class="studio-settings-section">
+      <section v-else class="studio-settings-section studio-memory-settings-section">
         <div class="studio-memory-console studio-wide-field">
-          <div class="studio-memory-toolbar">
+          <div class="studio-memory-overview">
             <label class="studio-check-row">
               <input v-model="memory.enabled" type="checkbox">
               <span>Enable memory</span>
             </label>
-            <div class="studio-memory-stats" aria-label="Memory note counts">
-              <span>{{ memoryStats.active }} Active</span>
-              <span>{{ memoryStats.disabled }} Disabled</span>
-              <span>{{ memoryStats.total }} Total</span>
+            <label class="studio-memory-provider-select">
+              <span>Provider</span>
+              <select v-model="memory.provider">
+                <option v-for="option in memoryProviderOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
+              </select>
+            </label>
+          </div>
+
+          <div class="studio-memory-status-grid" aria-label="Memory status">
+            <article class="studio-memory-status-card">
+              <TsIcon name="note" :size="16" />
+              <span>Provider</span>
+              <strong>{{ memoryProviderLabel }}</strong>
+            </article>
+            <article class="studio-memory-status-card">
+              <TsIcon name="package" :size="16" />
+              <span>Storage</span>
+              <strong>{{ memoryStorageLabel }}</strong>
+            </article>
+            <article class="studio-memory-status-card">
+              <TsIcon name="search" :size="16" />
+              <span>Retrieval</span>
+              <strong>{{ memoryRetrievalLabel }}</strong>
+            </article>
+            <article class="studio-memory-status-card">
+              <TsIcon name="wand" :size="16" />
+              <span>Write</span>
+              <strong>{{ memoryWriteLabel }}</strong>
+            </article>
+            <article class="studio-memory-status-card">
+              <TsIcon name="radio" :size="16" />
+              <span>Milvus</span>
+              <strong>{{ memoryMilvusLabel }}</strong>
+            </article>
+            <article class="studio-memory-status-card">
+              <TsIcon name="list" :size="16" />
+              <span>Notes</span>
+              <strong>{{ memoryStats.active }} / {{ memoryStats.total }}</strong>
+            </article>
+          </div>
+
+          <div class="studio-memory-block">
+            <header class="studio-memory-block-head">
+              <TsIcon name="settings2" :size="16" />
+              <h3>Routing</h3>
+            </header>
+            <div class="studio-memory-grid">
+              <label>
+                <span>Retrieval</span>
+                <select v-model="memory.retrievalMode">
+                  <option v-for="option in retrievalModeOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
+                </select>
+              </label>
+              <label>
+                <span>Write Mode</span>
+                <select v-model="memory.writeMode">
+                  <option v-for="option in writeModeOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
+                </select>
+              </label>
+              <label>
+                <span>Max Notes</span>
+                <input v-model.number="memory.maxNotesPerTurn" type="number" min="1" max="8">
+              </label>
+            </div>
+            <div class="studio-memory-switches">
+              <label class="studio-check-row">
+                <input v-model="memory.allowViewerMemory" type="checkbox">
+                <span>Viewer memory</span>
+              </label>
+              <label class="studio-check-row">
+                <input v-model="memory.allowSessionMemory" type="checkbox">
+                <span>Session memory</span>
+              </label>
             </div>
           </div>
 
-          <label>
-            <span>Provider</span>
-            <select v-model="memory.provider">
-              <option v-for="option in memoryProviderOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
-            </select>
-          </label>
-
-          <label v-if="!sqliteMemory">
-            <span>Vault Path</span>
-            <input v-model="memory.vaultPath" type="text" spellcheck="false" placeholder="D:\Obsidian\YachiyoMemoryVault">
-          </label>
-
-          <template v-else>
-            <label>
-              <span>SQLite Path</span>
-              <input v-model="memory.databasePath" type="text" spellcheck="false" placeholder="%LOCALAPPDATA%\YachiyoLive2DStudio\MemoryData\yachiyo-memory.sqlite">
+          <div class="studio-memory-block">
+            <header class="studio-memory-block-head">
+              <TsIcon name="folder" :size="16" />
+              <h3>Storage</h3>
+            </header>
+            <label v-if="!sqliteMemory">
+              <span>Vault Path</span>
+              <input v-model="memory.vaultPath" type="text" spellcheck="false" placeholder="D:\Obsidian\YachiyoMemoryVault">
             </label>
-            <label>
-              <span>Import Vault Path</span>
-              <input v-model="memory.vaultPath" type="text" spellcheck="false" placeholder="Optional Obsidian vault to import">
-            </label>
+            <template v-else>
+              <label>
+                <span>SQLite Path</span>
+                <input v-model="memory.databasePath" type="text" spellcheck="false" placeholder="%LOCALAPPDATA%\YachiyoLive2DStudio\MemoryData\yachiyo-memory.sqlite">
+              </label>
+              <label>
+                <span>Import Vault Path</span>
+                <input v-model="memory.vaultPath" type="text" spellcheck="false" placeholder="Optional Obsidian vault to import">
+              </label>
+            </template>
+          </div>
+
+          <div v-if="sqliteMemory" class="studio-memory-block">
+            <header class="studio-memory-block-head">
+              <TsIcon name="radio" :size="16" />
+              <h3>Milvus</h3>
+            </header>
             <div class="studio-memory-switches">
               <label class="studio-check-row">
                 <input v-model="memory.milvusEnabled" type="checkbox">
@@ -797,14 +903,26 @@ onUnmounted(() => {
                 <input v-model.number="memory.embeddingDimension" type="number" min="32" max="4096">
               </label>
             </div>
-            <label>
-              <span>Milvus Image</span>
-              <input v-model="memory.milvusImage" type="text" spellcheck="false" placeholder="milvusdb/milvus:latest">
-            </label>
-            <label>
-              <span>Milvus Token</span>
-              <input v-model="memory.milvusToken" type="password" spellcheck="false" placeholder="Optional, e.g. root:Milvus">
-            </label>
+            <details class="studio-memory-advanced">
+              <summary>Advanced</summary>
+              <div class="studio-memory-grid">
+                <label>
+                  <span>Milvus Image</span>
+                  <input v-model="memory.milvusImage" type="text" spellcheck="false" placeholder="milvusdb/milvus:latest">
+                </label>
+                <label>
+                  <span>Milvus Token</span>
+                  <input v-model="memory.milvusToken" type="password" spellcheck="false" placeholder="Optional, e.g. root:Milvus">
+                </label>
+              </div>
+            </details>
+          </div>
+
+          <div v-if="sqliteMemory" class="studio-memory-block">
+            <header class="studio-memory-block-head">
+              <TsIcon name="sparkles" :size="16" />
+              <h3>Embedding</h3>
+            </header>
             <div class="studio-memory-grid">
               <label>
                 <span>Embedding URL</span>
@@ -814,171 +932,179 @@ onUnmounted(() => {
                 <span>Embedding Model</span>
                 <input v-model="memory.embeddingModel" type="text" spellcheck="false" placeholder="text-embedding-3-small">
               </label>
+              <label>
+                <span>Embedding Key</span>
+                <input v-model="memory.embeddingApiKey" type="password" spellcheck="false" placeholder="Optional API key">
+              </label>
             </div>
-            <label>
-              <span>Embedding Key</span>
-              <input v-model="memory.embeddingApiKey" type="password" spellcheck="false" placeholder="Optional API key">
-            </label>
-          </template>
-
-          <div class="studio-memory-grid">
-            <label>
-              <span>Retrieval</span>
-              <select v-model="memory.retrievalMode">
-                <option v-for="option in retrievalModeOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
-              </select>
-            </label>
-            <label>
-              <span>Write Mode</span>
-              <select v-model="memory.writeMode">
-                <option v-for="option in writeModeOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
-              </select>
-            </label>
-            <label>
-              <span>Max Notes</span>
-              <input v-model.number="memory.maxNotesPerTurn" type="number" min="1" max="8">
-            </label>
           </div>
 
-          <div class="studio-memory-switches">
-            <label class="studio-check-row">
-              <input v-model="memory.allowViewerMemory" type="checkbox">
-              <span>Viewer memory</span>
-            </label>
-            <label class="studio-check-row">
-              <input v-model="memory.allowSessionMemory" type="checkbox">
-              <span>Session memory</span>
-            </label>
-          </div>
-
-          <div class="studio-memory-actions">
-            <button
-              class="studio-secondary-btn"
-              type="button"
-              :disabled="Boolean(memoryBusy)"
-              @click="runMemoryTool('init', 'Vault initialized')"
-            >
-              Initialize Vault
-            </button>
-            <button
-              class="studio-secondary-btn"
-              type="button"
-              :disabled="Boolean(memoryBusy)"
-              @click="runMemoryTool('reindex', 'Index rebuilt')"
-            >
-              Rebuild Index
-            </button>
-            <button
-              class="studio-secondary-btn"
-              type="button"
-              :disabled="Boolean(memoryBusy)"
-              @click="runMemoryTool('consolidate', 'Memory consolidated')"
-            >
-              Consolidate
-            </button>
-            <button class="studio-secondary-btn" type="button" :disabled="Boolean(memoryBusy)" @click="listMemoryNotes()">
-              List Notes
-            </button>
-            <button class="studio-secondary-btn" type="button" :disabled="Boolean(memoryBusy)" @click="loadMemoryProfile">
-              Profile
-            </button>
-          </div>
-
-          <div class="studio-memory-search">
-            <label>
-              <span>Search Memory</span>
-              <input
-                v-model="memorySearchQuery"
-                type="search"
-                spellcheck="false"
-                placeholder="stage fright, live2d, viewer..."
-                @keydown.enter.prevent="searchMemoryNotes"
+          <div class="studio-memory-block">
+            <header class="studio-memory-block-head">
+              <TsIcon name="refresh" :size="16" />
+              <h3>Tools</h3>
+            </header>
+            <div class="studio-memory-actions">
+              <button
+                class="studio-secondary-btn"
+                type="button"
+                :disabled="Boolean(memoryBusy) || !sqliteMemory || !memory.milvusEnabled || !memory.milvusManaged"
+                @click="startMemoryMilvus"
               >
-            </label>
-            <button class="studio-primary-btn" type="button" :disabled="Boolean(memoryBusy)" @click="searchMemoryNotes">
-              Search
-            </button>
-          </div>
-
-          <label>
-            <span>Selected Note Path</span>
-            <input v-model="memoryManagePath" type="text" spellcheck="false" placeholder="03_Viewers/viewer-redchenk.md">
-          </label>
-
-          <div class="studio-memory-actions">
-            <button class="studio-secondary-btn" type="button" :disabled="Boolean(memoryBusy) || !memoryManagePath.trim()" @click="setManagedMemoryDisabled(true)">
-              Disable
-            </button>
-            <button class="studio-secondary-btn" type="button" :disabled="Boolean(memoryBusy) || !memoryManagePath.trim()" @click="setManagedMemoryDisabled(false)">
-              Enable
-            </button>
-            <button class="studio-secondary-btn" type="button" :disabled="Boolean(memoryBusy) || !memoryManagePath.trim()" @click="deleteManagedMemoryNote()">
-              Delete
-            </button>
-          </div>
-
-          <div class="studio-memory-results" aria-live="polite">
-            <div class="studio-memory-results-head">
-              <span>{{ memoryResultMode === 'search' ? 'Search Results' : 'Vault Notes' }}</span>
-              <small>{{ memoryStats.total }} notes · {{ memoryStats.cells }} cells · {{ memoryStats.scenes }} scenes</small>
-            </div>
-            <div v-if="memoryRecollection" class="studio-memory-stats">
-              <span>{{ memoryRecollection.queryType }}</span>
-              <span>{{ memoryRecollection.isSufficient ? 'sufficient' : 'partial' }}</span>
-              <span v-if="memoryStats.profile">{{ memoryStats.profile }} profile</span>
-              <span v-if="memoryStats.conflicts">{{ memoryStats.conflicts }} conflicts</span>
-            </div>
-            <div v-if="memoryNotes.length" class="studio-memory-note-list">
-              <article
-                v-for="note in memoryNotes"
-                :key="notePath(note)"
-                class="studio-memory-note"
-                :class="{ selected: memoryManagePath.trim() === notePath(note), disabled: note.disabled }"
-                @click="selectMemoryNote(note)"
+                <TsIcon name="radio" :size="15" />
+                <span>Start Milvus</span>
+              </button>
+              <button
+                class="studio-secondary-btn"
+                type="button"
+                :disabled="Boolean(memoryBusy)"
+                @click="runMemoryTool('init', 'Vault initialized')"
               >
-                <header>
-                  <div>
-                    <strong>{{ noteTitle(note) }}</strong>
-                    <span>{{ noteTypeLabel(note) }}</span>
-                  </div>
-                  <em v-if="note.disabled">Disabled</em>
-                </header>
-                <code>{{ notePath(note) }}</code>
-                <p v-if="noteSummary(note)">{{ noteSummary(note) }}</p>
-                <footer>
-                  <div class="studio-memory-tags">
-                    <span v-for="tag in noteTags(note)" :key="`${notePath(note)}-${tag}`">#{{ tag }}</span>
-                  </div>
-                  <small>{{ noteScoreLabel(note) }}</small>
-                </footer>
-                <div class="studio-memory-note-actions">
-                  <button
-                    class="studio-secondary-btn"
-                    type="button"
-                    :disabled="Boolean(memoryBusy)"
-                    @click.stop="setManagedMemoryDisabled(!note.disabled, notePath(note))"
-                  >
-                    {{ note.disabled ? 'Enable' : 'Disable' }}
-                  </button>
-                  <button
-                    class="studio-secondary-btn"
-                    type="button"
-                    :disabled="Boolean(memoryBusy)"
-                    @click.stop="deleteManagedMemoryNote(notePath(note))"
-                  >
-                    Delete
-                  </button>
-                </div>
-              </article>
-            </div>
-            <div v-else class="studio-memory-empty">
-              {{ memoryBusy ? 'Loading memory...' : 'No memory notes loaded' }}
+                <TsIcon name="folder" :size="15" />
+                <span>Initialize</span>
+              </button>
+              <button
+                class="studio-secondary-btn"
+                type="button"
+                :disabled="Boolean(memoryBusy)"
+                @click="runMemoryTool('reindex', 'Index rebuilt')"
+              >
+                <TsIcon name="refresh" :size="15" />
+                <span>Rebuild</span>
+              </button>
+              <button
+                class="studio-secondary-btn"
+                type="button"
+                :disabled="Boolean(memoryBusy)"
+                @click="runMemoryTool('consolidate', 'Memory consolidated')"
+              >
+                <TsIcon name="sparkles" :size="15" />
+                <span>Consolidate</span>
+              </button>
+              <button class="studio-secondary-btn" type="button" :disabled="Boolean(memoryBusy)" @click="listMemoryNotes()">
+                <TsIcon name="list" :size="15" />
+                <span>List Notes</span>
+              </button>
+              <button class="studio-secondary-btn" type="button" :disabled="Boolean(memoryBusy)" @click="loadMemoryProfile">
+                <TsIcon name="userRound" :size="15" />
+                <span>Profile</span>
+              </button>
             </div>
           </div>
 
-          <div v-if="selectedMemoryNote" class="studio-memory-selected">
-            <span>Selected</span>
-            <strong>{{ noteTitle(selectedMemoryNote) }}</strong>
+          <div class="studio-memory-block studio-memory-note-manager">
+            <header class="studio-memory-block-head">
+              <TsIcon name="note" :size="16" />
+              <h3>Notes</h3>
+              <div class="studio-memory-stats" aria-label="Memory note counts">
+                <span>{{ memoryStats.active }} Active</span>
+                <span>{{ memoryStats.disabled }} Disabled</span>
+                <span>{{ memoryStats.total }} Total</span>
+              </div>
+            </header>
+
+            <div class="studio-memory-search">
+              <label>
+                <span>Search Memory</span>
+                <input
+                  v-model="memorySearchQuery"
+                  type="search"
+                  spellcheck="false"
+                  placeholder="stage fright, live2d, viewer..."
+                  @keydown.enter.prevent="searchMemoryNotes"
+                >
+              </label>
+              <button class="studio-primary-btn" type="button" :disabled="Boolean(memoryBusy)" @click="searchMemoryNotes">
+                <TsIcon name="search" :size="15" />
+                <span>Search</span>
+              </button>
+            </div>
+
+            <label>
+              <span>Selected Note Path</span>
+              <input v-model="memoryManagePath" type="text" spellcheck="false" placeholder="03_Viewers/viewer-redchenk.md">
+            </label>
+
+            <div class="studio-memory-actions">
+              <button class="studio-secondary-btn" type="button" :disabled="Boolean(memoryBusy) || !memoryManagePath.trim()" @click="setManagedMemoryDisabled(true)">
+                <TsIcon name="eyeOff" :size="15" />
+                <span>Disable</span>
+              </button>
+              <button class="studio-secondary-btn" type="button" :disabled="Boolean(memoryBusy) || !memoryManagePath.trim()" @click="setManagedMemoryDisabled(false)">
+                <TsIcon name="badgeCheck" :size="15" />
+                <span>Enable</span>
+              </button>
+              <button class="studio-secondary-btn" type="button" :disabled="Boolean(memoryBusy) || !memoryManagePath.trim()" @click="deleteManagedMemoryNote()">
+                <TsIcon name="trash" :size="15" />
+                <span>Delete</span>
+              </button>
+            </div>
+
+            <div class="studio-memory-results" aria-live="polite">
+              <div class="studio-memory-results-head">
+                <span>{{ memoryResultMode === 'search' ? 'Search Results' : 'Vault Notes' }}</span>
+                <small>{{ memoryStats.total }} notes · {{ memoryStats.cells }} cells · {{ memoryStats.scenes }} scenes</small>
+              </div>
+              <div v-if="memoryRecollection" class="studio-memory-stats">
+                <span>{{ memoryRecollection.queryType }}</span>
+                <span>{{ memoryRecollection.isSufficient ? 'sufficient' : 'partial' }}</span>
+                <span v-if="memoryStats.profile">{{ memoryStats.profile }} profile</span>
+                <span v-if="memoryStats.conflicts">{{ memoryStats.conflicts }} conflicts</span>
+              </div>
+              <div v-if="memoryNotes.length" class="studio-memory-note-list">
+                <article
+                  v-for="note in memoryNotes"
+                  :key="notePath(note)"
+                  class="studio-memory-note"
+                  :class="{ selected: memoryManagePath.trim() === notePath(note), disabled: note.disabled }"
+                  @click="selectMemoryNote(note)"
+                >
+                  <header>
+                    <div>
+                      <strong>{{ noteTitle(note) }}</strong>
+                      <span>{{ noteTypeLabel(note) }}</span>
+                    </div>
+                    <em v-if="note.disabled">Disabled</em>
+                  </header>
+                  <code>{{ notePath(note) }}</code>
+                  <p v-if="noteSummary(note)">{{ noteSummary(note) }}</p>
+                  <footer>
+                    <div class="studio-memory-tags">
+                      <span v-for="tag in noteTags(note)" :key="`${notePath(note)}-${tag}`">#{{ tag }}</span>
+                    </div>
+                    <small>{{ noteScoreLabel(note) }}</small>
+                  </footer>
+                  <div class="studio-memory-note-actions">
+                    <button
+                      class="studio-secondary-btn"
+                      type="button"
+                      :disabled="Boolean(memoryBusy)"
+                      @click.stop="setManagedMemoryDisabled(!note.disabled, notePath(note))"
+                    >
+                      <TsIcon :name="note.disabled ? 'badgeCheck' : 'eyeOff'" :size="15" />
+                      <span>{{ note.disabled ? 'Enable' : 'Disable' }}</span>
+                    </button>
+                    <button
+                      class="studio-secondary-btn"
+                      type="button"
+                      :disabled="Boolean(memoryBusy)"
+                      @click.stop="deleteManagedMemoryNote(notePath(note))"
+                    >
+                      <TsIcon name="trash" :size="15" />
+                      <span>Delete</span>
+                    </button>
+                  </div>
+                </article>
+              </div>
+              <div v-else class="studio-memory-empty">
+                {{ memoryBusy ? 'Loading memory...' : 'No memory notes loaded' }}
+              </div>
+            </div>
+
+            <div v-if="selectedMemoryNote" class="studio-memory-selected">
+              <span>Selected</span>
+              <strong>{{ noteTitle(selectedMemoryNote) }}</strong>
+            </div>
           </div>
         </div>
       </section>
