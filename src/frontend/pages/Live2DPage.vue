@@ -93,6 +93,7 @@ let asrRecorder = null;
 let modelDragState = null;
 const CHARACTER_STATE_EVENT = 'tsukuyomi:live2d-character-state';
 const SETTINGS_SAVED_EVENT = 'tsukuyomi:studio-settings-saved';
+const LIVE_DIRECTOR_AUTO_TURN_INTERVAL_MS = 60000;
 
 const debugEmotion = computed(() => (
   live2dDebug.value.emotion ||
@@ -852,7 +853,7 @@ function buildLiveDirectorPrompt(audienceLines, options = {}) {
   ].join('\n');
 }
 
-function scheduleLiveTurn(delayMs = 7800) {
+function scheduleLiveTurn(delayMs = LIVE_DIRECTOR_AUTO_TURN_INTERVAL_MS) {
   window.clearTimeout(liveTimer);
   if (!liveDirector.running) return;
   liveTimer = window.setTimeout(() => {
@@ -885,7 +886,7 @@ async function runLiveTurn() {
   } finally {
     liveTurnInFlight = false;
     if (liveDirector.running) {
-      scheduleLiveTurn(audienceQueue.value.length ? 900 : 7800 + Math.round(Math.random() * 4200));
+      scheduleLiveTurn(audienceQueue.value.length ? 900 : LIVE_DIRECTOR_AUTO_TURN_INTERVAL_MS);
     }
   }
 }
