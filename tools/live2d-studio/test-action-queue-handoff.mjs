@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
 import { createServer } from 'vite';
 
+const originalRandom = Math.random;
+Math.random = () => 0.5;
+
 const server = await createServer({
   configFile: false,
   server: { middlewareMode: true, hmr: false },
@@ -52,7 +55,16 @@ try {
     Number(handoffFrame.dominant?.energy) > 0.08,
     'next queue should not start with a zero-energy frame after a just-completed queue'
   );
+  assert.ok(
+    Number(handoffFrame.dominant?.energy) < 0.72,
+    'next queue should fade in instead of entering at full action energy'
+  );
+  assert.ok(
+    Number(brain.sample(2380).dominant?.energy) > Number(handoffFrame.dominant?.energy),
+    'handoff action energy should ramp up after the queue boundary'
+  );
 } finally {
+  Math.random = originalRandom;
   await server.close();
 }
 

@@ -76,6 +76,11 @@ export function activeBehaviorSamples(actions, elapsedMs, options = {}) {
     const progress = (elapsedMs - started) / duration;
     if (progress < 0 || progress > 1) return null;
     const envelope = behaviorActionEnvelope(progress);
+    const handoffBlendInMs = Math.max(Number(action.handoffBlendInMs) || 0, 0);
+    const handoffFade = handoffBlendInMs > 0
+      ? ease(clamp((elapsedMs - started) / handoffBlendInMs, 0, 1, 0))
+      : 1;
+    const blendedEnvelope = envelope * handoffFade;
     const amplitude = clamp(action.amplitude, 0.72, 1.36, 1);
     const tempo = clamp(action.tempo, 0.82, 1.22, 1);
     const phaseOffset = Number(action.phaseOffset) || 0;
@@ -84,9 +89,9 @@ export function activeBehaviorSamples(actions, elapsedMs, options = {}) {
       action,
       progress,
       phase: progress * Math.PI * 2 * tempo + phaseOffset,
-      envelope,
+      envelope: blendedEnvelope,
       intensity,
-      energy: envelope * intensity,
+      energy: blendedEnvelope * intensity,
       sign: behaviorActionSideSign(action, Number(action.sideSign) || 1)
     };
   }).filter(Boolean);

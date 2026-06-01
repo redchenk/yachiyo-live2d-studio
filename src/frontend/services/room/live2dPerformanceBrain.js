@@ -18,6 +18,8 @@ import {
 
 let sharedPerformanceBrain = null;
 const STREAMING_QUEUE_HANDOFF_GRACE_MS = 1200;
+const STREAMING_QUEUE_HANDOFF_PREROLL_MS = 180;
+const STREAMING_QUEUE_HANDOFF_BLEND_IN_MS = 520;
 
 function nowMs() {
   if (typeof performance !== 'undefined' && typeof performance.now === 'function') return performance.now();
@@ -142,11 +144,12 @@ export function createLive2DPerformanceBrain() {
 
   function extendStreamingBehaviorPlan(currentPlan, nextPlan, at, options = {}) {
     const elapsed = Math.max(0, at - (Number(currentPlan.startedAt) || at));
-    const appendAt = Math.max(0, elapsed - 260);
+    const appendAt = Math.max(0, elapsed - STREAMING_QUEUE_HANDOFF_PREROLL_MS);
     const retainAfter = Math.max(0, elapsed - 1500);
     const retainedActions = currentPlan.actions.filter((action) => behaviorActionEndMs(action) >= retainAfter);
     const appendedActions = nextPlan.actions.map((action) => ({
       ...action,
+      handoffBlendInMs: Math.max(Number(action.handoffBlendInMs) || 0, STREAMING_QUEUE_HANDOFF_BLEND_IN_MS),
       delayMs: Math.round(appendAt + (Number(action.delayMs) || 0))
     }));
     const actions = [...retainedActions, ...appendedActions].slice(-18);
