@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
 import { createServer } from 'vite';
 
+const originalRandom = Math.random;
+Math.random = () => 0.5;
+
 const server = await createServer({
   configFile: false,
   server: { middlewareMode: true },
@@ -61,8 +64,19 @@ try {
     extendedPlan.actions.length > firstPlan.actions.length,
     'extended streaming plans should keep queued actions continuous'
   );
-  assert.equal(brain.sample(1520).character.mode, 'speaking');
+  const handoffFrame = brain.sample(1520);
+  const newActionEnergy = handoffFrame.samples.find((sample) => sample.action.type === 'sway')?.energy || 0;
+  assert.equal(handoffFrame.character.mode, 'speaking');
+  assert.ok(
+    newActionEnergy < 0.16,
+    'new streaming action queues should not immediately take over the current action'
+  );
+  assert.ok(
+    (brain.sample(2180).samples.find((sample) => sample.action.type === 'sway')?.energy || 0) > newActionEnergy,
+    'queued streaming actions should ramp in after the handoff window'
+  );
 } finally {
+  Math.random = originalRandom;
   await server.close();
 }
 

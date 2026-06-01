@@ -18,7 +18,8 @@ import {
 
 let sharedPerformanceBrain = null;
 const STREAMING_QUEUE_HANDOFF_GRACE_MS = 1200;
-const STREAMING_QUEUE_HANDOFF_PREROLL_MS = 180;
+const STREAMING_QUEUE_HANDOFF_MIN_DELAY_MS = 120;
+const STREAMING_QUEUE_HANDOFF_OVERLAP_MS = 260;
 const STREAMING_QUEUE_HANDOFF_BLEND_IN_MS = 520;
 
 function nowMs() {
@@ -142,9 +143,19 @@ export function createLive2DPerformanceBrain() {
       : null;
   }
 
+  function streamingAppendAt(currentPlan, elapsed) {
+    const minimumStart = elapsed + STREAMING_QUEUE_HANDOFF_MIN_DELAY_MS;
+    const nextActiveEnd = currentPlan.actions
+      .map(behaviorActionEndMs)
+      .filter((endMs) => endMs > minimumStart)
+      .sort((left, right) => left - right)[0];
+    if (!Number.isFinite(nextActiveEnd)) return minimumStart;
+    return Math.max(minimumStart, nextActiveEnd - STREAMING_QUEUE_HANDOFF_OVERLAP_MS);
+  }
+
   function extendStreamingBehaviorPlan(currentPlan, nextPlan, at, options = {}) {
     const elapsed = Math.max(0, at - (Number(currentPlan.startedAt) || at));
-    const appendAt = Math.max(0, elapsed - STREAMING_QUEUE_HANDOFF_PREROLL_MS);
+    const appendAt = Math.max(0, streamingAppendAt(currentPlan, elapsed));
     const retainAfter = Math.max(0, elapsed - 1500);
     const retainedActions = currentPlan.actions.filter((action) => behaviorActionEndMs(action) >= retainAfter);
     const appendedActions = nextPlan.actions.map((action) => ({

@@ -50,17 +50,13 @@ try {
 
   const handoffFrame = brain.sample(2120);
   assert.equal(handoffFrame.character.mode, 'speaking');
-  assert.ok(handoffFrame.samples.length > 0, 'next queue should produce action samples immediately');
+  const handoffEnergy = Number(handoffFrame.dominant?.energy) || 0;
   assert.ok(
-    Number(handoffFrame.dominant?.energy) > 0.08,
-    'next queue should not start with a zero-energy frame after a just-completed queue'
+    handoffEnergy < 0.18,
+    'next queue should not execute at full action energy on the arrival frame'
   );
   assert.ok(
-    Number(handoffFrame.dominant?.energy) < 0.72,
-    'next queue should fade in instead of entering at full action energy'
-  );
-  assert.ok(
-    Number(brain.sample(2380).dominant?.energy) > Number(handoffFrame.dominant?.energy),
+    Number(brain.sample(2380).dominant?.energy) > handoffEnergy,
     'handoff action energy should ramp up after the queue boundary'
   );
 } finally {
