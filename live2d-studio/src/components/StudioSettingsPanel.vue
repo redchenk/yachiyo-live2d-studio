@@ -10,9 +10,12 @@ import {
   DEFAULT_ROOM_TTS_SETTINGS,
   DEFAULT_ROOM_VISION_SETTINGS,
   DEFAULT_ROOM_VTS_SETTINGS,
+  ROOM_LLM_PROVIDER_OPTIONS,
+  ROOM_LLM_VISION_IMAGE_MODE_OPTIONS,
   DEFAULT_MIMO_TTS_API_URL,
   DEFAULT_MIMO_TTS_MODEL,
   DEFAULT_MIMO_TTS_VOICE,
+  applyRoomLLMProviderPreset,
   normalizeRoomLLMSettings,
   normalizeRoomASRSettings,
   normalizeRoomMemorySettings,
@@ -230,6 +233,11 @@ function resetCurrentTab() {
     Object.assign(memory, normalizeRoomMemorySettings(DEFAULT_ROOM_MEMORY_SETTINGS));
   }
   setStatus('Defaults loaded');
+}
+
+function applyLLMProvider() {
+  Object.assign(llm, applyRoomLLMProviderPreset(llm, llm.provider));
+  setStatus('LLM provider loaded');
 }
 
 function applyTtsProvider() {
@@ -622,6 +630,12 @@ onUnmounted(() => {
     <form class="studio-settings-form" @submit.prevent="saveSettings">
       <section v-if="activeTab === 'llm'" class="studio-settings-section">
         <label>
+          <span>Provider</span>
+          <select v-model="llm.provider" @change="applyLLMProvider">
+            <option v-for="option in ROOM_LLM_PROVIDER_OPTIONS" :key="option.value" :value="option.value">{{ option.label }}</option>
+          </select>
+        </label>
+        <label>
           <span>API URL</span>
           <input v-model="llm.apiUrl" type="text" spellcheck="false" placeholder="https://api.openai.com/v1/chat/completions">
         </label>
@@ -636,6 +650,12 @@ onUnmounted(() => {
         <label class="studio-check-row">
           <input v-model="llm.useProxy" type="checkbox">
           <span>Use local proxy</span>
+        </label>
+        <label>
+          <span>Vision Images</span>
+          <select v-model="llm.visionImageMode">
+            <option v-for="option in ROOM_LLM_VISION_IMAGE_MODE_OPTIONS" :key="option.value" :value="option.value">{{ option.label }}</option>
+          </select>
         </label>
         <label class="studio-wide-field">
           <span>System Prompt</span>

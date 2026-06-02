@@ -1,4 +1,4 @@
-import { readRoomLLMSettings, readRoomTTSSettings } from './roomSettings';
+import { normalizeLLMApiUrl, readRoomLLMSettings, readRoomTTSSettings } from './roomSettings';
 import { cleanLive2DReply } from './live2dText';
 
 const DEFAULT_GPT_SOVITS_GPT_WEIGHT = 'GPT_weights_v2ProPlus/yachiyo-v2pro-e15.ckpt';
@@ -108,11 +108,8 @@ function pickReply(data) {
   return data?.choices?.[0]?.message?.content || data?.choices?.[0]?.text || data?.reply || '';
 }
 
-function normalizeOpenAIUrl(apiUrl = '') {
-  const url = String(apiUrl || '').trim();
-  if (/(api\.openai\.com|api\.x\.ai)\/v1\/?$/i.test(url)) return `${url.replace(/\/$/, '')}/responses`;
-  if (/(xiaomimimo\.com|token-plan-cn\.xiaomimimo\.com)\/v1\/?$/i.test(url)) return `${url.replace(/\/$/, '')}/chat/completions`;
-  return url;
+function normalizeOpenAIUrl(apiUrl = '', model = '', provider = '') {
+  return normalizeLLMApiUrl(apiUrl, model, provider);
 }
 
 function isOpenAIResponsesApi(apiUrl = '') {
@@ -246,8 +243,8 @@ async function translateForJapaneseTts(text, options = {}) {
     return cleanTtsText(result.data?.reply || '');
   }
 
-  const apiUrl = normalizeOpenAIUrl(settings.apiUrl);
   const model = settings.model || 'gpt-4o-mini';
+  const apiUrl = normalizeOpenAIUrl(settings.apiUrl, model, settings.provider);
   const response = await fetchWithTimeout(apiUrl, {
     method: 'POST',
     headers: {

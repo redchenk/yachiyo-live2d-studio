@@ -2788,17 +2788,36 @@ internal static class DesktopApiProxy
     private static string NormalizeChatUrl(string apiUrl, string model)
     {
         var url = (apiUrl ?? string.Empty).Trim();
-        if (RegexContains(url, @"(api\.openai\.com|api\.x\.ai)/v1/?$"))
+        if (RegexContains(url, @"/(chat/completions|responses)/?$"))
         {
-            return url.TrimEnd('/') + "/responses";
+            return url.TrimEnd('/');
         }
-        if (RegexContains(url, @"(xiaomimimo\.com|token-plan-cn\.xiaomimimo\.com)/v1/?$"))
+        if (RegexContains(url, @"(api\.openai\.com|api\.x\.ai)(/v1)?/?$"))
         {
-            return url.TrimEnd('/') + "/chat/completions";
+            var parsed = new Uri(url);
+            return parsed.GetLeftPart(UriPartial.Authority).TrimEnd('/') + "/v1/responses";
         }
-        if (RegexContains(url + " " + model, @"deepseek|dashscope|aliyuncs|openai|openrouter|moonshot|bigmodel|zhipu|siliconflow|volces|ark|groq|mistral|together|perplexity|x\.ai|generativelanguage|xiaomimimo|token-plan-cn") &&
+        if (RegexContains(url, @"(xiaomimimo\.com|token-plan-cn\.xiaomimimo\.com)(/v1)?/?$"))
+        {
+            var parsed = new Uri(url);
+            return parsed.GetLeftPart(UriPartial.Authority).TrimEnd('/') + "/v1/chat/completions";
+        }
+        if (RegexContains(url + " " + model, @"deepseek|dashscope|aliyuncs|openai|openrouter|moonshot|kimi|bigmodel|zhipu|siliconflow|volces|ark|groq|mistral|together|perplexity|x\.ai|generativelanguage|xiaomimimo|token-plan-cn") &&
             !RegexContains(url, @"/(chat/completions|responses)/?$"))
         {
+            Uri parsed;
+            if (Uri.TryCreate(url, UriKind.Absolute, out parsed))
+            {
+                var path = parsed.AbsolutePath.TrimEnd('/');
+                if (string.IsNullOrEmpty(path) || path == "/")
+                {
+                    return parsed.GetLeftPart(UriPartial.Authority).TrimEnd('/') + "/v1/chat/completions";
+                }
+                if (string.Equals(path, "/v1", StringComparison.OrdinalIgnoreCase))
+                {
+                    return parsed.GetLeftPart(UriPartial.Authority).TrimEnd('/') + "/v1/chat/completions";
+                }
+            }
             return url.TrimEnd('/') + "/chat/completions";
         }
         return url;

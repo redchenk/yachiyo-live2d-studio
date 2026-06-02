@@ -1,4 +1,8 @@
-import { readRoomVisionSettings } from './roomSettings';
+import {
+  canAttachRoomLLMVisionImage,
+  readRoomLLMSettings,
+  readRoomVisionSettings
+} from './roomSettings';
 
 function asText(value, maxLength = 240) {
   return String(value ?? '').trim().replace(/\s+/g, ' ').slice(0, maxLength);
@@ -20,7 +24,7 @@ function windowLine(label, windowInfo = {}) {
   return `${label}: ${title}${processName ? ` | app=${processName}` : ''}${className ? ` | class=${className}` : ''}${bounds ? ` | bounds=${bounds}` : ''}`;
 }
 
-function buildVisionContextLines(context = {}) {
+function buildVisionContextLines(context = {}, imageAttached = false) {
   const cursor = context.cursor || {};
   const lines = [
     'Desktop visual context:',
@@ -31,9 +35,12 @@ function buildVisionContextLines(context = {}) {
   ];
   if (context.redacted) {
     lines.push(`Screenshot redacted: ${asText(context.redactionReason || 'sensitive-window', 120)}`);
-  } else if (context.image?.cursorCropBase64) {
+  } else if (context.image?.cursorCropBase64 && imageAttached) {
     const crop = rectText(context.image.cursorCropRect);
     lines.push(`Attached image: cursor-neighborhood screenshot${crop ? `, crop=${crop}` : ''}. The pink crosshair marks the mouse pointer.`);
+  } else if (context.image?.cursorCropBase64) {
+    const crop = rectText(context.image.cursorCropRect);
+    lines.push(`Screenshot available but not attached for this LLM provider${crop ? `, crop=${crop}` : ''}.`);
   } else {
     lines.push('Attached image: unavailable.');
   }
@@ -41,12 +48,13 @@ function buildVisionContextLines(context = {}) {
   return lines;
 }
 
-export function formatLive2DVisionPrompt(context = {}, settings = {}) {
+export function formatLive2DVisionPrompt(context = {}, settings = {}, llmSettings = {}) {
   if (!context?.enabled) return { prompt: '', payload: null };
-  const lines = buildVisionContextLines(context);
-  const prompt = lines.join('\n').slice(0, Number(settings.maxPromptChars) || 1600);
   const imageBase64 = context.redacted ? '' : String(context.image?.cursorCropBase64 || '').trim();
-  const payload = imageBase64 && settings.includeScreenshot
+  const attachImage = canAttachRoomLLMVisionImage(llmSettings);
+  const lines = buildVisionContextLines(context, Boolean(imageBase64) && Boolean(settings.includeScreenshot) && attachImage);
+  const prompt = lines.join('\n').slice(0, Number(settings.maxPromptChars) || 1600);
+  const payload = imageBase64 && settings.includeScreenshot && attachImage
     ? {
         includeImage: true,
         imageBase64,
@@ -92,9 +100,13 @@ export async function buildLive2DVisionPrompt(settingsOverrides = {}) {
     ...(settingsOverrides || {})
   };
   if (!settings.enabled) return { prompt: '', payload: null, context: null };
+  const llmSettings = readRoomLLMSettings();
   try {
-    const context = await readLive2DVisionContext(settings);
-    const { prompt, payload } = formatLive2DVisionPrompt(context, settings);
+    const context = await readLive2DVisionContext({
+      ...settings,
+      includeScreenshot: settings.includeScreenshot && canAttachRoomLLMVisionImage(llmSettings)
+    });
+    const { prompt, payload } = formatLive2DVisionPrompt(context, settings, llmSettings);
     return { prompt, payload, context };
   } catch (_) {
     return { prompt: '', payload: null, context: null };

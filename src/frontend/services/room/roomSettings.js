@@ -21,11 +21,69 @@ export const DEFAULT_MIMO_TTS_API_URL = 'https://api.xiaomimimo.com/v1/chat/comp
 export const DEFAULT_MIMO_TTS_MODEL = 'mimo-v2.5-tts';
 export const DEFAULT_MIMO_TTS_VOICE = 'mimo_default';
 
+export const ROOM_LLM_PROVIDER_PRESETS = {
+  openai: {
+    label: 'OpenAI',
+    apiUrl: 'https://api.openai.com/v1/chat/completions',
+    model: 'gpt-4o-mini',
+    useProxy: true
+  },
+  openrouter: {
+    label: 'OpenRouter',
+    apiUrl: 'https://openrouter.ai/api/v1/chat/completions',
+    model: 'openai/gpt-4o-mini',
+    useProxy: true
+  },
+  deepseek: {
+    label: 'DeepSeek',
+    apiUrl: 'https://api.deepseek.com/v1/chat/completions',
+    model: 'deepseek-chat',
+    useProxy: true
+  },
+  moonshot: {
+    label: 'Moonshot / Kimi',
+    apiUrl: 'https://api.moonshot.cn/v1/chat/completions',
+    model: 'moonshot-v1-8k',
+    useProxy: true
+  },
+  siliconflow: {
+    label: 'SiliconFlow',
+    apiUrl: 'https://api.siliconflow.cn/v1/chat/completions',
+    model: 'deepseek-ai/DeepSeek-V3',
+    useProxy: true
+  },
+  xai: {
+    label: 'xAI',
+    apiUrl: 'https://api.x.ai/v1/chat/completions',
+    model: 'grok-2',
+    useProxy: true
+  },
+  custom: {
+    label: 'Custom Compatible',
+    apiUrl: '',
+    model: 'gpt-4o-mini',
+    useProxy: true
+  }
+};
+
+export const ROOM_LLM_PROVIDER_OPTIONS = Object.entries(ROOM_LLM_PROVIDER_PRESETS).map(([value, preset]) => ({
+  value,
+  label: preset.label
+}));
+
+export const ROOM_LLM_VISION_IMAGE_MODE_OPTIONS = [
+  { value: 'auto', label: 'Auto' },
+  { value: 'off', label: 'Text only' },
+  { value: 'force', label: 'Force image' }
+];
+
 export const DEFAULT_ROOM_LLM_SETTINGS = {
+  provider: 'openai',
   apiUrl: 'https://api.openai.com/v1/chat/completions',
   apiKey: '',
   model: 'gpt-4o-mini',
   useProxy: true,
+  visionImageMode: 'auto',
   systemPrompt: ''
 };
 
@@ -139,6 +197,83 @@ function asNumber(value, fallback, min, max) {
   return Math.min(Math.max(numeric, min), max);
 }
 
+function normalizeProviderKey(provider) {
+  const key = asText(provider).toLowerCase();
+  return Object.prototype.hasOwnProperty.call(ROOM_LLM_PROVIDER_PRESETS, key) ? key : '';
+}
+
+function sameLlmDefaultModel(model) {
+  const value = asText(model).toLowerCase();
+  if (!value) return true;
+  return Object.values(ROOM_LLM_PROVIDER_PRESETS).some((preset) => asText(preset.model).toLowerCase() === value);
+}
+
+function appendChatEndpoint(parsed, provider, model) {
+  const host = parsed.hostname.toLowerCase();
+  const pathname = parsed.pathname.replace(/\/+$/g, '');
+  const text = `${provider || ''} ${host} ${model || ''}`;
+  const knownOpenAICompatible = /deepseek|dashscope|aliyuncs|openai|openrouter|moonshot|kimi|bigmodel|zhipu|siliconflow|volces|ark|groq|mistral|together|perplexity|x\.ai|generativelanguage|xiaomimimo|token-plan-cn/i.test(text);
+  if (!knownOpenAICompatible) return parsed.href.replace(/\/+$/g, '');
+  if (/\/(chat\/completions|responses)$/i.test(pathname)) return parsed.href.replace(/\/+$/g, '');
+  if (/(api\.openai\.com|api\.x\.ai)$/i.test(host) && (pathname === '' || pathname === '/v1')) {
+    return `${parsed.origin}/v1/responses`;
+  }
+  if (pathname === '' || pathname === '/') {
+    return `${parsed.origin}/v1/chat/completions`;
+  }
+  if (pathname === '/v1') {
+    return `${parsed.origin}/v1/chat/completions`;
+  }
+  return `${parsed.origin}${pathname}/chat/completions`;
+}
+
+export function normalizeLLMApiUrl(apiUrl = '', model = '', provider = '') {
+  const url = asText(apiUrl).replace(/\/+$/g, '');
+  if (!url) return '';
+  try {
+    return appendChatEndpoint(new URL(url), provider, model);
+  } catch (_) {
+    return url;
+  }
+}
+
+export function inferRoomLLMProvider(settings = {}) {
+  const apiUrl = typeof settings === 'string' ? settings : settings?.apiUrl;
+  const model = typeof settings === 'string' ? '' : settings?.model;
+  const text = `${apiUrl || ''} ${model || ''}`.toLowerCase();
+  if (/openrouter\.ai/.test(text)) return 'openrouter';
+  if (/deepseek/.test(text)) return 'deepseek';
+  if (/moonshot|kimi/.test(text)) return 'moonshot';
+  if (/siliconflow/.test(text)) return 'siliconflow';
+  if (/api\.x\.ai|grok/.test(text)) return 'xai';
+  if (/api\.openai\.com|gpt-4|gpt-5|openai/.test(text)) return 'openai';
+  return 'custom';
+}
+
+export function applyRoomLLMProviderPreset(settings = {}, provider = '') {
+  const key = normalizeProviderKey(provider) || 'custom';
+  const preset = ROOM_LLM_PROVIDER_PRESETS[key] || ROOM_LLM_PROVIDER_PRESETS.custom;
+  const current = { ...DEFAULT_ROOM_LLM_SETTINGS, ...(settings || {}) };
+  const nextModel = sameLlmDefaultModel(current.model)
+    ? preset.model || current.model
+    : current.model;
+  return normalizeRoomLLMSettings({
+    ...current,
+    provider: key,
+    apiUrl: preset.apiUrl || current.apiUrl,
+    model: nextModel,
+    useProxy: preset.useProxy
+  });
+}
+
+export function canAttachRoomLLMVisionImage(settings = {}) {
+  const normalized = normalizeRoomLLMSettings(settings);
+  if (normalized.visionImageMode === 'off') return false;
+  if (normalized.visionImageMode === 'force') return true;
+  const text = `${normalized.provider} ${normalized.apiUrl} ${normalized.model}`.toLowerCase();
+  return /gpt-4o|gpt-4\.1|vision|qwen.*vl|vl-|llava|pixtral|gemini|claude|grok.*vision/.test(text);
+}
+
 function defaultTtsApiUrl(provider) {
   if (provider === 'gpt-sovits') return DEFAULT_ROOM_TTS_SETTINGS.apiUrl;
   if (provider === 'mimo') return DEFAULT_MIMO_TTS_API_URL;
@@ -161,11 +296,18 @@ function defaultTtsVoice(provider) {
 
 export function normalizeRoomLLMSettings(settings = {}) {
   const merged = { ...DEFAULT_ROOM_LLM_SETTINGS, ...(settings || {}) };
+  const provider = normalizeProviderKey(merged.provider) || inferRoomLLMProvider(merged);
+  const preset = ROOM_LLM_PROVIDER_PRESETS[provider] || ROOM_LLM_PROVIDER_PRESETS.custom;
+  const visionImageMode = ['auto', 'off', 'force'].includes(asText(merged.visionImageMode))
+    ? asText(merged.visionImageMode)
+    : DEFAULT_ROOM_LLM_SETTINGS.visionImageMode;
   return {
-    apiUrl: asText(merged.apiUrl),
+    provider,
+    apiUrl: normalizeLLMApiUrl(asText(merged.apiUrl) || preset.apiUrl, merged.model, provider),
     apiKey: asText(merged.apiKey),
-    model: asText(merged.model) || DEFAULT_ROOM_LLM_SETTINGS.model,
+    model: asText(merged.model) || preset.model || DEFAULT_ROOM_LLM_SETTINGS.model,
     useProxy: asBoolean(merged.useProxy),
+    visionImageMode,
     systemPrompt: String(merged.systemPrompt || '').trim()
   };
 }

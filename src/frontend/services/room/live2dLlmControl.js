@@ -24,6 +24,7 @@ import {
 } from './live2dMemory';
 import { buildLive2DVisionPrompt } from './live2dVision';
 import { normalizeLive2DMusicCommand } from './live2dMusic';
+import { normalizeLLMApiUrl, readRoomLLMSettings } from './roomSettings';
 import { readJson, writeJson } from './roomStorage';
 
 const HISTORY_KEY = 'live2dLLMControlHistory';
@@ -735,11 +736,8 @@ export function parseLive2DControlPayload(rawText) {
   }
 }
 
-function normalizeOpenAIUrl(apiUrl = '') {
-  const url = String(apiUrl || '').trim();
-  if (/(api\.openai\.com|api\.x\.ai)\/v1\/?$/i.test(url)) return `${url.replace(/\/$/, '')}/responses`;
-  if (/(xiaomimimo\.com|token-plan-cn\.xiaomimimo\.com)\/v1\/?$/i.test(url)) return `${url.replace(/\/$/, '')}/chat/completions`;
-  return url;
+function normalizeOpenAIUrl(apiUrl = '', model = '', provider = '') {
+  return normalizeLLMApiUrl(apiUrl, model, provider);
 }
 
 function isOpenAIResponsesApi(apiUrl = '') {
@@ -786,7 +784,7 @@ export async function translateLive2DReplyToChinese(text) {
   const cacheKey = source.slice(0, 240);
   if (chineseCaptionTranslationCache.has(cacheKey)) return chineseCaptionTranslationCache.get(cacheKey);
 
-  const settings = readJson('roomLLMSettings', {});
+  const settings = readRoomLLMSettings();
   if (!settings.apiKey || !settings.apiUrl) return '';
   const systemPrompt = chineseCaptionTranslatorPrompt();
   const promise = (async () => {
@@ -809,8 +807,8 @@ export async function translateLive2DReplyToChinese(text) {
       return detectCaptionLang(translated) === 'ja' ? '' : translated;
     }
 
-    const apiUrl = normalizeOpenAIUrl(settings.apiUrl);
     const model = settings.model || 'gpt-4o-mini';
+    const apiUrl = normalizeOpenAIUrl(settings.apiUrl, model, settings.provider);
     const response = await fetch(apiUrl, {
       method: 'POST',
       headers: {
@@ -870,8 +868,8 @@ function visionUserContent(message, visionPayload, responsesApi = false) {
 }
 
 function buildDirectRequestBody(settings, systemPrompt, history, message, visionPayload = null) {
-  const apiUrl = normalizeOpenAIUrl(settings.apiUrl || '');
   const model = settings.model || 'gpt-4o-mini';
+  const apiUrl = normalizeOpenAIUrl(settings.apiUrl || '', model, settings.provider);
   if (isOpenAIResponsesApi(apiUrl)) {
     return {
       model: settings.model || 'gpt-5.5',
@@ -995,7 +993,7 @@ export function clearLive2DLLMHistory() {
 }
 
 export async function requestLive2DControl(message) {
-  const settings = readJson('roomLLMSettings', {});
+  const settings = readRoomLLMSettings();
   if (!settings.apiKey || !settings.apiUrl) {
     throw new Error('Missing LLM settings. Configure LLM in Studio Settings first.');
   }
@@ -1024,7 +1022,7 @@ export async function requestLive2DControl(message) {
     if (!response.ok || !result.success) throw new Error(result.message || `LLM ${response.status}`);
     rawReply = result.data?.reply || '';
   } else {
-    const apiUrl = normalizeOpenAIUrl(settings.apiUrl);
+    const apiUrl = normalizeOpenAIUrl(settings.apiUrl, settings.model, settings.provider);
     const response = await fetch(apiUrl, {
       method: 'POST',
       headers: {
@@ -1042,7 +1040,7 @@ export async function requestLive2DControl(message) {
 }
 
 export async function requestLive2DControlStream(message, handlers = {}) {
-  const settings = readJson('roomLLMSettings', {});
+  const settings = readRoomLLMSettings();
   if (!settings.apiKey || !settings.apiUrl) {
     throw new Error('Missing LLM settings. Configure LLM in Studio Settings first.');
   }
@@ -1086,7 +1084,7 @@ export async function requestLive2DControlStream(message, handlers = {}) {
       onEvent: (event) => handlers.onEvent?.(event)
     });
   } else {
-    const apiUrl = normalizeOpenAIUrl(settings.apiUrl);
+    const apiUrl = normalizeOpenAIUrl(settings.apiUrl, settings.model, settings.provider);
     const response = await fetch(apiUrl, {
       method: 'POST',
       headers: {
