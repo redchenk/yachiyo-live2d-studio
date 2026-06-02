@@ -20,6 +20,10 @@ import {
 } from '../services/room/live2dDebug';
 import { createLive2DAsrRecorder } from '../services/room/live2dAsr';
 import { executeLive2DMusicCommand } from '../services/room/live2dMusic';
+import {
+  LIVE2D_MUSIC_QUEUE_EVENT,
+  readLive2DMusicQueueState
+} from '../services/room/live2dMusicQueue';
 import { createLive2DSpeechPlayer } from '../services/room/live2dSpeech';
 import { cleanLive2DReply } from '../services/room/live2dText';
 import {
@@ -34,6 +38,9 @@ const liveTopic = ref('late-night AI VTuber test stream');
 const audienceInput = ref('');
 const audienceQueue = ref([]);
 const showLog = ref([]);
+const musicRequestInput = ref('');
+const musicQueueState = ref(readLive2DMusicQueueState());
+const musicPanelBusy = ref('');
 const messagesExpanded = ref(false);
 const activeMotionTab = ref('expression');
 const muted = ref(false);
@@ -127,6 +134,14 @@ const debugInterruptPolicyText = computed(() => formatDebugObject(live2dDebug.va
 
 const debugUpdatedLabel = computed(() => formatDebugTime(live2dDebug.value.updatedAt));
 const displayedChat = computed(() => showLog.value.slice(-4));
+const currentMusic = computed(() => musicQueueState.value.current || null);
+const queuedMusic = computed(() => (musicQueueState.value.queue || []).slice(0, 5));
+const musicHistory = computed(() => (musicQueueState.value.history || []).slice(0, 3));
+const musicStatusLabel = computed(() => {
+  if (currentMusic.value?.status === 'playing') return 'PLAYING';
+  if (currentMusic.value?.status === 'paused') return 'PAUSED';
+  return queuedMusic.value.length ? 'QUEUED' : 'IDLE';
+});
 const micBars = computed(() => Array.from({ length: 14 }, (_, index) => index < Math.round(Number(micGain.value || 0) / 8)));
 
 function formatDebugObject(value) {
@@ -422,29 +437,96 @@ async function executeMusicFromLLMResult(result, source = 'manual') {
   if (!result?.music) return null;
   try {
     const musicResult = await executeLive2DMusicCommand(result.music);
+    musicQueueState.value = readLive2DMusicQueueState();
     if (!musicResult || musicResult.status === 'disabled') return musicResult;
-    if (musicResult.status === 'playing') {
-      pushLog('system', `Apple Music playing: ${musicResult.title || musicResult.songId || 'song'}`, {
-        music: musicResult,
-        source
-      });
-    } else {
-      pushLog('system', `Apple Music ${musicResult.status}.`, {
-        music: musicResult,
-        source
-      });
-    }
+    pushLog('system', musicResultLabel(musicResult), { music: musicResult, source });
     return musicResult;
   } catch (error) {
-    const message = error?.message || 'Apple Music failed';
+    const message = error?.message || 'Music control failed';
     llmState.value = {
       ...llmState.value,
       error: message
     };
     if (source === 'live') liveDirector.error = message;
-    pushLog('system', `Apple Music: ${message}`, { source });
+    pushLog('system', `Music: ${message}`, { source });
     return null;
   }
+}
+
+function musicSongTitle(song) {
+  if (!song) return 'No song';
+  return [song.title, song.artist].filter(Boolean).join(' - ') || song.songId || song.url || 'Song';
+}
+
+function formatMusicDuration(durationMs = 0) {
+  const totalSeconds = Math.max(0, Math.round(Number(durationMs || 0) / 1000));
+  if (!totalSeconds) return '--:--';
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}:${String(seconds).padStart(2, '0')}`;
+}
+
+function musicResultLabel(result = {}) {
+  const title = result.title || musicSongTitle(result.current) || result.songId || 'song';
+  if (result.status === 'playing') return `Music playing: ${title}`;
+  if (result.status === 'queued') return `Queued: ${title}${result.waitLabel ? `, wait ${result.waitLabel}` : ''}`;
+  if (result.status === 'duplicate') return `Already queued: ${title}`;
+  if (result.status === 'queue-full') return `Music queue is full: ${title}`;
+  if (result.status === 'ended') return 'Music queue ended.';
+  if (result.status === 'cleared') return 'Music queue cleared.';
+  if (result.status === 'removed') return 'Music request removed.';
+  return `Music ${result.status || 'updated'}.`;
+}
+
+async function runMusicCommand(command, source = 'panel') {
+  if (!command) return null;
+  try {
+    const result = await executeLive2DMusicCommand(command);
+    musicQueueState.value = readLive2DMusicQueueState();
+    if (result && result.status !== 'disabled' && source !== 'silent') {
+      pushLog('system', musicResultLabel(result), { music: result, source });
+    }
+    return result;
+  } catch (error) {
+    const message = error?.message || 'Music control failed';
+    llmState.value = { ...llmState.value, error: message };
+    pushLog('system', `Music: ${message}`, { source });
+    return null;
+  }
+}
+
+async function requestMusic(mode = 'request') {
+  const query = musicRequestInput.value.trim();
+  if (!query || musicPanelBusy.value) return;
+  musicPanelBusy.value = mode;
+  try {
+    const result = await runMusicCommand({ action: mode, query }, 'panel');
+    if (result && !['duplicate', 'queue-full', 'disabled'].includes(result.status)) {
+      musicRequestInput.value = '';
+    }
+  } finally {
+    musicPanelBusy.value = '';
+  }
+}
+
+async function controlMusic(action, payload = {}) {
+  if (musicPanelBusy.value) return;
+  musicPanelBusy.value = action;
+  try {
+    await runMusicCommand({ action, ...payload }, 'panel');
+  } finally {
+    musicPanelBusy.value = '';
+  }
+}
+
+function removeMusicQueueItem(song) {
+  const id = song?.uid || song?.key || song?.songId;
+  if (!id) return;
+  controlMusic('remove', { removeId: id });
+}
+
+function handleLive2DMusicQueueEvent(event) {
+  musicQueueState.value = event.detail || readLive2DMusicQueueState();
 }
 
 function shouldJoinWithSpace(left, right) {
@@ -964,14 +1046,17 @@ function handleLive2DDebugEvent(event) {
 onMounted(() => {
   window.addEventListener(SETTINGS_SAVED_EVENT, handleStudioSettingsSaved);
   window.addEventListener(ROOM_LIVE2D_DEBUG_EVENT, handleLive2DDebugEvent);
+  window.addEventListener(LIVE2D_MUSIC_QUEUE_EVENT, handleLive2DMusicQueueEvent);
   loadModelViewport();
   live2dDebug.value = readRoomLive2DDebugState();
+  musicQueueState.value = readLive2DMusicQueueState();
   init();
 });
 
 onUnmounted(() => {
   window.removeEventListener(SETTINGS_SAVED_EVENT, handleStudioSettingsSaved);
   window.removeEventListener(ROOM_LIVE2D_DEBUG_EVENT, handleLive2DDebugEvent);
+  window.removeEventListener(LIVE2D_MUSIC_QUEUE_EVENT, handleLive2DMusicQueueEvent);
   modelDragState = null;
   modelViewport.dragging = false;
   stopLiveDirector();
@@ -1117,6 +1202,120 @@ onUnmounted(() => {
         <p v-else-if="asrState.status === 'listening' || asrState.status === 'transcribing'" class="live2d-inline-status">
           {{ asrState.status === 'listening' ? '正在聆听...' : '正在识别...' }}
         </p>
+      </section>
+
+      <section class="live2d-music-panel" aria-label="Music queue">
+        <header class="live2d-music-head">
+          <div>
+            <span>Music</span>
+            <strong>{{ musicStatusLabel }}</strong>
+          </div>
+          <button
+            class="live2d-icon-btn"
+            type="button"
+            title="Clear music queue"
+            aria-label="Clear music queue"
+            :disabled="musicPanelBusy || !queuedMusic.length"
+            @click="controlMusic('clear')"
+          >
+            <TsIcon name="trash" :size="18" />
+          </button>
+        </header>
+
+        <form class="live2d-music-request" @submit.prevent="requestMusic('request')">
+          <input
+            v-model="musicRequestInput"
+            type="text"
+            spellcheck="false"
+            placeholder="Song title artist"
+          >
+          <button
+            class="live2d-icon-btn"
+            type="submit"
+            title="Request song"
+            aria-label="Request song"
+            :disabled="Boolean(musicPanelBusy) || !musicRequestInput.trim()"
+          >
+            <TsIcon name="music" :size="19" />
+          </button>
+          <button
+            class="live2d-icon-btn"
+            type="button"
+            title="Play next"
+            aria-label="Play next"
+            :disabled="Boolean(musicPanelBusy) || !musicRequestInput.trim()"
+            @click="requestMusic('play_next')"
+          >
+            <TsIcon name="skipForward" :size="19" />
+          </button>
+        </form>
+
+        <article v-if="currentMusic" class="live2d-music-current">
+          <div>
+            <span>Now</span>
+            <strong>{{ musicSongTitle(currentMusic) }}</strong>
+            <small>{{ currentMusic.status }} / {{ formatMusicDuration(currentMusic.durationMs) }}</small>
+          </div>
+          <div class="live2d-music-actions">
+            <button
+              class="live2d-icon-btn"
+              type="button"
+              :title="currentMusic.status === 'paused' ? 'Resume' : 'Pause'"
+              :aria-label="currentMusic.status === 'paused' ? 'Resume' : 'Pause'"
+              :disabled="Boolean(musicPanelBusy)"
+              @click="controlMusic(currentMusic.status === 'paused' ? 'resume' : 'pause')"
+            >
+              <TsIcon :name="currentMusic.status === 'paused' ? 'play' : 'pause'" :size="17" />
+            </button>
+            <button
+              class="live2d-icon-btn"
+              type="button"
+              title="Skip"
+              aria-label="Skip"
+              :disabled="Boolean(musicPanelBusy)"
+              @click="controlMusic('skip')"
+            >
+              <TsIcon name="skipForward" :size="17" />
+            </button>
+            <button
+              class="live2d-icon-btn"
+              type="button"
+              title="Stop"
+              aria-label="Stop"
+              :disabled="Boolean(musicPanelBusy)"
+              @click="controlMusic('stop')"
+            >
+              <TsIcon name="x" :size="17" />
+            </button>
+          </div>
+        </article>
+        <article v-else class="live2d-music-empty">
+          <TsIcon name="music" :size="18" />
+          <span>No song playing</span>
+        </article>
+
+        <div v-if="queuedMusic.length" class="live2d-music-list">
+          <article v-for="(song, index) in queuedMusic" :key="song.uid || song.key" class="live2d-music-row">
+            <span>{{ index + 1 }}</span>
+            <div>
+              <strong>{{ musicSongTitle(song) }}</strong>
+              <small>{{ song.requestedBy || 'request' }} / {{ formatMusicDuration(song.durationMs) }}</small>
+            </div>
+            <button
+              class="live2d-mini-btn"
+              type="button"
+              title="Remove"
+              aria-label="Remove"
+              @click="removeMusicQueueItem(song)"
+            >
+              <TsIcon name="x" :size="14" />
+            </button>
+          </article>
+        </div>
+        <details v-if="musicHistory.length" class="live2d-music-history">
+          <summary>History</summary>
+          <span v-for="song in musicHistory" :key="song.uid || song.key">{{ musicSongTitle(song) }}</span>
+        </details>
       </section>
 
       <section class="live2d-motion-panel" aria-label="Motion controls">

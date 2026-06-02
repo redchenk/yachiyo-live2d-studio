@@ -499,6 +499,168 @@ body.vue-live2d-route {
     color: var(--live2d-cyan);
 }
 
+.live2d-music-panel {
+    display: grid;
+    gap: 0.66rem;
+    padding: 0.82rem;
+    border: 1px solid rgba(160, 184, 255, 0.14);
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.045);
+}
+
+.live2d-music-head,
+.live2d-music-request,
+.live2d-music-current,
+.live2d-music-row,
+.live2d-music-actions {
+    display: grid;
+    align-items: center;
+    gap: 0.55rem;
+    min-width: 0;
+}
+
+.live2d-music-head {
+    grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.live2d-music-head div,
+.live2d-music-current div,
+.live2d-music-row div {
+    display: grid;
+    gap: 0.12rem;
+    min-width: 0;
+}
+
+.live2d-music-head span,
+.live2d-music-current span,
+.live2d-music-current small,
+.live2d-music-row small,
+.live2d-music-history summary {
+    color: var(--live2d-faint);
+    font-size: 0.72rem;
+    font-weight: 850;
+}
+
+.live2d-music-head span {
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+.live2d-music-head strong {
+    color: var(--live2d-cyan);
+    font-size: 1rem;
+    letter-spacing: 0.04em;
+}
+
+.live2d-music-request {
+    grid-template-columns: minmax(0, 1fr) auto auto;
+}
+
+.live2d-music-request input {
+    width: 100%;
+    min-height: 2.65rem;
+    padding: 0 0.78rem;
+    border: 1px solid rgba(160, 184, 255, 0.16);
+    border-radius: 8px;
+    outline: none;
+    color: var(--live2d-ink);
+    background: rgba(8, 12, 28, 0.5);
+    font: inherit;
+    font-size: 0.86rem;
+}
+
+.live2d-music-request input:focus {
+    border-color: rgba(73, 220, 255, 0.54);
+    box-shadow: 0 0 0 3px rgba(73, 220, 255, 0.1);
+}
+
+.live2d-music-current,
+.live2d-music-empty,
+.live2d-music-row {
+    border: 1px solid rgba(160, 184, 255, 0.12);
+    border-radius: 8px;
+    background: rgba(3, 7, 18, 0.34);
+}
+
+.live2d-music-current {
+    grid-template-columns: minmax(0, 1fr) auto;
+    padding: 0.64rem;
+}
+
+.live2d-music-current strong,
+.live2d-music-row strong,
+.live2d-music-history span {
+    min-width: 0;
+    overflow: hidden;
+    color: var(--live2d-ink);
+    font-size: 0.82rem;
+    font-weight: 900;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.live2d-music-actions {
+    grid-template-columns: repeat(3, auto);
+}
+
+.live2d-music-actions .live2d-icon-btn,
+.live2d-music-request .live2d-icon-btn,
+.live2d-music-head .live2d-icon-btn {
+    width: 2.42rem;
+    height: 2.42rem;
+}
+
+.live2d-music-empty {
+    min-height: 2.8rem;
+    display: flex;
+    align-items: center;
+    gap: 0.48rem;
+    padding: 0 0.68rem;
+    color: var(--live2d-muted);
+    font-size: 0.8rem;
+    font-weight: 850;
+}
+
+.live2d-music-list {
+    display: grid;
+    gap: 0.38rem;
+    max-height: 13rem;
+    overflow: auto;
+    padding-right: 0.12rem;
+}
+
+.live2d-music-row {
+    grid-template-columns: 1.5rem minmax(0, 1fr) auto;
+    min-height: 2.75rem;
+    padding: 0.44rem 0.5rem;
+}
+
+.live2d-music-row > span {
+    color: var(--live2d-cyan);
+    font-size: 0.74rem;
+    font-weight: 950;
+    text-align: center;
+}
+
+.live2d-music-history {
+    display: grid;
+    gap: 0.4rem;
+}
+
+.live2d-music-history summary {
+    min-height: 1.8rem;
+    cursor: pointer;
+}
+
+.live2d-music-history span {
+    display: block;
+    padding: 0.32rem 0.45rem;
+    border: 1px solid rgba(160, 184, 255, 0.1);
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.045);
+    font-size: 0.72rem;
+}
+
 .live2d-motion-panel {
     display: grid;
     gap: 0.72rem;

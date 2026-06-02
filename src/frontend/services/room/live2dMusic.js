@@ -4,15 +4,46 @@ import {
   writeRoomMusicSettings
 } from './roomSettings';
 import { appendRoomLive2DDebugEvent } from './live2dDebug';
+import {
+  addLive2DMusicHistory,
+  clearLive2DMusicCurrent,
+  clearLive2DMusicQueue,
+  dequeueNextLive2DMusicCandidate,
+  enqueueLive2DMusicCandidate,
+  estimateLive2DMusicWaitMs,
+  formatLive2DMusicWait,
+  getLive2DMusicPublicState,
+  normalizeMusicCandidate,
+  pickLive2DMusicCandidate,
+  readLive2DMusicQueueState,
+  removeLive2DMusicQueueItem,
+  setLive2DMusicCurrent,
+  updateLive2DMusicCurrent
+} from './live2dMusicQueue';
 
 const MUSIC_KIT_SCRIPT_ID = 'yachiyo-musickit-js';
 const MUSIC_KIT_SCRIPT_URL = 'https://js-cdn.music.apple.com/musickit/v3/musickit.js';
-const DEFAULT_SEARCH_LIMIT = 1;
-const PLAYABLE_ACTIONS = new Set(['play', 'pause', 'resume', 'stop', 'authorize']);
+const DEFAULT_SEARCH_LIMIT = 25;
+const PLAYABLE_ACTIONS = new Set([
+  'play',
+  'request',
+  'play_next',
+  'play_now',
+  'pause',
+  'resume',
+  'stop',
+  'skip',
+  'clear',
+  'remove',
+  'queue',
+  'authorize'
+]);
+const STATE_ONLY_ACTIONS = new Set(['queue', 'clear', 'remove']);
 
 let musicKitScriptPromise = null;
 let musicKitConfigurePromise = null;
 let musicKitConfigureKey = '';
+let playbackTimer = 0;
 
 function asText(value) {
   return String(value ?? '').trim();
@@ -33,10 +64,16 @@ function firstText(...values) {
 }
 
 function normalizeMusicAction(value) {
-  const action = asText(value).toLowerCase().replace(/[^a-z_-]/g, '');
+  const action = asText(value).toLowerCase().replace(/[^a-z0-9_-]/g, '');
   if (action === 'start') return 'play';
   if (action === 'continue') return 'resume';
   if (action === 'halt') return 'stop';
+  if (['order', 'song_request', 'songrequest', 'enqueue', 'append', 'request_song'].includes(action)) return 'request';
+  if (['next', 'playnext', 'play_next_song', 'next_song'].includes(action)) return 'play_next';
+  if (['immediate', 'playnow', 'play_now_song', 'cut_in'].includes(action)) return 'play_now';
+  if (['cut', 'skip_song', 'next_track'].includes(action)) return 'skip';
+  if (['list', 'status'].includes(action)) return 'queue';
+  if (['clear_queue', 'clearqueue'].includes(action)) return 'clear';
   return PLAYABLE_ACTIONS.has(action) ? action : 'play';
 }
 
@@ -78,15 +115,20 @@ export function normalizeLive2DMusicCommand(rawCommand = null) {
   );
   const url = firstText(source.url, source.musicUrl, source.appleMusicUrl, nested.url, nested.musicUrl, nested.appleMusicUrl);
   const storefront = normalizeStorefront(source.storefront || source.storefrontId || nested.storefront || nested.storefrontId, '');
+  const requestedBy = firstText(source.requestedBy, source.by, source.user, source.viewer, nested.requestedBy, nested.by, nested.user, nested.viewer);
+  const removeId = firstText(source.removeId, source.queueId, source.uid, nested.removeId, nested.queueId, nested.uid);
 
-  if (action === 'play' && !query && !songId && !url) return null;
+  if (['play', 'request', 'play_next', 'play_now'].includes(action) && !query && !songId && !url) return null;
+  if (action === 'remove' && !removeId && !songId) return null;
 
   return compactObject({
     action,
     query,
     songId,
     url,
-    storefront
+    storefront,
+    requestedBy,
+    removeId
   });
 }
 
@@ -214,12 +256,28 @@ async function ensureAuthorized(music, settings) {
   return token;
 }
 
-function songLabel(song) {
-  const attributes = song?.attributes || {};
-  return [attributes.name, attributes.artistName].filter(Boolean).join(' - ') || song?.id || 'Apple Music song';
+function appleArtworkUrl(artwork = null, size = 300) {
+  const url = asText(artwork?.url);
+  return url ? url.replace('{w}', String(size)).replace('{h}', String(size)) : '';
 }
 
-async function searchAppleMusicSong(query, settings, userToken = '') {
+function appleMusicSongToCandidate(song, defaults = {}) {
+  const attributes = song?.attributes || {};
+  return normalizeMusicCandidate({
+    provider: 'apple-music',
+    songId: song?.id,
+    title: attributes.name,
+    artist: attributes.artistName,
+    album: attributes.albumName,
+    artworkUrl: appleArtworkUrl(attributes.artwork),
+    durationMs: attributes.durationInMillis,
+    storefront: defaults.storefront,
+    query: defaults.query,
+    requestedBy: defaults.requestedBy
+  });
+}
+
+async function searchAppleMusicSongs(query, settings, userToken = '') {
   const term = asText(query);
   if (!term) throw new Error('Apple Music song query is empty.');
 
@@ -227,7 +285,7 @@ async function searchAppleMusicSong(query, settings, userToken = '') {
   const params = new URLSearchParams({
     term,
     types: 'songs',
-    limit: String(DEFAULT_SEARCH_LIMIT)
+    limit: String(settings.searchLimit || DEFAULT_SEARCH_LIMIT)
   });
   const response = await fetch(`https://api.music.apple.com/v1/catalog/${storefront}/search?${params.toString()}`, {
     headers: compactObject({
@@ -239,47 +297,204 @@ async function searchAppleMusicSong(query, settings, userToken = '') {
   if (!response.ok) {
     throw new Error(musicErrorMessage(data, `Apple Music search failed (${response.status}).`));
   }
-  const song = data?.results?.songs?.data?.[0] || null;
-  if (!song?.id) throw new Error(`Apple Music did not find a song for "${term}".`);
-  return song;
+  const songs = Array.isArray(data?.results?.songs?.data) ? data.results.songs.data : [];
+  return songs.map((song) => appleMusicSongToCandidate(song, {
+    storefront,
+    query: term
+  })).filter((song) => song.songId);
 }
 
-async function playAppleMusic(command, settings) {
-  const { music, settings: normalizedSettings } = await configureAppleMusic(settings);
-  const userToken = await ensureAuthorized(music, normalizedSettings);
-  const playback = {
-    command,
-    song: null,
-    id: command.songId || '',
-    url: command.url || ''
-  };
+function clearPlaybackTimer() {
+  if (!playbackTimer || typeof window === 'undefined') return;
+  window.clearTimeout(playbackTimer);
+  playbackTimer = 0;
+}
 
-  if (!playback.id && !playback.url) {
-    playback.song = await searchAppleMusicSong(command.query, normalizedSettings, userToken);
-    playback.id = playback.song.id;
-  }
+function schedulePlaybackTimer(settings) {
+  clearPlaybackTimer();
+  if (typeof window === 'undefined') return;
+  const state = readLive2DMusicQueueState();
+  const current = state.current;
+  if (!current || current.status !== 'playing') return;
+  const durationMs = current.durationMs || 240000;
+  const elapsedMs = Math.max(0, Date.now() - (current.startedAt || Date.now()) - (current.elapsedPausedMs || 0));
+  const delayMs = Math.max(15000, durationMs - elapsedMs + 1200);
+  const playbackToken = current.playbackToken;
+  playbackTimer = window.setTimeout(() => {
+    const latest = readLive2DMusicQueueState().current;
+    if (!latest || latest.playbackToken !== playbackToken || latest.status !== 'playing') return;
+    playNextAppleMusic(settings).catch((error) => {
+      publishMusicDebug('music-error', {
+        action: 'auto-next',
+        message: musicErrorMessage(error)
+      });
+    });
+  }, Math.min(delayMs, 4 * 60 * 60 * 1000));
+}
+
+async function playAppleMusicCandidate(candidate, music, settings) {
+  const normalizedCandidate = normalizeMusicCandidate(candidate, {
+    provider: 'apple-music',
+    storefront: settings.storefront
+  });
 
   publishMusicDebug('music-play-request', {
     action: 'play',
-    query: command.query,
-    songId: playback.id,
-    url: playback.url,
-    storefront: command.storefront || normalizedSettings.storefront
+    query: normalizedCandidate.query,
+    songId: normalizedCandidate.songId,
+    url: normalizedCandidate.url,
+    storefront: normalizedCandidate.storefront || settings.storefront
   });
 
-  if (playback.url) {
-    await music.setQueue({ url: playback.url, startPlaying: false });
+  if (normalizedCandidate.url) {
+    await music.setQueue({ url: normalizedCandidate.url, startPlaying: false });
   } else {
-    await music.setQueue({ song: playback.id, startPlaying: false });
+    await music.setQueue({ song: normalizedCandidate.songId, startPlaying: false });
   }
   await music.play();
+
+  const state = setLive2DMusicCurrent(normalizedCandidate, {
+    status: 'playing',
+    startedAt: Date.now()
+  });
+  addLive2DMusicHistory(normalizedCandidate, { settings, state });
+  schedulePlaybackTimer(settings);
 
   return {
     status: 'playing',
     provider: 'apple-music',
-    songId: playback.id,
-    title: playback.song ? songLabel(playback.song) : playback.id,
-    storefront: normalizedSettings.storefront
+    songId: normalizedCandidate.songId,
+    queueId: normalizedCandidate.uid,
+    title: [normalizedCandidate.title, normalizedCandidate.artist].filter(Boolean).join(' - ') ||
+      normalizedCandidate.songId ||
+      normalizedCandidate.url,
+    storefront: settings.storefront,
+    current: normalizedCandidate,
+    queueLength: state.queue.length
+  };
+}
+
+async function playNextAppleMusic(settings) {
+  const { music, settings: normalizedSettings } = await configureAppleMusic(settings);
+  await ensureAuthorized(music, normalizedSettings);
+  const { candidate, state } = dequeueNextLive2DMusicCandidate();
+  if (!candidate) {
+    clearPlaybackTimer();
+    clearLive2DMusicCurrent(state);
+    return { status: 'ended', provider: 'apple-music', queueLength: 0 };
+  }
+  return playAppleMusicCandidate(candidate, music, normalizedSettings);
+}
+
+function pickKnownMusicCandidate(command, settings) {
+  const state = readLive2DMusicQueueState();
+  const known = [...state.favorites, ...state.history];
+  if (!known.length || !command.query) return null;
+  return pickLive2DMusicCandidate(command.query, known, settings).candidate;
+}
+
+async function resolveAppleMusicCandidate(command, settings, userToken = '') {
+  if (command.songId || command.url) {
+    return normalizeMusicCandidate({
+      provider: 'apple-music',
+      songId: command.songId,
+      url: command.url,
+      title: command.songId || command.url,
+      query: command.query,
+      storefront: command.storefront || settings.storefront,
+      requestedBy: command.requestedBy
+    });
+  }
+
+  const known = pickKnownMusicCandidate(command, settings);
+  if (known) {
+    return normalizeMusicCandidate({
+      ...known,
+      query: command.query,
+      requestedBy: command.requestedBy,
+      requestedAt: Date.now()
+    });
+  }
+
+  const candidates = await searchAppleMusicSongs(command.query, settings, userToken);
+  const picked = pickLive2DMusicCandidate(command.query, candidates, settings);
+  if (!picked.candidate) throw new Error(`Apple Music did not find a song for "${command.query}".`);
+  publishMusicDebug('music-search-selected', {
+    action: command.action,
+    query: command.query,
+    selected: picked.candidate.title,
+    artist: picked.candidate.artist,
+    candidates: picked.scored.length,
+    reason: picked.scored[0]?.reason
+  });
+  return normalizeMusicCandidate({
+    ...picked.candidate,
+    requestedBy: command.requestedBy,
+    requestedAt: Date.now()
+  });
+}
+
+async function requestAppleMusic(command, settings) {
+  const { music, settings: normalizedSettings } = await configureAppleMusic(settings);
+  const userToken = await ensureAuthorized(music, normalizedSettings);
+  const candidate = await resolveAppleMusicCandidate(command, normalizedSettings, userToken);
+  let state = readLive2DMusicQueueState();
+  if (state.current?.status === 'playing' && !playbackTimer) {
+    state = clearLive2DMusicCurrent(state);
+  }
+  const mode = command.action === 'play_next' ? 'next' : command.action === 'play_now' ? 'immediate' : 'append';
+
+  if (mode === 'immediate') {
+    return playAppleMusicCandidate(candidate, music, normalizedSettings);
+  }
+
+  const enqueueResult = enqueueLive2DMusicCandidate(candidate, {
+    mode,
+    settings: normalizedSettings,
+    state
+  });
+
+  if (enqueueResult.status === 'duplicate') {
+    publishMusicDebug('music-duplicate', {
+      action: command.action,
+      query: command.query,
+      title: candidate.title,
+      reason: enqueueResult.reason
+    });
+    return {
+      status: 'duplicate',
+      provider: 'apple-music',
+      title: [candidate.title, candidate.artist].filter(Boolean).join(' - ') || candidate.songId,
+      songId: candidate.songId,
+      reason: enqueueResult.reason,
+      queueLength: enqueueResult.state.queue.length
+    };
+  }
+
+  if (enqueueResult.status === 'full') {
+    return {
+      status: 'queue-full',
+      provider: 'apple-music',
+      title: [candidate.title, candidate.artist].filter(Boolean).join(' - ') || candidate.songId,
+      queueLength: enqueueResult.state.queue.length
+    };
+  }
+
+  if (normalizedSettings.autoPlayRequests && !enqueueResult.state.current) {
+    return playNextAppleMusic(normalizedSettings);
+  }
+
+  const waitMs = estimateLive2DMusicWaitMs(candidate, enqueueResult.state);
+  return {
+    status: 'queued',
+    provider: 'apple-music',
+    title: [candidate.title, candidate.artist].filter(Boolean).join(' - ') || candidate.songId,
+    songId: candidate.songId,
+    queueId: candidate.uid,
+    position: enqueueResult.position,
+    waitMs,
+    waitLabel: formatLive2DMusicWait(waitMs),
+    queueLength: enqueueResult.state.queue.length
   };
 }
 
@@ -309,7 +524,7 @@ export async function executeLive2DMusicCommand(rawCommand, settings = readRoomM
     ...settings,
     storefront: command.storefront || settings.storefront
   });
-  if (!normalizedSettings.enabled && command.action !== 'authorize') {
+  if (!normalizedSettings.enabled && command.action !== 'authorize' && !STATE_ONLY_ACTIONS.has(command.action)) {
     publishMusicDebug('music-disabled', { action: command.action, query: command.query });
     return { status: 'disabled', provider: 'apple-music' };
   }
@@ -320,26 +535,59 @@ export async function executeLive2DMusicCommand(rawCommand, settings = readRoomM
       return { status: 'authorized', provider: 'apple-music', settings: saved };
     }
 
+    if (command.action === 'queue') {
+      return { status: 'queue', provider: 'apple-music', state: getLive2DMusicPublicState() };
+    }
+    if (command.action === 'clear') {
+      const state = clearLive2DMusicQueue();
+      return { status: 'cleared', provider: 'apple-music', queueLength: state.queue.length };
+    }
+    if (command.action === 'remove') {
+      const state = removeLive2DMusicQueueItem(command.removeId || command.songId);
+      return { status: 'removed', provider: 'apple-music', queueLength: state.queue.length };
+    }
+
     const { music } = await configureAppleMusic(normalizedSettings);
     if (command.action === 'pause') {
       await music.pause?.();
+      clearPlaybackTimer();
+      const current = readLive2DMusicQueueState().current;
+      if (current) updateLive2DMusicCurrent({ status: 'paused', pausedAt: Date.now() });
       publishMusicDebug('music-paused', { action: 'pause' });
       return { status: 'paused', provider: 'apple-music' };
     }
     if (command.action === 'resume') {
       await ensureAuthorized(music, normalizedSettings);
       await music.play();
+      const current = readLive2DMusicQueueState().current;
+      if (current) {
+        const pausedAt = Number(current.pausedAt) || Date.now();
+        updateLive2DMusicCurrent({
+          status: 'playing',
+          pausedAt: 0,
+          elapsedPausedMs: (Number(current.elapsedPausedMs) || 0) + Math.max(0, Date.now() - pausedAt)
+        });
+        schedulePlaybackTimer(normalizedSettings);
+      }
       publishMusicDebug('music-resumed', { action: 'resume' });
-      return { status: 'playing', provider: 'apple-music' };
+      return { status: 'resumed', provider: 'apple-music' };
     }
     if (command.action === 'stop') {
       if (typeof music.stop === 'function') await music.stop();
       else await music.pause?.();
+      clearPlaybackTimer();
+      clearLive2DMusicCurrent();
       publishMusicDebug('music-stopped', { action: 'stop' });
       return { status: 'stopped', provider: 'apple-music' };
     }
+    if (command.action === 'skip') {
+      clearPlaybackTimer();
+      if (typeof music.stop === 'function') await music.stop();
+      else await music.pause?.();
+      return await playNextAppleMusic(normalizedSettings);
+    }
 
-    return await playAppleMusic(command, normalizedSettings);
+    return await requestAppleMusic(command, normalizedSettings);
   } catch (error) {
     const message = musicErrorMessage(error);
     publishMusicDebug('music-error', {

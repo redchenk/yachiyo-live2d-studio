@@ -167,7 +167,16 @@ export const DEFAULT_ROOM_MUSIC_SETTINGS = {
   developerToken: '',
   musicUserToken: '',
   storefront: 'cn',
-  autoAuthorize: true
+  autoAuthorize: true,
+  searchLimit: 25,
+  smartPick: true,
+  maxQueueSize: 30,
+  dedupeEnabled: true,
+  autoPlayRequests: true,
+  filterShortSongs: true,
+  minDurationMs: 60000,
+  historyLimit: 50,
+  blacklist: ''
 };
 
 export const DEFAULT_ROOM_VISION_SETTINGS = {
@@ -458,13 +467,25 @@ export function normalizeRoomMusicSettings(settings = {}) {
     : DEFAULT_ROOM_MUSIC_SETTINGS.provider;
   const storefront = asText(merged.storefront).toLowerCase().replace(/[^a-z]/g, '').slice(0, 2) ||
     DEFAULT_ROOM_MUSIC_SETTINGS.storefront;
+  const blacklist = Array.isArray(merged.blacklist)
+    ? merged.blacklist.map((item) => asText(item)).filter(Boolean).join('\n')
+    : String(merged.blacklist || '');
   return {
     enabled: asBoolean(merged.enabled),
     provider,
     developerToken: String(merged.developerToken || '').trim(),
     musicUserToken: String(merged.musicUserToken || '').trim(),
     storefront,
-    autoAuthorize: asBoolean(merged.autoAuthorize)
+    autoAuthorize: asBoolean(merged.autoAuthorize),
+    searchLimit: Math.round(asNumber(merged.searchLimit, DEFAULT_ROOM_MUSIC_SETTINGS.searchLimit, 1, 50)),
+    smartPick: asBoolean(merged.smartPick),
+    maxQueueSize: Math.round(asNumber(merged.maxQueueSize, DEFAULT_ROOM_MUSIC_SETTINGS.maxQueueSize, 1, 100)),
+    dedupeEnabled: asBoolean(merged.dedupeEnabled),
+    autoPlayRequests: asBoolean(merged.autoPlayRequests),
+    filterShortSongs: asBoolean(merged.filterShortSongs),
+    minDurationMs: Math.round(asNumber(merged.minDurationMs, DEFAULT_ROOM_MUSIC_SETTINGS.minDurationMs, 0, 600000)),
+    historyLimit: Math.round(asNumber(merged.historyLimit, DEFAULT_ROOM_MUSIC_SETTINGS.historyLimit, 1, 300)),
+    blacklist
   };
 }
 

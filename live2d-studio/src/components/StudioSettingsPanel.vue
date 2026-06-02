@@ -873,6 +873,42 @@ onUnmounted(() => {
           <input v-model="music.autoAuthorize" type="checkbox">
           <span>Auto authorize</span>
         </label>
+        <label class="studio-check-row">
+          <input v-model="music.autoPlayRequests" type="checkbox">
+          <span>Auto play queued requests</span>
+        </label>
+        <label class="studio-check-row">
+          <input v-model="music.smartPick" type="checkbox">
+          <span>Smart candidate selection</span>
+        </label>
+        <label class="studio-check-row">
+          <input v-model="music.dedupeEnabled" type="checkbox">
+          <span>Prevent duplicate requests</span>
+        </label>
+        <label class="studio-check-row">
+          <input v-model="music.filterShortSongs" type="checkbox">
+          <span>Filter short tracks</span>
+        </label>
+        <label>
+          <span>Search Limit</span>
+          <input v-model.number="music.searchLimit" type="number" min="1" max="50" step="1">
+        </label>
+        <label>
+          <span>Queue Limit</span>
+          <input v-model.number="music.maxQueueSize" type="number" min="1" max="100" step="1">
+        </label>
+        <label>
+          <span>Min Duration Ms</span>
+          <input v-model.number="music.minDurationMs" type="number" min="0" max="600000" step="1000">
+        </label>
+        <label>
+          <span>History Limit</span>
+          <input v-model.number="music.historyLimit" type="number" min="1" max="300" step="1">
+        </label>
+        <label class="studio-wide-field">
+          <span>Blacklist</span>
+          <textarea v-model="music.blacklist" rows="4" spellcheck="false" placeholder="One keyword per line, e.g. live, remix, cover"></textarea>
+        </label>
         <label class="studio-wide-field">
           <span>Developer Token</span>
           <input v-model="music.developerToken" type="password" spellcheck="false" placeholder="JWT developer token">
