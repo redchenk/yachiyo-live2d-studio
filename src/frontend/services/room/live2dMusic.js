@@ -25,7 +25,10 @@ const MUSIC_KIT_SCRIPT_ID = 'yachiyo-musickit-js';
 const MUSIC_KIT_SCRIPT_URL = 'https://js-cdn.music.apple.com/musickit/v3/musickit.js';
 const APPLE_MUSIC_PROVIDER = 'apple-music';
 const LOCAL_MUSIC_PROVIDER = 'local-library';
+const NETEASE_MUSIC_PROVIDER = 'netease-cloud';
 const LOCAL_MUSIC_SEARCH_ENDPOINT = '/api/music/local/search';
+const NETEASE_MUSIC_SEARCH_ENDPOINT = '/api/music/netease/search';
+const NETEASE_MUSIC_RESOLVE_ENDPOINT = '/api/music/netease/resolve';
 const DEFAULT_SEARCH_LIMIT = 25;
 const PLAYABLE_ACTIONS = new Set([
   'play',
@@ -351,9 +354,81 @@ async function searchLocalMusicSongs(query, settings) {
   })).filter((song) => song.songId || song.url);
 }
 
+function neteaseMusicSongToCandidate(song, defaults = {}) {
+  return normalizeMusicCandidate({
+    provider: NETEASE_MUSIC_PROVIDER,
+    songId: song?.songId || song?.id,
+    title: song?.title || song?.name,
+    artist: song?.artist || song?.artistName,
+    album: song?.album || song?.albumName,
+    artworkUrl: song?.artworkUrl || song?.picUrl,
+    durationMs: song?.durationMs || song?.duration,
+    query: defaults.query,
+    requestedBy: defaults.requestedBy
+  });
+}
+
+async function searchNeteaseMusicSongs(query, settings) {
+  const term = asText(query);
+  if (!term) throw new Error('NetEase Cloud Music song query is empty.');
+  const response = await fetch(NETEASE_MUSIC_SEARCH_ENDPOINT, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json; charset=utf-8' },
+    body: JSON.stringify({
+      ...settings,
+      provider: NETEASE_MUSIC_PROVIDER,
+      query: term,
+      limit: settings.searchLimit || DEFAULT_SEARCH_LIMIT
+    })
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok || data?.success === false) {
+    throw new Error(asText(data?.message) || `NetEase Cloud Music search failed (${response.status}).`);
+  }
+  const songs = Array.isArray(data?.candidates) ? data.candidates : [];
+  return songs.map((song) => neteaseMusicSongToCandidate(song, {
+    query: term
+  })).filter((song) => song.songId || song.url);
+}
+
+async function resolveNeteasePlayableCandidate(candidate, settings) {
+  const sourceCandidate = normalizeMusicCandidate(candidate, {
+    provider: NETEASE_MUSIC_PROVIDER
+  });
+  if (sourceCandidate.url && !sourceCandidate.songId) {
+    return sourceCandidate;
+  }
+  if (!sourceCandidate.songId) {
+    throw new Error('NetEase Cloud Music candidate has no song ID.');
+  }
+
+  const response = await fetch(NETEASE_MUSIC_RESOLVE_ENDPOINT, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json; charset=utf-8' },
+    body: JSON.stringify({
+      ...settings,
+      provider: NETEASE_MUSIC_PROVIDER,
+      candidate: sourceCandidate,
+      songId: sourceCandidate.songId
+    })
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok || data?.success === false) {
+    throw new Error(asText(data?.message) || `NetEase Cloud Music resolve failed (${response.status}).`);
+  }
+  const resolved = data?.candidate || data?.song || {};
+  return normalizeMusicCandidate({
+    ...sourceCandidate,
+    ...resolved,
+    provider: NETEASE_MUSIC_PROVIDER,
+    songId: resolved.songId || resolved.id || sourceCandidate.songId,
+    url: resolved.url || sourceCandidate.url
+  });
+}
+
 function ensureLocalAudio() {
   if (typeof window === 'undefined') {
-    throw new Error('Local music playback is only available in the studio window.');
+    throw new Error('Browser music playback is only available in the studio window.');
   }
   if (localAudio) return localAudio;
 
@@ -361,29 +436,33 @@ function ensureLocalAudio() {
   localAudio.preload = 'auto';
   localAudio.addEventListener('ended', () => {
     const settings = readRoomMusicSettings();
-    if (settings.provider !== LOCAL_MUSIC_PROVIDER) return;
-    playNextLocalMusic(settings).catch((error) => {
+    const provider = settings.provider;
+    if (provider !== LOCAL_MUSIC_PROVIDER && provider !== NETEASE_MUSIC_PROVIDER) return;
+    const playNext = provider === NETEASE_MUSIC_PROVIDER ? playNextNeteaseMusic : playNextLocalMusic;
+    playNext(settings).catch((error) => {
       publishMusicDebug('music-error', {
         action: 'auto-next',
-        provider: LOCAL_MUSIC_PROVIDER,
+        provider,
         message: musicErrorMessage(error)
-      }, LOCAL_MUSIC_PROVIDER);
+      }, provider);
     });
   });
   localAudio.addEventListener('loadedmetadata', () => {
     const durationMs = Math.round(Number(localAudio.duration || 0) * 1000);
     if (!Number.isFinite(durationMs) || durationMs <= 0) return;
     const current = readLive2DMusicQueueState().current;
-    if (!current || current.provider !== LOCAL_MUSIC_PROVIDER) return;
+    if (!current || (current.provider !== LOCAL_MUSIC_PROVIDER && current.provider !== NETEASE_MUSIC_PROVIDER)) return;
     updateLive2DMusicCurrent({ durationMs });
   });
   localAudio.addEventListener('error', () => {
     const code = localAudio?.error?.code || 0;
+    const current = readLive2DMusicQueueState().current;
+    const provider = current?.provider || readRoomMusicSettings().provider || LOCAL_MUSIC_PROVIDER;
     publishMusicDebug('music-error', {
       action: 'local-audio',
-      provider: LOCAL_MUSIC_PROVIDER,
-      message: `Local audio playback failed${code ? ` (${code})` : ''}.`
-    }, LOCAL_MUSIC_PROVIDER);
+      provider,
+      message: `Music audio playback failed${code ? ` (${code})` : ''}.`
+    }, provider);
   });
   return localAudio;
 }
@@ -755,6 +834,170 @@ async function requestLocalMusic(command, settings) {
   };
 }
 
+async function playNeteaseMusicCandidate(candidate, settings) {
+  const normalizedCandidate = await resolveNeteasePlayableCandidate(candidate, settings);
+  if (!normalizedCandidate.url) {
+    throw new Error('NetEase Cloud Music did not return a playable stream URL.');
+  }
+
+  publishMusicDebug('music-play-request', {
+    action: 'play',
+    provider: NETEASE_MUSIC_PROVIDER,
+    query: normalizedCandidate.query,
+    songId: normalizedCandidate.songId,
+    url: normalizedCandidate.url,
+    quality: settings.neteaseQualityLevel
+  }, NETEASE_MUSIC_PROVIDER);
+
+  const audio = ensureLocalAudio();
+  audio.pause();
+  audio.src = normalizedCandidate.url;
+  audio.currentTime = 0;
+  await audio.play();
+
+  const state = setLive2DMusicCurrent(normalizedCandidate, {
+    status: 'playing',
+    startedAt: Date.now()
+  });
+  addLive2DMusicHistory(normalizedCandidate, { settings, state });
+
+  return {
+    status: 'playing',
+    provider: NETEASE_MUSIC_PROVIDER,
+    songId: normalizedCandidate.songId,
+    queueId: normalizedCandidate.uid,
+    title: [normalizedCandidate.title, normalizedCandidate.artist].filter(Boolean).join(' - ') ||
+      normalizedCandidate.songId ||
+      normalizedCandidate.url,
+    current: normalizedCandidate,
+    queueLength: state.queue.length
+  };
+}
+
+async function playNextNeteaseMusic(settings) {
+  const { candidate, state } = dequeueNextLive2DMusicCandidate();
+  if (!candidate) {
+    if (localAudio) {
+      localAudio.pause();
+      localAudio.removeAttribute('src');
+      localAudio.load?.();
+    }
+    clearLive2DMusicCurrent(state);
+    return { status: 'ended', provider: NETEASE_MUSIC_PROVIDER, queueLength: 0 };
+  }
+  return playNeteaseMusicCandidate(candidate, settings);
+}
+
+async function resolveNeteaseMusicCandidate(command, settings) {
+  if (command.songId || command.url) {
+    return normalizeMusicCandidate({
+      provider: NETEASE_MUSIC_PROVIDER,
+      songId: command.songId,
+      url: command.url,
+      title: command.query || command.songId || command.url,
+      query: command.query,
+      requestedBy: command.requestedBy
+    });
+  }
+
+  const known = pickKnownMusicCandidate(command, settings);
+  if (known) {
+    return normalizeMusicCandidate({
+      ...known,
+      provider: NETEASE_MUSIC_PROVIDER,
+      url: '',
+      query: command.query,
+      requestedBy: command.requestedBy,
+      requestedAt: Date.now()
+    });
+  }
+
+  const candidates = await searchNeteaseMusicSongs(command.query, settings);
+  const picked = pickLive2DMusicCandidate(command.query, candidates, settings);
+  if (!picked.candidate) {
+    throw new Error(`NetEase Cloud Music did not find a song for "${command.query}". Check api-enhanced is running and the song is available.`);
+  }
+  publishMusicDebug('music-search-selected', {
+    action: command.action,
+    provider: NETEASE_MUSIC_PROVIDER,
+    query: command.query,
+    selected: picked.candidate.title,
+    artist: picked.candidate.artist,
+    candidates: picked.scored.length,
+    reason: picked.scored[0]?.reason
+  }, NETEASE_MUSIC_PROVIDER);
+  return normalizeMusicCandidate({
+    ...picked.candidate,
+    provider: NETEASE_MUSIC_PROVIDER,
+    url: '',
+    requestedBy: command.requestedBy,
+    requestedAt: Date.now()
+  });
+}
+
+async function requestNeteaseMusic(command, settings) {
+  const candidate = await resolveNeteaseMusicCandidate(command, settings);
+  let state = readLive2DMusicQueueState();
+  if (state.current?.status === 'playing' && (!localAudio || !localAudio.src || localAudio.paused)) {
+    state = clearLive2DMusicCurrent(state);
+  }
+  const mode = command.action === 'play_next' ? 'next' : command.action === 'play_now' ? 'immediate' : 'append';
+
+  if (mode === 'immediate') {
+    return playNeteaseMusicCandidate(candidate, settings);
+  }
+
+  const enqueueResult = enqueueLive2DMusicCandidate(candidate, {
+    mode,
+    settings,
+    state
+  });
+
+  if (enqueueResult.status === 'duplicate') {
+    publishMusicDebug('music-duplicate', {
+      action: command.action,
+      provider: NETEASE_MUSIC_PROVIDER,
+      query: command.query,
+      title: candidate.title,
+      reason: enqueueResult.reason
+    }, NETEASE_MUSIC_PROVIDER);
+    return {
+      status: 'duplicate',
+      provider: NETEASE_MUSIC_PROVIDER,
+      title: [candidate.title, candidate.artist].filter(Boolean).join(' - ') || candidate.songId,
+      songId: candidate.songId,
+      reason: enqueueResult.reason,
+      queueLength: enqueueResult.state.queue.length
+    };
+  }
+
+  if (enqueueResult.status === 'full') {
+    return {
+      status: 'queue-full',
+      provider: NETEASE_MUSIC_PROVIDER,
+      title: [candidate.title, candidate.artist].filter(Boolean).join(' - ') || candidate.songId,
+      queueLength: enqueueResult.state.queue.length
+    };
+  }
+
+  if (settings.autoPlayRequests && !enqueueResult.state.current) {
+    return playNextNeteaseMusic(settings);
+  }
+
+  const waitMs = estimateLive2DMusicWaitMs(candidate, enqueueResult.state);
+  return {
+    status: 'queued',
+    provider: NETEASE_MUSIC_PROVIDER,
+    title: [candidate.title, candidate.artist].filter(Boolean).join(' - ') || candidate.songId,
+    songId: candidate.songId,
+    queueId: candidate.uid,
+    position: enqueueResult.position,
+    waitMs,
+    waitLabel: formatLive2DMusicWait(waitMs),
+    queueLength: enqueueResult.state.queue.length
+  };
+}
+
 export async function authorizeLive2DMusic(settings = readRoomMusicSettings()) {
   const { music, settings: normalizedSettings } = await configureAppleMusic(settings);
   const token = await music.authorize();
@@ -840,6 +1083,60 @@ export async function executeLive2DMusicCommand(rawCommand, settings = readRoomM
       }
 
       return await requestLocalMusic(command, normalizedSettings);
+    }
+
+    if (provider === NETEASE_MUSIC_PROVIDER) {
+      if (command.action === 'authorize') {
+        return { status: 'ready', provider: NETEASE_MUSIC_PROVIDER, settings: normalizedSettings };
+      }
+      if (command.action === 'queue') {
+        return { status: 'queue', provider: NETEASE_MUSIC_PROVIDER, state: getLive2DMusicPublicState() };
+      }
+      if (command.action === 'clear') {
+        const state = clearLive2DMusicQueue();
+        return { status: 'cleared', provider: NETEASE_MUSIC_PROVIDER, queueLength: state.queue.length };
+      }
+      if (command.action === 'remove') {
+        const state = removeLive2DMusicQueueItem(command.removeId || command.songId);
+        return { status: 'removed', provider: NETEASE_MUSIC_PROVIDER, queueLength: state.queue.length };
+      }
+
+      const audio = ensureLocalAudio();
+      if (command.action === 'pause') {
+        audio.pause();
+        const current = readLive2DMusicQueueState().current;
+        if (current) updateLive2DMusicCurrent({ status: 'paused', pausedAt: Date.now() });
+        publishMusicDebug('music-paused', { action: 'pause', provider }, provider);
+        return { status: 'paused', provider: NETEASE_MUSIC_PROVIDER };
+      }
+      if (command.action === 'resume') {
+        const current = readLive2DMusicQueueState().current;
+        if (!current) return playNextNeteaseMusic(normalizedSettings);
+        if (!audio.src && current.url) audio.src = current.url;
+        await audio.play();
+        const pausedAt = Number(current.pausedAt) || Date.now();
+        updateLive2DMusicCurrent({
+          status: 'playing',
+          pausedAt: 0,
+          elapsedPausedMs: (Number(current.elapsedPausedMs) || 0) + Math.max(0, Date.now() - pausedAt)
+        });
+        publishMusicDebug('music-resumed', { action: 'resume', provider }, provider);
+        return { status: 'resumed', provider: NETEASE_MUSIC_PROVIDER };
+      }
+      if (command.action === 'stop') {
+        audio.pause();
+        audio.removeAttribute('src');
+        audio.load?.();
+        clearLive2DMusicCurrent();
+        publishMusicDebug('music-stopped', { action: 'stop', provider }, provider);
+        return { status: 'stopped', provider: NETEASE_MUSIC_PROVIDER };
+      }
+      if (command.action === 'skip') {
+        audio.pause();
+        return await playNextNeteaseMusic(normalizedSettings);
+      }
+
+      return await requestNeteaseMusic(command, normalizedSettings);
     }
 
     if (command.action === 'authorize') {

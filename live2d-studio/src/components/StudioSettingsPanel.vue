@@ -153,6 +153,7 @@ const localTts = computed(() => tts.provider === 'gpt-sovits');
 const sqliteMemory = computed(() => memory.provider === 'sqlite-milvus' || memory.provider === 'sqlite');
 const musicAuthorized = computed(() => Boolean(music.musicUserToken));
 const localMusicProvider = computed(() => music.provider === 'local-library');
+const neteaseMusicProvider = computed(() => music.provider === 'netease-cloud');
 const appleMusicProvider = computed(() => music.provider === 'apple-music');
 const memoryStats = computed(() => {
   const notes = Array.isArray(memoryNotes.value) ? memoryNotes.value : [];
@@ -865,6 +866,7 @@ onUnmounted(() => {
           <span>Provider</span>
           <select v-model="music.provider">
             <option value="local-library">Local Library</option>
+            <option value="netease-cloud">NetEase Cloud</option>
             <option value="apple-music">Apple Music</option>
           </select>
         </label>
@@ -883,6 +885,39 @@ onUnmounted(() => {
         <label v-if="localMusicProvider">
           <span>Max Local Files</span>
           <input v-model.number="music.localMaxScanFiles" type="number" min="100" max="20000" step="100">
+        </label>
+        <label v-if="neteaseMusicProvider" class="studio-wide-field">
+          <span>api-enhanced URL</span>
+          <input v-model="music.neteaseApiUrl" type="text" spellcheck="false" placeholder="http://127.0.0.1:3000">
+        </label>
+        <label v-if="neteaseMusicProvider" class="studio-wide-field">
+          <span>NetEase Cookie</span>
+          <input v-model="music.neteaseCookie" type="password" spellcheck="false" placeholder="Optional MUSIC_U / __csrf cookie">
+        </label>
+        <label v-if="neteaseMusicProvider">
+          <span>Quality</span>
+          <select v-model="music.neteaseQualityLevel">
+            <option value="standard">standard</option>
+            <option value="higher">higher</option>
+            <option value="exhigh">exhigh</option>
+            <option value="lossless">lossless</option>
+            <option value="hires">hires</option>
+            <option value="jyeffect">jyeffect</option>
+            <option value="sky">sky</option>
+            <option value="jymaster">jymaster</option>
+          </select>
+        </label>
+        <label v-if="neteaseMusicProvider">
+          <span>Fallback Bitrate</span>
+          <input v-model.number="music.neteaseBitrate" type="number" min="96000" max="999000" step="1000">
+        </label>
+        <label v-if="neteaseMusicProvider" class="studio-check-row">
+          <input v-model="music.neteaseUnblock" type="checkbox">
+          <span>Request unblock source</span>
+        </label>
+        <label v-if="neteaseMusicProvider">
+          <span>Unblock Source</span>
+          <input v-model="music.neteaseUnblockSource" type="text" spellcheck="false" placeholder="Optional, e.g. kugou">
         </label>
         <label v-if="appleMusicProvider">
           <span>Storefront</span>

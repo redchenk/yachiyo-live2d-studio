@@ -410,6 +410,24 @@ internal sealed class LocalStudioServer : IDisposable
                 return;
             }
 
+            if (method == "POST" && string.Equals(path, "/api/music/netease/search", StringComparison.OrdinalIgnoreCase))
+            {
+                WriteApiResponse(stream, DesktopApiProxy.NeteaseMusicSearch(request.Body));
+                return;
+            }
+
+            if (method == "POST" && string.Equals(path, "/api/music/netease/resolve", StringComparison.OrdinalIgnoreCase))
+            {
+                WriteApiResponse(stream, DesktopApiProxy.NeteaseMusicResolve(request.Body));
+                return;
+            }
+
+            if ((method == "GET" || method == "HEAD") && string.Equals(path, "/api/music/netease/stream", StringComparison.OrdinalIgnoreCase))
+            {
+                WriteApiResponse(stream, DesktopApiProxy.NeteaseMusicStream(query));
+                return;
+            }
+
             if (method == "POST" && string.Equals(path, "/api/memory/search", StringComparison.OrdinalIgnoreCase))
             {
                 WriteApiResponse(stream, DesktopApiProxy.MemorySearch(request.Body));
@@ -799,6 +817,10 @@ internal static class DesktopApiProxy
     private const int MaxMemorySearchFiles = 800;
     private const int DefaultLocalMusicSearchLimit = 25;
     private const int DefaultLocalMusicMaxScanFiles = 3000;
+    private const string DefaultNeteaseMusicApiUrl = "http://127.0.0.1:3000";
+    private const string DefaultNeteaseMusicQualityLevel = "exhigh";
+    private const int DefaultNeteaseMusicBitrate = 320000;
+    private const int NeteaseMusicStreamTicketTtlSeconds = 1800;
     private const string MemoryIndexRelativePath = ".yachiyo-index/memory-index.json";
     private const string DisabledMemoryRelativePath = ".yachiyo-index/disabled-memory.json";
     private const int MemoryDataServicePort = 3299;
@@ -807,6 +829,9 @@ internal static class DesktopApiProxy
     private static readonly object AsrServiceLock = new object();
     private static Process memoryDataServiceProcess;
     private static Process asrServiceProcess;
+    private static readonly object NeteaseMusicTicketLock = new object();
+    private static readonly Dictionary<string, NeteaseMusicStreamTicket> NeteaseMusicStreamTickets =
+        new Dictionary<string, NeteaseMusicStreamTicket>(StringComparer.OrdinalIgnoreCase);
     private const int DefaultVisionCropSize = 768;
     private const int MaxVisionCropSize = 1400;
     private const uint GA_ROOT = 2;
@@ -1052,6 +1077,155 @@ internal static class DesktopApiProxy
         catch (Exception ex)
         {
             return JsonError(400, ex.Message);
+        }
+    }
+
+    public static StudioApiResponse NeteaseMusicSearch(byte[] body)
+    {
+        try
+        {
+            var input = ParseObject(body);
+            var query = GetString(input, "query");
+            if (string.IsNullOrWhiteSpace(query))
+            {
+                return JsonError(400, "NetEase Cloud Music query is required.");
+            }
+
+            var limit = (int)Math.Round(GetDouble(input, "limit", GetDouble(input, "searchLimit", DefaultLocalMusicSearchLimit, 1, 50), 1, 50));
+            var apiUrl = NormalizeNeteaseMusicApiUrl(input);
+            var requestUrl = BuildNeteaseApiUrl(apiUrl, "/search", new Dictionary<string, string>
+            {
+                { "keywords", query },
+                { "limit", limit.ToString() },
+                { "type", "1" }
+            });
+            var data = GetJson(requestUrl, NeteaseMusicHeaders(input));
+            var result = GetObject(data, "result");
+            var songs = GetArray(result, "songs") ?? GetArray(data, "songs") ?? new object[0];
+            var candidates = new List<object>();
+
+            foreach (var item in songs)
+            {
+                var song = item as Dictionary<string, object>;
+                if (song == null) continue;
+                var candidate = BuildNeteaseMusicCandidate(song, query);
+                if (candidate != null) candidates.Add(candidate);
+                if (candidates.Count >= limit) break;
+            }
+
+            return JsonOk(new Dictionary<string, object>
+            {
+                { "success", true },
+                { "provider", "netease-cloud" },
+                { "query", query },
+                { "apiUrl", apiUrl },
+                { "candidates", candidates }
+            });
+        }
+        catch (WebException ex)
+        {
+            return JsonError(GetStatusCode(ex, 502), "NetEase Cloud Music API search failed: " + LimitText(ReadWebException(ex), 500));
+        }
+        catch (Exception ex)
+        {
+            return JsonError(500, ex.Message);
+        }
+    }
+
+    public static StudioApiResponse NeteaseMusicResolve(byte[] body)
+    {
+        try
+        {
+            var input = ParseObject(body);
+            var candidate = GetObject(input, "candidate") ?? new Dictionary<string, object>();
+            var songId = GetString(input, "songId");
+            if (string.IsNullOrWhiteSpace(songId)) songId = GetString(candidate, "songId");
+            if (string.IsNullOrWhiteSpace(songId)) songId = GetString(candidate, "id");
+            if (string.IsNullOrWhiteSpace(songId))
+            {
+                return JsonError(400, "NetEase Cloud Music songId is required.");
+            }
+
+            var apiUrl = NormalizeNeteaseMusicApiUrl(input);
+            var level = NormalizeNeteaseMusicQualityLevel(GetString(input, "neteaseQualityLevel"));
+            var bitrate = (int)Math.Round(GetDouble(input, "neteaseBitrate", DefaultNeteaseMusicBitrate, 96000, 999000));
+            var headers = NeteaseMusicHeaders(input);
+            var detail = ResolveNeteaseMusicUrl(apiUrl, songId, level, bitrate, GetBoolean(input, "neteaseUnblock", false), GetString(input, "neteaseUnblockSource"), headers);
+            var directUrl = GetString(detail, "url");
+            if (string.IsNullOrWhiteSpace(directUrl))
+            {
+                return JsonError(404, "NetEase Cloud Music did not return a playable URL. The song may be unavailable without Cookie, VIP permission, or unblock support.");
+            }
+
+            ValidateHttpMediaUrl(directUrl);
+            var token = CreateNeteaseMusicStreamTicket(directUrl, GetString(input, "neteaseCookie"));
+            var streamUrl = "/api/music/netease/stream?token=" + Uri.EscapeDataString(token);
+            var resolvedCandidate = new Dictionary<string, object>
+            {
+                { "provider", "netease-cloud" },
+                { "songId", songId },
+                { "url", streamUrl },
+                { "title", FirstNonEmpty(GetString(candidate, "title"), GetString(candidate, "name"), songId) },
+                { "artist", FirstNonEmpty(GetString(candidate, "artist"), GetString(candidate, "artistName"), string.Empty) },
+                { "album", FirstNonEmpty(GetString(candidate, "album"), GetString(candidate, "albumName"), string.Empty) },
+                { "artworkUrl", GetString(candidate, "artworkUrl") },
+                { "durationMs", GetInt(candidate, "durationMs") },
+                { "quality", level },
+                { "bitrate", GetInt(detail, "br") },
+                { "expiresInMs", NeteaseMusicStreamTicketTtlSeconds * 1000 }
+            };
+
+            return JsonOk(new Dictionary<string, object>
+            {
+                { "success", true },
+                { "provider", "netease-cloud" },
+                { "candidate", resolvedCandidate }
+            });
+        }
+        catch (WebException ex)
+        {
+            return JsonError(GetStatusCode(ex, 502), "NetEase Cloud Music API resolve failed: " + LimitText(ReadWebException(ex), 500));
+        }
+        catch (Exception ex)
+        {
+            return JsonError(500, ex.Message);
+        }
+    }
+
+    public static StudioApiResponse NeteaseMusicStream(string query)
+    {
+        try
+        {
+            var parameters = ParseQueryParameters(query);
+            string token;
+            if (!parameters.TryGetValue("token", out token) || string.IsNullOrWhiteSpace(token))
+            {
+                return JsonError(400, "NetEase Cloud Music stream token is required.");
+            }
+
+            NeteaseMusicStreamTicket ticket;
+            if (!TryGetNeteaseMusicStreamTicket(token, out ticket))
+            {
+                return JsonError(404, "NetEase Cloud Music stream token expired or was not found.");
+            }
+
+            ValidateHttpMediaUrl(ticket.Url);
+            var provider = GetBytes(ticket.Url, NeteaseMusicAudioHeaders(ticket.Cookie));
+            return new StudioApiResponse
+            {
+                StatusCode = 200,
+                StatusText = "OK",
+                ContentType = string.IsNullOrWhiteSpace(provider.ContentType) ? "audio/mpeg" : provider.ContentType,
+                Body = provider.Body
+            };
+        }
+        catch (WebException ex)
+        {
+            return JsonError(GetStatusCode(ex, 502), "NetEase Cloud Music stream failed: " + LimitText(ReadWebException(ex), 500));
+        }
+        catch (Exception ex)
+        {
+            return JsonError(500, ex.Message);
         }
     }
 
@@ -1308,6 +1482,224 @@ internal static class DesktopApiProxy
             try { return Path.GetFullPath(Uri.UnescapeDataString(text)); }
             catch { return string.Empty; }
         }
+    }
+
+    private static string NormalizeNeteaseMusicApiUrl(Dictionary<string, object> input)
+    {
+        var apiUrl = GetString(input, "neteaseApiUrl");
+        if (string.IsNullOrWhiteSpace(apiUrl)) apiUrl = GetString(input, "apiUrl");
+        if (string.IsNullOrWhiteSpace(apiUrl)) apiUrl = DefaultNeteaseMusicApiUrl;
+        apiUrl = apiUrl.Trim().TrimEnd('/');
+        ValidateRemoteOrLoopbackUrl(apiUrl);
+        return apiUrl;
+    }
+
+    private static string NormalizeNeteaseMusicQualityLevel(string value)
+    {
+        var level = (value ?? string.Empty).Trim().ToLowerInvariant();
+        switch (level)
+        {
+            case "standard":
+            case "higher":
+            case "exhigh":
+            case "lossless":
+            case "hires":
+            case "jyeffect":
+            case "sky":
+            case "jymaster":
+                return level;
+            default:
+                return DefaultNeteaseMusicQualityLevel;
+        }
+    }
+
+    private static string BuildNeteaseApiUrl(string apiUrl, string path, Dictionary<string, string> parameters)
+    {
+        var parsed = new Uri(apiUrl);
+        var builder = new UriBuilder(parsed);
+        var basePath = builder.Path == "/" ? string.Empty : builder.Path.TrimEnd('/');
+        builder.Path = basePath + "/" + (path ?? string.Empty).TrimStart('/');
+        builder.Query = BuildQuery(parameters);
+        return builder.ToString();
+    }
+
+    private static Dictionary<string, string> NeteaseMusicHeaders(Dictionary<string, object> input)
+    {
+        return NeteaseMusicAudioHeaders(GetString(input, "neteaseCookie"));
+    }
+
+    private static Dictionary<string, string> NeteaseMusicAudioHeaders(string cookie)
+    {
+        var headers = new Dictionary<string, string>
+        {
+            { "User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124 Safari/537.36" },
+            { "Referer", "https://music.163.com/" }
+        };
+        if (!string.IsNullOrWhiteSpace(cookie))
+        {
+            headers["Cookie"] = cookie.Trim();
+        }
+        return headers;
+    }
+
+    private static Dictionary<string, object> GetJson(string url, Dictionary<string, string> headers)
+    {
+        var provider = GetBytes(url, headers);
+        var text = Encoding.UTF8.GetString(provider.Body ?? new byte[0]);
+        return DeserializeObject(text);
+    }
+
+    private static Dictionary<string, object> BuildNeteaseMusicCandidate(Dictionary<string, object> song, string query)
+    {
+        var songId = GetString(song, "id");
+        if (string.IsNullOrWhiteSpace(songId)) return null;
+        var album = GetObject(song, "album") ?? GetObject(song, "al") ?? new Dictionary<string, object>();
+        var durationMs = GetInt(song, "duration");
+        if (durationMs <= 0) durationMs = GetInt(song, "dt");
+        return new Dictionary<string, object>
+        {
+            { "provider", "netease-cloud" },
+            { "songId", songId },
+            { "title", GetString(song, "name") },
+            { "artist", JoinNeteaseArtists(song) },
+            { "album", GetString(album, "name") },
+            { "artworkUrl", FirstNonEmpty(GetString(album, "picUrl"), GetString(album, "pic_str"), string.Empty) },
+            { "durationMs", durationMs },
+            { "query", query }
+        };
+    }
+
+    private static string JoinNeteaseArtists(Dictionary<string, object> song)
+    {
+        var artists = GetArray(song, "artists") ?? GetArray(song, "ar") ?? new object[0];
+        var names = new List<string>();
+        foreach (var item in artists)
+        {
+            var artist = item as Dictionary<string, object>;
+            if (artist == null) continue;
+            var name = GetString(artist, "name");
+            if (!string.IsNullOrWhiteSpace(name)) names.Add(name);
+        }
+        return string.Join(" / ", names.ToArray());
+    }
+
+    private static Dictionary<string, object> ResolveNeteaseMusicUrl(
+        string apiUrl,
+        string songId,
+        string level,
+        int bitrate,
+        bool unblock,
+        string unblockSource,
+        Dictionary<string, string> headers)
+    {
+        var v1Parameters = new Dictionary<string, string>
+        {
+            { "id", songId },
+            { "level", level }
+        };
+        if (unblock)
+        {
+            v1Parameters["unblock"] = "true";
+            if (!string.IsNullOrWhiteSpace(unblockSource)) v1Parameters["source"] = unblockSource.Trim();
+        }
+        var detail = PickNeteaseMusicUrlDetail(GetJson(BuildNeteaseApiUrl(apiUrl, "/song/url/v1", v1Parameters), headers));
+        if (!string.IsNullOrWhiteSpace(GetString(detail, "url"))) return detail;
+
+        var legacyParameters = new Dictionary<string, string>
+        {
+            { "id", songId },
+            { "br", bitrate.ToString() }
+        };
+        if (unblock)
+        {
+            legacyParameters["unblock"] = "true";
+            if (!string.IsNullOrWhiteSpace(unblockSource)) legacyParameters["source"] = unblockSource.Trim();
+        }
+        return PickNeteaseMusicUrlDetail(GetJson(BuildNeteaseApiUrl(apiUrl, "/song/url", legacyParameters), headers));
+    }
+
+    private static Dictionary<string, object> PickNeteaseMusicUrlDetail(Dictionary<string, object> data)
+    {
+        var candidates = GetArray(data, "data") ?? new object[0];
+        foreach (var item in candidates)
+        {
+            var detail = item as Dictionary<string, object>;
+            if (detail == null) continue;
+            var url = FirstNonEmpty(GetString(detail, "url"), GetString(detail, "proxyUrl"), string.Empty);
+            object rawSize;
+            var hasSize = detail.TryGetValue("size", out rawSize) && rawSize != null;
+            if (string.IsNullOrWhiteSpace(url) || (hasSize && GetInt(detail, "size") == 0)) continue;
+            detail["url"] = url;
+            return detail;
+        }
+        return new Dictionary<string, object>();
+    }
+
+    private static void ValidateHttpMediaUrl(string url)
+    {
+        Uri parsed;
+        if (!Uri.TryCreate(url, UriKind.Absolute, out parsed) ||
+            (parsed.Scheme != Uri.UriSchemeHttp && parsed.Scheme != Uri.UriSchemeHttps))
+        {
+            throw new InvalidOperationException("Invalid NetEase Cloud Music media URL.");
+        }
+    }
+
+    private static string CreateNeteaseMusicStreamTicket(string directUrl, string cookie)
+    {
+        var token = Guid.NewGuid().ToString("N");
+        var now = DateTimeOffset.UtcNow;
+        lock (NeteaseMusicTicketLock)
+        {
+            CleanupNeteaseMusicStreamTickets(now);
+            NeteaseMusicStreamTickets[token] = new NeteaseMusicStreamTicket
+            {
+                Url = directUrl,
+                Cookie = cookie ?? string.Empty,
+                ExpiresAt = now.AddSeconds(NeteaseMusicStreamTicketTtlSeconds)
+            };
+        }
+        return token;
+    }
+
+    private static bool TryGetNeteaseMusicStreamTicket(string token, out NeteaseMusicStreamTicket ticket)
+    {
+        ticket = null;
+        var now = DateTimeOffset.UtcNow;
+        lock (NeteaseMusicTicketLock)
+        {
+            CleanupNeteaseMusicStreamTickets(now);
+            if (!NeteaseMusicStreamTickets.TryGetValue(token ?? string.Empty, out ticket)) return false;
+            if (ticket.ExpiresAt <= now)
+            {
+                NeteaseMusicStreamTickets.Remove(token);
+                ticket = null;
+                return false;
+            }
+            return true;
+        }
+    }
+
+    private static void CleanupNeteaseMusicStreamTickets(DateTimeOffset now)
+    {
+        var expired = new List<string>();
+        foreach (var pair in NeteaseMusicStreamTickets)
+        {
+            if (pair.Value == null || pair.Value.ExpiresAt <= now) expired.Add(pair.Key);
+        }
+        foreach (var token in expired)
+        {
+            NeteaseMusicStreamTickets.Remove(token);
+        }
+    }
+
+    private static string FirstNonEmpty(params string[] values)
+    {
+        foreach (var value in values)
+        {
+            if (!string.IsNullOrWhiteSpace(value)) return value.Trim();
+        }
+        return string.Empty;
     }
 
     private static Dictionary<string, object> CaptureVisionImages(Point cursor, int cropSize, bool includeFullScreen)
@@ -3835,6 +4227,23 @@ internal static class DesktopApiProxy
             {
                 request.Headers[HttpRequestHeader.Authorization] = header.Value;
             }
+            else if (header.Key.Equals("User-Agent", StringComparison.OrdinalIgnoreCase))
+            {
+                request.UserAgent = header.Value;
+            }
+            else if (header.Key.Equals("Cookie", StringComparison.OrdinalIgnoreCase))
+            {
+                request.Headers[HttpRequestHeader.Cookie] = header.Value;
+            }
+            else if (header.Key.Equals("Referer", StringComparison.OrdinalIgnoreCase) ||
+                header.Key.Equals("Referrer", StringComparison.OrdinalIgnoreCase))
+            {
+                request.Referer = header.Value;
+            }
+            else if (header.Key.Equals("Accept", StringComparison.OrdinalIgnoreCase))
+            {
+                request.Accept = header.Value;
+            }
             else
             {
                 request.Headers[header.Key] = header.Value;
@@ -3910,4 +4319,11 @@ internal sealed class ProviderBytes
 {
     public byte[] Body;
     public string ContentType;
+}
+
+internal sealed class NeteaseMusicStreamTicket
+{
+    public string Url;
+    public string Cookie;
+    public DateTimeOffset ExpiresAt;
 }

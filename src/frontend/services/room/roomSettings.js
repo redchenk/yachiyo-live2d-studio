@@ -169,6 +169,12 @@ export const DEFAULT_ROOM_MUSIC_SETTINGS = {
   musicUserToken: '',
   storefront: 'cn',
   autoAuthorize: true,
+  neteaseApiUrl: 'http://127.0.0.1:3000',
+  neteaseCookie: '',
+  neteaseQualityLevel: 'exhigh',
+  neteaseBitrate: 320000,
+  neteaseUnblock: false,
+  neteaseUnblockSource: '',
   localLibraryPaths: '',
   localIncludeProjectMusic: true,
   localIncludeUserMusic: true,
@@ -468,11 +474,23 @@ export function normalizeRoomMemorySettings(settings = {}) {
 export function normalizeRoomMusicSettings(settings = {}) {
   const merged = { ...DEFAULT_ROOM_MUSIC_SETTINGS, ...(settings || {}) };
   const providerText = asText(merged.provider);
-  const provider = ['local-library', 'apple-music'].includes(providerText)
+  const provider = ['local-library', 'netease-cloud', 'apple-music'].includes(providerText)
     ? providerText
     : DEFAULT_ROOM_MUSIC_SETTINGS.provider;
   const storefront = asText(merged.storefront).toLowerCase().replace(/[^a-z]/g, '').slice(0, 2) ||
     DEFAULT_ROOM_MUSIC_SETTINGS.storefront;
+  const neteaseQualityLevel = [
+    'standard',
+    'higher',
+    'exhigh',
+    'lossless',
+    'hires',
+    'jyeffect',
+    'sky',
+    'jymaster'
+  ].includes(asText(merged.neteaseQualityLevel).toLowerCase())
+    ? asText(merged.neteaseQualityLevel).toLowerCase()
+    : DEFAULT_ROOM_MUSIC_SETTINGS.neteaseQualityLevel;
   const blacklist = Array.isArray(merged.blacklist)
     ? merged.blacklist.map((item) => asText(item)).filter(Boolean).join('\n')
     : String(merged.blacklist || '');
@@ -483,6 +501,12 @@ export function normalizeRoomMusicSettings(settings = {}) {
     musicUserToken: String(merged.musicUserToken || '').trim(),
     storefront,
     autoAuthorize: asBoolean(merged.autoAuthorize),
+    neteaseApiUrl: asText(merged.neteaseApiUrl).replace(/\/+$/g, '') || DEFAULT_ROOM_MUSIC_SETTINGS.neteaseApiUrl,
+    neteaseCookie: String(merged.neteaseCookie || '').trim(),
+    neteaseQualityLevel,
+    neteaseBitrate: Math.round(asNumber(merged.neteaseBitrate, DEFAULT_ROOM_MUSIC_SETTINGS.neteaseBitrate, 96000, 999000)),
+    neteaseUnblock: asBoolean(merged.neteaseUnblock),
+    neteaseUnblockSource: asText(merged.neteaseUnblockSource),
     localLibraryPaths: Array.isArray(merged.localLibraryPaths)
       ? merged.localLibraryPaths.map((item) => String(item || '').trim()).filter(Boolean).join('\n')
       : String(merged.localLibraryPaths || '').trim(),
