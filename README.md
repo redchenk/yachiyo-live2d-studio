@@ -550,6 +550,29 @@ C# 本地 API 做了以下限制：
 - 单条 memory 写入有长度限制
 - GPT-SoVITS 代理只允许 loopback HTTP URL
 
+## 点歌功能
+
+默认点歌 provider 是 `local-library`，不需要 Apple Developer Token。
+
+使用方式：
+
+1. 打开 `Start-Live2D-Studio.exe`。
+2. 进入 Settings -> Music。
+3. 勾选 `Enable music control`。
+4. Provider 保持 `Local Library`。
+5. 在 `Local Library Paths` 中填入本地音乐文件夹，每行一个路径，例如 `E:\Music`。
+6. 保存后，直播间右侧 Music 面板或 LLM 输出的 `music` 控制都可以搜索本地曲库并加入队列。
+
+本地库会扫描：
+
+- `Local Library Paths` 中填写的文件夹
+- Windows Music 文件夹
+- 项目内 `music/` 和 `assets/music/` 文件夹
+
+支持的音频扩展名包括 `.mp3`、`.m4a`、`.aac`、`.wav`、`.flac`、`.ogg`、`.oga`、`.opus`。本地播放通过 `.exe` 的 loopback API 读取音频文件，不会调用 Apple Music API。
+
+如果切换 Provider 为 `Apple Music`，才需要 Apple Developer Token 和 MusicKit 授权。Developer Token 是 Apple Developer MusicKit key 生成的 JWT，不是 Apple ID 密码，也不是普通 API Key。
+
 ## 目录说明
 
 ```text

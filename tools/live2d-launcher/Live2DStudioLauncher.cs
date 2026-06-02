@@ -359,9 +359,11 @@ internal sealed class LocalStudioServer : IDisposable
 
             var method = request.Method.ToUpperInvariant();
             var path = request.Path;
+            var query = string.Empty;
             var queryIndex = path.IndexOf('?');
             if (queryIndex >= 0)
             {
+                query = path.Substring(queryIndex + 1);
                 path = path.Substring(0, queryIndex);
             }
             path = Uri.UnescapeDataString(path);
@@ -393,6 +395,18 @@ internal sealed class LocalStudioServer : IDisposable
             if (method == "POST" && string.Equals(path, "/api/vision/context", StringComparison.OrdinalIgnoreCase))
             {
                 WriteApiResponse(stream, DesktopApiProxy.VisionContext(request.Body));
+                return;
+            }
+
+            if (method == "POST" && string.Equals(path, "/api/music/local/search", StringComparison.OrdinalIgnoreCase))
+            {
+                WriteApiResponse(stream, DesktopApiProxy.LocalMusicSearch(request.Body));
+                return;
+            }
+
+            if ((method == "GET" || method == "HEAD") && string.Equals(path, "/api/music/local/file", StringComparison.OrdinalIgnoreCase))
+            {
+                WriteApiResponse(stream, DesktopApiProxy.LocalMusicFile(query));
                 return;
             }
 
@@ -715,6 +729,21 @@ internal sealed class LocalStudioServer : IDisposable
                 return "image/webp";
             case ".ico":
                 return "image/x-icon";
+            case ".mp3":
+                return "audio/mpeg";
+            case ".m4a":
+                return "audio/mp4";
+            case ".aac":
+                return "audio/aac";
+            case ".wav":
+                return "audio/wav";
+            case ".flac":
+                return "audio/flac";
+            case ".ogg":
+            case ".oga":
+                return "audio/ogg";
+            case ".opus":
+                return "audio/opus";
             case ".woff":
                 return "font/woff";
             case ".woff2":
@@ -768,6 +797,8 @@ internal static class DesktopApiProxy
     private const int MaxMemoryNoteBytes = 256 * 1024;
     private const int MaxMemoryWriteChars = 2000;
     private const int MaxMemorySearchFiles = 800;
+    private const int DefaultLocalMusicSearchLimit = 25;
+    private const int DefaultLocalMusicMaxScanFiles = 3000;
     private const string MemoryIndexRelativePath = ".yachiyo-index/memory-index.json";
     private const string DisabledMemoryRelativePath = ".yachiyo-index/disabled-memory.json";
     private const int MemoryDataServicePort = 3299;
@@ -779,6 +810,7 @@ internal static class DesktopApiProxy
     private const int DefaultVisionCropSize = 768;
     private const int MaxVisionCropSize = 1400;
     private const uint GA_ROOT = 2;
+    private static readonly string[] LocalMusicPathSeparators = new[] { "\r\n", "\n", "\r", ";" };
 
     [StructLayout(LayoutKind.Sequential)]
     private struct NativePoint
@@ -937,6 +969,344 @@ internal static class DesktopApiProxy
         catch (Exception ex)
         {
             return JsonError(500, ex.Message);
+        }
+    }
+
+    public static StudioApiResponse LocalMusicSearch(byte[] body)
+    {
+        try
+        {
+            var input = ParseObject(body);
+            var query = GetString(input, "query");
+            var limit = (int)Math.Round(GetDouble(input, "limit", GetDouble(input, "searchLimit", DefaultLocalMusicSearchLimit, 1, 50), 1, 50));
+            var maxScanFiles = (int)Math.Round(GetDouble(input, "localMaxScanFiles", DefaultLocalMusicMaxScanFiles, 100, 20000));
+            var roots = ResolveLocalMusicRoots(input);
+            var matches = new List<Dictionary<string, object>>();
+            var scanned = 0;
+
+            foreach (var root in roots)
+            {
+                if (scanned >= maxScanFiles) break;
+                foreach (var file in EnumerateLocalMusicFiles(root, maxScanFiles - scanned))
+                {
+                    scanned++;
+                    var score = ScoreLocalMusicFile(file, query);
+                    if (!string.IsNullOrWhiteSpace(query) && score <= 0) continue;
+                    matches.Add(BuildLocalMusicCandidate(file, query, score));
+                }
+            }
+
+            matches.Sort(delegate(Dictionary<string, object> left, Dictionary<string, object> right)
+            {
+                var scoreCompare = GetInt(right, "_score") - GetInt(left, "_score");
+                if (scoreCompare != 0) return scoreCompare;
+                return string.Compare(GetString(left, "title"), GetString(right, "title"), StringComparison.OrdinalIgnoreCase);
+            });
+
+            var candidates = new List<object>();
+            for (var i = 0; i < matches.Count && i < limit; i++)
+            {
+                candidates.Add(matches[i]);
+            }
+
+            return JsonOk(new Dictionary<string, object>
+            {
+                { "success", true },
+                { "provider", "local-library" },
+                { "query", query },
+                { "roots", roots.ToArray() },
+                { "scanned", scanned },
+                { "candidates", candidates }
+            });
+        }
+        catch (Exception ex)
+        {
+            return JsonError(500, ex.Message);
+        }
+    }
+
+    public static StudioApiResponse LocalMusicFile(string query)
+    {
+        try
+        {
+            var parameters = ParseQueryParameters(query);
+            string encoded;
+            if (!parameters.TryGetValue("path", out encoded))
+            {
+                parameters.TryGetValue("id", out encoded);
+            }
+            var filePath = DecodeLocalMusicPath(encoded);
+            if (string.IsNullOrWhiteSpace(filePath) || !File.Exists(filePath) || !IsLocalAudioFile(filePath))
+            {
+                return JsonError(404, "Local music file was not found or is not a supported audio file.");
+            }
+
+            return new StudioApiResponse
+            {
+                StatusCode = 200,
+                StatusText = "OK",
+                ContentType = LocalAudioContentType(filePath),
+                Body = File.ReadAllBytes(filePath)
+            };
+        }
+        catch (Exception ex)
+        {
+            return JsonError(400, ex.Message);
+        }
+    }
+
+    private static List<string> ResolveLocalMusicRoots(Dictionary<string, object> input)
+    {
+        var roots = new List<string>();
+        var seen = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+
+        if (GetBoolean(input, "localIncludeProjectMusic", true))
+        {
+            AddLocalMusicRoot(roots, seen, Path.Combine(repoRoot, "music"));
+            AddLocalMusicRoot(roots, seen, Path.Combine(repoRoot, "assets", "music"));
+        }
+
+        if (GetBoolean(input, "localIncludeUserMusic", true))
+        {
+            AddLocalMusicRoot(roots, seen, Environment.GetFolderPath(Environment.SpecialFolder.MyMusic));
+        }
+
+        var configured = GetString(input, "localLibraryPaths");
+        if (!string.IsNullOrWhiteSpace(configured))
+        {
+            foreach (var item in configured.Split(LocalMusicPathSeparators, StringSplitOptions.RemoveEmptyEntries))
+            {
+                AddLocalMusicRoot(roots, seen, item);
+            }
+        }
+
+        var array = GetArray(input, "localLibraryPathList");
+        if (array != null)
+        {
+            foreach (var item in array)
+            {
+                AddLocalMusicRoot(roots, seen, Convert.ToString(item));
+            }
+        }
+
+        return roots;
+    }
+
+    private static void AddLocalMusicRoot(List<string> roots, Dictionary<string, bool> seen, string path)
+    {
+        if (string.IsNullOrWhiteSpace(path)) return;
+        try
+        {
+            var fullPath = Path.GetFullPath(Environment.ExpandEnvironmentVariables(path.Trim().Trim('"')));
+            var root = (Path.GetPathRoot(fullPath) ?? string.Empty).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            var normalized = fullPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            if (root.Length > 0 && string.Equals(root, normalized, StringComparison.OrdinalIgnoreCase)) return;
+            if (!Directory.Exists(fullPath)) return;
+            if (seen.ContainsKey(fullPath)) return;
+            seen[fullPath] = true;
+            roots.Add(fullPath);
+        }
+        catch
+        {
+            // Ignore invalid optional music roots.
+        }
+    }
+
+    private static IEnumerable<string> EnumerateLocalMusicFiles(string root, int maxFiles)
+    {
+        var results = new List<string>();
+        if (string.IsNullOrWhiteSpace(root) || maxFiles <= 0) return results;
+
+        var pending = new Queue<string>();
+        pending.Enqueue(root);
+        while (pending.Count > 0 && results.Count < maxFiles)
+        {
+            var directory = pending.Dequeue();
+            try
+            {
+                var attributes = File.GetAttributes(directory);
+                if ((attributes & FileAttributes.ReparsePoint) == FileAttributes.ReparsePoint) continue;
+            }
+            catch
+            {
+                continue;
+            }
+
+            string[] files;
+            try { files = Directory.GetFiles(directory); }
+            catch { files = new string[0]; }
+
+            foreach (var file in files)
+            {
+                if (results.Count >= maxFiles) break;
+                if (IsLocalAudioFile(file)) results.Add(file);
+            }
+
+            string[] directories;
+            try { directories = Directory.GetDirectories(directory); }
+            catch { directories = new string[0]; }
+
+            foreach (var child in directories)
+            {
+                if (results.Count >= maxFiles) break;
+                pending.Enqueue(child);
+            }
+        }
+
+        return results;
+    }
+
+    private static bool IsLocalAudioFile(string filePath)
+    {
+        var extension = Path.GetExtension(filePath).ToLowerInvariant();
+        switch (extension)
+        {
+            case ".mp3":
+            case ".m4a":
+            case ".aac":
+            case ".wav":
+            case ".flac":
+            case ".ogg":
+            case ".oga":
+            case ".opus":
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    private static string LocalAudioContentType(string filePath)
+    {
+        var extension = Path.GetExtension(filePath).ToLowerInvariant();
+        switch (extension)
+        {
+            case ".mp3":
+                return "audio/mpeg";
+            case ".m4a":
+                return "audio/mp4";
+            case ".aac":
+                return "audio/aac";
+            case ".wav":
+                return "audio/wav";
+            case ".flac":
+                return "audio/flac";
+            case ".ogg":
+            case ".oga":
+                return "audio/ogg";
+            case ".opus":
+                return "audio/opus";
+            default:
+                return "application/octet-stream";
+        }
+    }
+
+    private static Dictionary<string, object> BuildLocalMusicCandidate(string filePath, string query, int score)
+    {
+        var fullPath = Path.GetFullPath(filePath);
+        var encodedPath = Convert.ToBase64String(Encoding.UTF8.GetBytes(fullPath));
+        var name = CleanLocalTrackName(Path.GetFileNameWithoutExtension(fullPath));
+        var title = name;
+        var artist = string.Empty;
+        var parts = System.Text.RegularExpressions.Regex.Split(name, @"\s+[-\u2010-\u2015]\s+");
+        if (parts.Length >= 2)
+        {
+            artist = parts[0].Trim();
+            title = string.Join(" - ", SubArray(parts, 1)).Trim();
+        }
+        if (string.IsNullOrWhiteSpace(title)) title = Path.GetFileNameWithoutExtension(fullPath);
+
+        return new Dictionary<string, object>
+        {
+            { "provider", "local-library" },
+            { "songId", encodedPath },
+            { "url", "/api/music/local/file?path=" + Uri.EscapeDataString(encodedPath) },
+            { "title", title },
+            { "artist", artist },
+            { "album", Path.GetFileName(Path.GetDirectoryName(fullPath) ?? string.Empty) },
+            { "fileName", Path.GetFileName(fullPath) },
+            { "query", query },
+            { "durationMs", 0 },
+            { "_score", score }
+        };
+    }
+
+    private static string[] SubArray(string[] source, int start)
+    {
+        if (source == null || start >= source.Length) return new string[0];
+        var result = new string[source.Length - start];
+        Array.Copy(source, start, result, 0, result.Length);
+        return result;
+    }
+
+    private static string CleanLocalTrackName(string value)
+    {
+        var text = value ?? string.Empty;
+        text = text.Replace('_', ' ');
+        text = System.Text.RegularExpressions.Regex.Replace(text, @"^\s*\d{1,3}[\s.．_-]+", string.Empty);
+        text = System.Text.RegularExpressions.Regex.Replace(text, @"\s+", " ").Trim();
+        return text;
+    }
+
+    private static int ScoreLocalMusicFile(string filePath, string query)
+    {
+        var normalizedQuery = NormalizeLocalMusicText(query);
+        if (string.IsNullOrWhiteSpace(normalizedQuery)) return 1;
+
+        var title = NormalizeLocalMusicText(CleanLocalTrackName(Path.GetFileNameWithoutExtension(filePath)));
+        var album = NormalizeLocalMusicText(Path.GetFileName(Path.GetDirectoryName(filePath) ?? string.Empty));
+        var combined = (title + " " + album).Trim();
+        if (title == normalizedQuery) return 1200;
+        if (title.IndexOf(normalizedQuery, StringComparison.OrdinalIgnoreCase) >= 0) return 900;
+        if (combined.IndexOf(normalizedQuery, StringComparison.OrdinalIgnoreCase) >= 0) return 760;
+
+        var words = normalizedQuery.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+        if (words.Length == 0) return 0;
+
+        var matched = 0;
+        foreach (var word in words)
+        {
+            if (combined.IndexOf(word, StringComparison.OrdinalIgnoreCase) >= 0) matched++;
+        }
+        if (matched == words.Length) return 620 + matched * 20;
+        if (matched > 0) return matched * 90;
+        return 0;
+    }
+
+    private static string NormalizeLocalMusicText(string value)
+    {
+        var text = (value ?? string.Empty).Normalize(NormalizationForm.FormKC).ToLowerInvariant();
+        text = System.Text.RegularExpressions.Regex.Replace(text, @"[\p{P}\p{S}_]+", " ");
+        text = System.Text.RegularExpressions.Regex.Replace(text, @"\s+", " ").Trim();
+        return text;
+    }
+
+    private static Dictionary<string, string> ParseQueryParameters(string query)
+    {
+        var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        if (string.IsNullOrWhiteSpace(query)) return result;
+        foreach (var part in query.Split('&'))
+        {
+            var separator = part.IndexOf('=');
+            var key = separator >= 0 ? part.Substring(0, separator) : part;
+            var value = separator >= 0 ? part.Substring(separator + 1) : string.Empty;
+            if (string.IsNullOrWhiteSpace(key)) continue;
+            result[Uri.UnescapeDataString(key)] = Uri.UnescapeDataString(value.Replace("+", "%20"));
+        }
+        return result;
+    }
+
+    private static string DecodeLocalMusicPath(string encoded)
+    {
+        if (string.IsNullOrWhiteSpace(encoded)) return string.Empty;
+        var text = encoded.Trim();
+        try
+        {
+            return Path.GetFullPath(Encoding.UTF8.GetString(Convert.FromBase64String(text)));
+        }
+        catch
+        {
+            try { return Path.GetFullPath(Uri.UnescapeDataString(text)); }
+            catch { return string.Empty; }
         }
     }
 
@@ -1913,6 +2283,19 @@ internal static class DesktopApiProxy
         if (numeric < min) return min;
         if (numeric > max) return max;
         return numeric;
+    }
+
+    private static int GetInt(Dictionary<string, object> data, string key)
+    {
+        object value;
+        if (data == null || !data.TryGetValue(key, out value) || value == null)
+        {
+            return 0;
+        }
+        int parsed;
+        if (int.TryParse(Convert.ToString(value), out parsed)) return parsed;
+        double numeric;
+        return double.TryParse(Convert.ToString(value), out numeric) ? (int)Math.Round(numeric) : 0;
     }
 
     private static bool GetBoolean(Dictionary<string, object> data, string key, bool fallback)

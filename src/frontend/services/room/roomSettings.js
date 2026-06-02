@@ -11,6 +11,7 @@ export const ROOM_VISION_SETTINGS_KEY = 'roomVisionSettings';
 const ROOM_MODEL_STAGE_DEFAULTS_MIGRATION_KEY = 'roomModelStageDefaultsMigratedV2';
 const ROOM_MODEL_RENDER_DEFAULTS_MIGRATION_KEY = 'roomModelRenderDefaultsMigratedV2';
 const ROOM_MEMORY_MANAGED_MILVUS_DEFAULTS_MIGRATION_KEY = 'roomMemoryManagedMilvusDefaultsMigratedV1';
+const ROOM_MUSIC_LOCAL_DEFAULTS_MIGRATION_KEY = 'roomMusicLocalDefaultsMigratedV1';
 const LEGACY_ROOM_MODEL_STAGE_IDLE_SCALE = 0.9;
 const LEGACY_ROOM_MODEL_STAGE_MOTION_SCALE = 0.75;
 const LEGACY_ROOM_MODEL_RENDER_DPRS = [3, 4];
@@ -163,11 +164,15 @@ export const DEFAULT_ROOM_MEMORY_SETTINGS = {
 
 export const DEFAULT_ROOM_MUSIC_SETTINGS = {
   enabled: false,
-  provider: 'apple-music',
+  provider: 'local-library',
   developerToken: '',
   musicUserToken: '',
   storefront: 'cn',
   autoAuthorize: true,
+  localLibraryPaths: '',
+  localIncludeProjectMusic: true,
+  localIncludeUserMusic: true,
+  localMaxScanFiles: 3000,
   searchLimit: 25,
   smartPick: true,
   maxQueueSize: 30,
@@ -462,8 +467,9 @@ export function normalizeRoomMemorySettings(settings = {}) {
 
 export function normalizeRoomMusicSettings(settings = {}) {
   const merged = { ...DEFAULT_ROOM_MUSIC_SETTINGS, ...(settings || {}) };
-  const provider = asText(merged.provider) === 'apple-music'
-    ? 'apple-music'
+  const providerText = asText(merged.provider);
+  const provider = ['local-library', 'apple-music'].includes(providerText)
+    ? providerText
     : DEFAULT_ROOM_MUSIC_SETTINGS.provider;
   const storefront = asText(merged.storefront).toLowerCase().replace(/[^a-z]/g, '').slice(0, 2) ||
     DEFAULT_ROOM_MUSIC_SETTINGS.storefront;
@@ -477,6 +483,12 @@ export function normalizeRoomMusicSettings(settings = {}) {
     musicUserToken: String(merged.musicUserToken || '').trim(),
     storefront,
     autoAuthorize: asBoolean(merged.autoAuthorize),
+    localLibraryPaths: Array.isArray(merged.localLibraryPaths)
+      ? merged.localLibraryPaths.map((item) => String(item || '').trim()).filter(Boolean).join('\n')
+      : String(merged.localLibraryPaths || '').trim(),
+    localIncludeProjectMusic: asBoolean(merged.localIncludeProjectMusic),
+    localIncludeUserMusic: asBoolean(merged.localIncludeUserMusic),
+    localMaxScanFiles: Math.round(asNumber(merged.localMaxScanFiles, DEFAULT_ROOM_MUSIC_SETTINGS.localMaxScanFiles, 100, 20000)),
     searchLimit: Math.round(asNumber(merged.searchLimit, DEFAULT_ROOM_MUSIC_SETTINGS.searchLimit, 1, 50)),
     smartPick: asBoolean(merged.smartPick),
     maxQueueSize: Math.round(asNumber(merged.maxQueueSize, DEFAULT_ROOM_MUSIC_SETTINGS.maxQueueSize, 1, 100)),
@@ -487,6 +499,29 @@ export function normalizeRoomMusicSettings(settings = {}) {
     historyLimit: Math.round(asNumber(merged.historyLimit, DEFAULT_ROOM_MUSIC_SETTINGS.historyLimit, 1, 300)),
     blacklist
   };
+}
+
+function upgradeLegacyRoomMusicDefaults(settings, rawSettings = {}) {
+  if (typeof localStorage === 'undefined') return settings;
+  try {
+    if (localStorage.getItem(ROOM_MUSIC_LOCAL_DEFAULTS_MIGRATION_KEY) === '1') return settings;
+    localStorage.setItem(ROOM_MUSIC_LOCAL_DEFAULTS_MIGRATION_KEY, '1');
+    const rawProvider = asText(rawSettings.provider);
+    const looksLikeOldAppleDefault = (!rawProvider || rawProvider === 'apple-music') &&
+      !asText(rawSettings.developerToken) &&
+      !asText(rawSettings.musicUserToken) &&
+      !String(rawSettings.localLibraryPaths || '').trim();
+    if (!looksLikeOldAppleDefault) return settings;
+
+    const upgraded = normalizeRoomMusicSettings({
+      ...settings,
+      provider: 'local-library'
+    });
+    writeJson(ROOM_MUSIC_SETTINGS_KEY, upgraded);
+    return upgraded;
+  } catch (_) {
+    return settings;
+  }
 }
 
 export function normalizeRoomVisionSettings(settings = {}) {
@@ -567,7 +602,11 @@ export function readRoomMemorySettings() {
 }
 
 export function readRoomMusicSettings() {
-  return normalizeRoomMusicSettings(readJson(ROOM_MUSIC_SETTINGS_KEY, clone(DEFAULT_ROOM_MUSIC_SETTINGS)));
+  const raw = readJson(ROOM_MUSIC_SETTINGS_KEY, clone(DEFAULT_ROOM_MUSIC_SETTINGS));
+  return upgradeLegacyRoomMusicDefaults(
+    normalizeRoomMusicSettings(raw),
+    raw
+  );
 }
 
 export function readRoomVisionSettings() {

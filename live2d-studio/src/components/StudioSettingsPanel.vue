@@ -152,6 +152,8 @@ let statusTimer = 0;
 const localTts = computed(() => tts.provider === 'gpt-sovits');
 const sqliteMemory = computed(() => memory.provider === 'sqlite-milvus' || memory.provider === 'sqlite');
 const musicAuthorized = computed(() => Boolean(music.musicUserToken));
+const localMusicProvider = computed(() => music.provider === 'local-library');
+const appleMusicProvider = computed(() => music.provider === 'apple-music');
 const memoryStats = computed(() => {
   const notes = Array.isArray(memoryNotes.value) ? memoryNotes.value : [];
   const disabled = notes.filter((note) => note?.disabled).length;
@@ -862,14 +864,31 @@ onUnmounted(() => {
         <label>
           <span>Provider</span>
           <select v-model="music.provider">
+            <option value="local-library">Local Library</option>
             <option value="apple-music">Apple Music</option>
           </select>
         </label>
-        <label>
+        <label v-if="localMusicProvider" class="studio-wide-field">
+          <span>Local Library Paths</span>
+          <textarea v-model="music.localLibraryPaths" rows="4" spellcheck="false" placeholder="E:\Music&#10;D:\Music"></textarea>
+        </label>
+        <label v-if="localMusicProvider" class="studio-check-row">
+          <input v-model="music.localIncludeUserMusic" type="checkbox">
+          <span>Scan Windows Music folder</span>
+        </label>
+        <label v-if="localMusicProvider" class="studio-check-row">
+          <input v-model="music.localIncludeProjectMusic" type="checkbox">
+          <span>Scan project music folders</span>
+        </label>
+        <label v-if="localMusicProvider">
+          <span>Max Local Files</span>
+          <input v-model.number="music.localMaxScanFiles" type="number" min="100" max="20000" step="100">
+        </label>
+        <label v-if="appleMusicProvider">
           <span>Storefront</span>
           <input v-model="music.storefront" type="text" maxlength="2" spellcheck="false" placeholder="cn">
         </label>
-        <label class="studio-check-row">
+        <label v-if="appleMusicProvider" class="studio-check-row">
           <input v-model="music.autoAuthorize" type="checkbox">
           <span>Auto authorize</span>
         </label>
@@ -909,15 +928,15 @@ onUnmounted(() => {
           <span>Blacklist</span>
           <textarea v-model="music.blacklist" rows="4" spellcheck="false" placeholder="One keyword per line, e.g. live, remix, cover"></textarea>
         </label>
-        <label class="studio-wide-field">
+        <label v-if="appleMusicProvider" class="studio-wide-field">
           <span>Developer Token</span>
           <input v-model="music.developerToken" type="password" spellcheck="false" placeholder="JWT developer token">
         </label>
-        <label class="studio-wide-field">
+        <label v-if="appleMusicProvider" class="studio-wide-field">
           <span>Music User Token</span>
           <input v-model="music.musicUserToken" type="password" spellcheck="false" placeholder="Stored after authorization">
         </label>
-        <div class="studio-memory-actions studio-wide-field">
+        <div v-if="appleMusicProvider" class="studio-memory-actions studio-wide-field">
           <button
             class="studio-primary-btn"
             type="button"

@@ -12,6 +12,10 @@ try {
     normalizeLive2DMusicCommand
   } = await server.ssrLoadModule('/src/frontend/services/room/live2dMusic.js');
   const {
+    DEFAULT_ROOM_MUSIC_SETTINGS,
+    normalizeRoomMusicSettings
+  } = await server.ssrLoadModule('/src/frontend/services/room/roomSettings.js');
+  const {
     formatLive2DMusicWait,
     parseMusicBlacklist,
     pickLive2DMusicCandidate
@@ -29,6 +33,35 @@ try {
   assert.deepEqual(normalizeLive2DMusicCommand({ action: 'clear_queue' }), {
     action: 'clear'
   });
+  assert.equal(DEFAULT_ROOM_MUSIC_SETTINGS.provider, 'local-library');
+  assert.deepEqual(
+    normalizeRoomMusicSettings({
+      provider: 'local-library',
+      localLibraryPaths: ['E:\\Music', 'D:\\Music'],
+      localMaxScanFiles: 500
+    }),
+    {
+      enabled: false,
+      provider: 'local-library',
+      developerToken: '',
+      musicUserToken: '',
+      storefront: 'cn',
+      autoAuthorize: true,
+      localLibraryPaths: 'E:\\Music\nD:\\Music',
+      localIncludeProjectMusic: true,
+      localIncludeUserMusic: true,
+      localMaxScanFiles: 500,
+      searchLimit: 25,
+      smartPick: true,
+      maxQueueSize: 30,
+      dedupeEnabled: true,
+      autoPlayRequests: true,
+      filterShortSongs: true,
+      minDurationMs: 60000,
+      historyLimit: 50,
+      blacklist: ''
+    }
+  );
 
   const candidates = [
     { songId: 'loose', title: 'Cloud Nine', artist: 'Other Artist', durationMs: 220000 },
