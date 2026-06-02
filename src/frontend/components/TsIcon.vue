@@ -2,6 +2,7 @@
 import { computed } from 'vue';
 import {
   AudioLines,
+  Activity,
   Badge,
   BadgeCheck,
   Bell,
@@ -26,6 +27,7 @@ import {
   Home,
   ImageIcon,
   Laugh,
+  Link,
   List,
   LoaderCircle,
   Lock,
@@ -76,6 +78,7 @@ const props = defineProps({
 });
 
 const iconMap = {
+  activity: Activity,
   audioLines: AudioLines,
   badge: Badge,
   badgeCheck: BadgeCheck,
@@ -103,6 +106,7 @@ const iconMap = {
   home: Home,
   image: ImageIcon,
   laugh: Laugh,
+  link: Link,
   list: List,
   loader: LoaderCircle,
   lock: Lock,

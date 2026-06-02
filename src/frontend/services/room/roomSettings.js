@@ -169,8 +169,9 @@ export const DEFAULT_ROOM_MUSIC_SETTINGS = {
   musicUserToken: '',
   storefront: 'cn',
   autoAuthorize: true,
-  neteaseApiUrl: 'http://127.0.0.1:3000',
+  neteaseApiUrl: 'http://127.0.0.1:3302',
   neteaseCookie: '',
+  neteaseCookiePath: 'C:\\Users\\lenovo\\Desktop\\网易云cookie.txt',
   neteaseQualityLevel: 'exhigh',
   neteaseBitrate: 320000,
   neteaseUnblock: false,
@@ -494,6 +495,8 @@ export function normalizeRoomMusicSettings(settings = {}) {
   const blacklist = Array.isArray(merged.blacklist)
     ? merged.blacklist.map((item) => asText(item)).filter(Boolean).join('\n')
     : String(merged.blacklist || '');
+  const rawNeteaseApiUrl = asText(merged.neteaseApiUrl).replace(/\/+$/g, '');
+  const legacyManualDefaultNeteaseApi = /^http:\/\/(127\.0\.0\.1|localhost):3000$/i.test(rawNeteaseApiUrl);
   return {
     enabled: asBoolean(merged.enabled),
     provider,
@@ -501,8 +504,11 @@ export function normalizeRoomMusicSettings(settings = {}) {
     musicUserToken: String(merged.musicUserToken || '').trim(),
     storefront,
     autoAuthorize: asBoolean(merged.autoAuthorize),
-    neteaseApiUrl: asText(merged.neteaseApiUrl).replace(/\/+$/g, '') || DEFAULT_ROOM_MUSIC_SETTINGS.neteaseApiUrl,
+    neteaseApiUrl: legacyManualDefaultNeteaseApi
+      ? DEFAULT_ROOM_MUSIC_SETTINGS.neteaseApiUrl
+      : rawNeteaseApiUrl || DEFAULT_ROOM_MUSIC_SETTINGS.neteaseApiUrl,
     neteaseCookie: String(merged.neteaseCookie || '').trim(),
+    neteaseCookiePath: String(merged.neteaseCookiePath || '').trim() || DEFAULT_ROOM_MUSIC_SETTINGS.neteaseCookiePath,
     neteaseQualityLevel,
     neteaseBitrate: Math.round(asNumber(merged.neteaseBitrate, DEFAULT_ROOM_MUSIC_SETTINGS.neteaseBitrate, 96000, 999000)),
     neteaseUnblock: asBoolean(merged.neteaseUnblock),

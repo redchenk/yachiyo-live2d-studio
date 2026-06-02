@@ -305,11 +305,13 @@ internal sealed class LocalStudioServer : IDisposable
         };
         worker.Start();
         DesktopApiProxy.WarmupManagedMemoryStack();
+        DesktopApiProxy.WarmupManagedNeteaseMusicApi();
     }
 
     public void Dispose()
     {
         shutdown.Cancel();
+        DesktopApiProxy.ShutdownNeteaseMusicApiService();
         DesktopApiProxy.ShutdownMemoryDataService();
         DesktopApiProxy.ShutdownAsrService();
         var current = listener;
@@ -425,6 +427,12 @@ internal sealed class LocalStudioServer : IDisposable
             if ((method == "GET" || method == "HEAD") && string.Equals(path, "/api/music/netease/stream", StringComparison.OrdinalIgnoreCase))
             {
                 WriteApiResponse(stream, DesktopApiProxy.NeteaseMusicStream(query));
+                return;
+            }
+
+            if (method == "POST" && string.Equals(path, "/api/music/netease/managed/status", StringComparison.OrdinalIgnoreCase))
+            {
+                WriteApiResponse(stream, DesktopApiProxy.NeteaseMusicManagedStatus(request.Body));
                 return;
             }
 
@@ -817,7 +825,8 @@ internal static class DesktopApiProxy
     private const int MaxMemorySearchFiles = 800;
     private const int DefaultLocalMusicSearchLimit = 25;
     private const int DefaultLocalMusicMaxScanFiles = 3000;
-    private const string DefaultNeteaseMusicApiUrl = "http://127.0.0.1:3000";
+    private const int NeteaseMusicApiEnhancedPort = 3302;
+    private const string DefaultNeteaseMusicApiUrl = "http://127.0.0.1:3302";
     private const string DefaultNeteaseMusicQualityLevel = "exhigh";
     private const int DefaultNeteaseMusicBitrate = 320000;
     private const int NeteaseMusicStreamTicketTtlSeconds = 1800;
@@ -827,8 +836,10 @@ internal static class DesktopApiProxy
     private const int AsrServicePort = 3301;
     private static readonly object MemoryDataServiceLock = new object();
     private static readonly object AsrServiceLock = new object();
+    private static readonly object NeteaseMusicApiServiceLock = new object();
     private static Process memoryDataServiceProcess;
     private static Process asrServiceProcess;
+    private static Process neteaseMusicApiServiceProcess;
     private static readonly object NeteaseMusicTicketLock = new object();
     private static readonly Dictionary<string, NeteaseMusicStreamTicket> NeteaseMusicStreamTickets =
         new Dictionary<string, NeteaseMusicStreamTicket>(StringComparer.OrdinalIgnoreCase);
@@ -936,6 +947,39 @@ internal static class DesktopApiProxy
             catch
             {
                 // Best-effort cleanup for the optional ASR sidecar.
+            }
+        }
+    }
+
+    public static void WarmupManagedNeteaseMusicApi()
+    {
+        ThreadPool.QueueUserWorkItem(_ =>
+        {
+            try
+            {
+                EnsureNeteaseMusicApiServiceStarted();
+            }
+            catch
+            {
+                // Music is optional; startup failures are surfaced by music search/play requests.
+            }
+        });
+    }
+
+    public static void ShutdownNeteaseMusicApiService()
+    {
+        lock (NeteaseMusicApiServiceLock)
+        {
+            var process = neteaseMusicApiServiceProcess;
+            neteaseMusicApiServiceProcess = null;
+            if (process == null) return;
+            try
+            {
+                if (!process.HasExited && !process.WaitForExit(2500)) process.Kill();
+            }
+            catch
+            {
+                // Best-effort cleanup for the optional NetEase Cloud Music sidecar.
             }
         }
     }
@@ -1158,7 +1202,7 @@ internal static class DesktopApiProxy
             }
 
             ValidateHttpMediaUrl(directUrl);
-            var token = CreateNeteaseMusicStreamTicket(directUrl, GetString(input, "neteaseCookie"));
+            var token = CreateNeteaseMusicStreamTicket(directUrl, ReadNeteaseCookie(input));
             var streamUrl = "/api/music/netease/stream?token=" + Uri.EscapeDataString(token);
             var resolvedCandidate = new Dictionary<string, object>
             {
@@ -1222,6 +1266,37 @@ internal static class DesktopApiProxy
         catch (WebException ex)
         {
             return JsonError(GetStatusCode(ex, 502), "NetEase Cloud Music stream failed: " + LimitText(ReadWebException(ex), 500));
+        }
+        catch (Exception ex)
+        {
+            return JsonError(500, ex.Message);
+        }
+    }
+
+    public static StudioApiResponse NeteaseMusicManagedStatus(byte[] body)
+    {
+        try
+        {
+            var input = ParseObject(body);
+            var apiUrl = NormalizeNeteaseMusicApiUrl(input);
+            if (IsManagedNeteaseMusicApiUrl(apiUrl))
+            {
+                EnsureNeteaseMusicApiServiceStarted();
+            }
+            var cookiePath = GetString(input, "neteaseCookiePath");
+            var cookiePathExists = !string.IsNullOrWhiteSpace(cookiePath) &&
+                File.Exists(Path.GetFullPath(Environment.ExpandEnvironmentVariables(cookiePath.Trim().Trim('"'))));
+            return JsonOk(new Dictionary<string, object>
+            {
+                { "success", true },
+                { "provider", "netease-cloud" },
+                { "managed", IsManagedNeteaseMusicApiUrl(apiUrl) },
+                { "apiUrl", apiUrl },
+                { "ready", IsManagedNeteaseMusicApiUrl(apiUrl) ? ProbeNeteaseMusicApiService() : true },
+                { "cookiePath", cookiePath },
+                { "cookiePathExists", cookiePathExists },
+                { "cookieConfigured", !string.IsNullOrWhiteSpace(ReadNeteaseCookie(input)) }
+            });
         }
         catch (Exception ex)
         {
@@ -1490,8 +1565,25 @@ internal static class DesktopApiProxy
         if (string.IsNullOrWhiteSpace(apiUrl)) apiUrl = GetString(input, "apiUrl");
         if (string.IsNullOrWhiteSpace(apiUrl)) apiUrl = DefaultNeteaseMusicApiUrl;
         apiUrl = apiUrl.Trim().TrimEnd('/');
+        if (RegexContains(apiUrl, @"^http://(127\.0\.0\.1|localhost):3000/?$"))
+        {
+            apiUrl = DefaultNeteaseMusicApiUrl;
+        }
         ValidateRemoteOrLoopbackUrl(apiUrl);
+        if (IsManagedNeteaseMusicApiUrl(apiUrl))
+        {
+            EnsureNeteaseMusicApiServiceStarted();
+        }
         return apiUrl;
+    }
+
+    private static bool IsManagedNeteaseMusicApiUrl(string apiUrl)
+    {
+        Uri parsed;
+        return Uri.TryCreate(apiUrl, UriKind.Absolute, out parsed) &&
+            parsed.Scheme == Uri.UriSchemeHttp &&
+            IsLoopbackHost(parsed.Host) &&
+            parsed.Port == NeteaseMusicApiEnhancedPort;
     }
 
     private static string NormalizeNeteaseMusicQualityLevel(string value)
@@ -1525,7 +1617,32 @@ internal static class DesktopApiProxy
 
     private static Dictionary<string, string> NeteaseMusicHeaders(Dictionary<string, object> input)
     {
-        return NeteaseMusicAudioHeaders(GetString(input, "neteaseCookie"));
+        return NeteaseMusicAudioHeaders(ReadNeteaseCookie(input));
+    }
+
+    private static string ReadNeteaseCookie(Dictionary<string, object> input)
+    {
+        var inlineCookie = GetString(input, "neteaseCookie");
+        if (!string.IsNullOrWhiteSpace(inlineCookie)) return inlineCookie;
+
+        var cookiePath = GetString(input, "neteaseCookiePath");
+        if (string.IsNullOrWhiteSpace(cookiePath)) return string.Empty;
+        try
+        {
+            var fullPath = Path.GetFullPath(Environment.ExpandEnvironmentVariables(cookiePath.Trim().Trim('"')));
+            if (!File.Exists(fullPath)) return string.Empty;
+            var info = new FileInfo(fullPath);
+            if (info.Length > 128 * 1024) throw new InvalidOperationException("NetEase Cookie file is too large.");
+            return File.ReadAllText(fullPath, Encoding.UTF8).Trim();
+        }
+        catch (InvalidOperationException)
+        {
+            throw;
+        }
+        catch
+        {
+            return string.Empty;
+        }
     }
 
     private static Dictionary<string, string> NeteaseMusicAudioHeaders(string cookie)
@@ -2169,6 +2286,86 @@ internal static class DesktopApiProxy
         catch (Exception ex)
         {
             return JsonError(502, ex.Message);
+        }
+    }
+
+    private static void EnsureNeteaseMusicApiServiceStarted()
+    {
+        if (ProbeNeteaseMusicApiService()) return;
+        lock (NeteaseMusicApiServiceLock)
+        {
+            if (ProbeNeteaseMusicApiService()) return;
+            if (neteaseMusicApiServiceProcess != null && !neteaseMusicApiServiceProcess.HasExited)
+            {
+                WaitForNeteaseMusicApiService();
+                return;
+            }
+
+            var nodeDir = Live2DStudioLauncher.FindNodeDirectory(repoRoot);
+            if (string.IsNullOrWhiteSpace(nodeDir))
+            {
+                throw new InvalidOperationException("Node.js is required for managed NetEase Cloud Music API.");
+            }
+            var nodeExe = Path.Combine(nodeDir, "node.exe");
+            var script = Path.Combine(repoRoot, "tools", "music", "netease-api-enhanced-service.mjs");
+            if (!File.Exists(script))
+            {
+                throw new InvalidOperationException("Managed NetEase Cloud Music API wrapper is missing.");
+            }
+            var packagePath = Path.Combine(repoRoot, "node_modules", "@neteasecloudmusicapienhanced", "api", "package.json");
+            if (!File.Exists(packagePath))
+            {
+                throw new InvalidOperationException("Managed NetEase Cloud Music API dependency is missing. Run npm install in the project once.");
+            }
+
+            var start = new ProcessStartInfo
+            {
+                FileName = nodeExe,
+                Arguments = QuoteArgument(script) + " --port " + NeteaseMusicApiEnhancedPort + " --host 127.0.0.1 --repo-root " + QuoteArgument(repoRoot),
+                WorkingDirectory = repoRoot,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+            start.EnvironmentVariables["YACHIYO_REPO_ROOT"] = repoRoot;
+            start.EnvironmentVariables["PORT"] = NeteaseMusicApiEnhancedPort.ToString();
+            start.EnvironmentVariables["HOST"] = "127.0.0.1";
+            start.EnvironmentVariables["NODE_ENV"] = "production";
+            start.EnvironmentVariables["CORS_ALLOW_ORIGIN"] = "*";
+            neteaseMusicApiServiceProcess = Process.Start(start);
+            WaitForNeteaseMusicApiService();
+        }
+    }
+
+    private static void WaitForNeteaseMusicApiService()
+    {
+        for (var i = 0; i < 80; i++)
+        {
+            if (ProbeNeteaseMusicApiService()) return;
+            if (neteaseMusicApiServiceProcess != null && neteaseMusicApiServiceProcess.HasExited)
+            {
+                throw new InvalidOperationException("Managed NetEase Cloud Music API exited before it became ready.");
+            }
+            Thread.Sleep(150);
+        }
+        throw new InvalidOperationException("Managed NetEase Cloud Music API did not become ready.");
+    }
+
+    private static bool ProbeNeteaseMusicApiService()
+    {
+        try
+        {
+            var request = (HttpWebRequest)WebRequest.Create(DefaultNeteaseMusicApiUrl + "/healthz");
+            request.Method = "GET";
+            request.Timeout = 500;
+            request.ReadWriteTimeout = 500;
+            using (var response = (HttpWebResponse)request.GetResponse())
+            {
+                return (int)response.StatusCode >= 200 && (int)response.StatusCode < 300;
+            }
+        }
+        catch
+        {
+            return false;
         }
     }
 

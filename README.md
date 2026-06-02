@@ -571,13 +571,14 @@ C# 本地 API 做了以下限制：
 
 支持的音频扩展名包括 `.mp3`、`.m4a`、`.aac`、`.wav`、`.flac`、`.ogg`、`.oga`、`.opus`。本地播放通过 `.exe` 的 loopback API 读取音频文件，不会调用 Apple Music API。
 
-如果切换 Provider 为 `NetEase Cloud`，需要先在本机运行 `neteasecloudmusicapienhanced/api-enhanced`：
+如果切换 Provider 为 `NetEase Cloud`，`.exe` 会自动启动项目依赖中的 `@neteasecloudmusicapienhanced/api`，不需要手动开终端。
 
-1. 启动 api-enhanced，默认服务地址为 `http://127.0.0.1:3000`。
-2. 在 Settings -> Music 中选择 `NetEase Cloud`。
-3. `api-enhanced URL` 保持默认，或填入你的自建 HTTPS 地址。
-4. 普通免费歌曲通常不需要 `NetEase Cookie`；VIP、灰色、私人歌单、地区限制歌曲可能需要填入网易云登录 Cookie。
-5. 保存后，直播间右侧 Music 面板和 LLM 输出的 `music` 控制会通过 `.exe` 代理搜索、解析并播放网易云歌曲。
+1. 打开 `Start-Live2D-Studio.exe`。
+2. 在左侧进入 Music 测试页，点击 `Probe` 检查 managed api-enhanced、Cookie 文件和服务状态。
+3. Settings -> Music 中 Provider 选择 `NetEase Cloud`。
+4. `Managed api-enhanced URL` 默认是 `http://127.0.0.1:3302`，通常不用改。
+5. `Cookie File Path` 默认是 `C:\Users\lenovo\Desktop\网易云cookie.txt`；也可以直接在 `NetEase Cookie` 粘贴 Cookie 覆盖文件。
+6. 保存后，直播间右侧 Music 面板和 LLM 输出的 `music` 控制会通过 `.exe` 代理搜索、解析并播放网易云歌曲。
 
 网易云播放优先调用 api-enhanced 的 `/song/url/v1`，按 `Quality` 获取播放地址；拿不到时会回退到旧 `/song/url` 和 `Fallback Bitrate`。真实音频外链不会直接暴露给前端队列，`.exe` 会创建短期 stream token 并转发音频。
 

@@ -887,12 +887,16 @@ onUnmounted(() => {
           <input v-model.number="music.localMaxScanFiles" type="number" min="100" max="20000" step="100">
         </label>
         <label v-if="neteaseMusicProvider" class="studio-wide-field">
-          <span>api-enhanced URL</span>
-          <input v-model="music.neteaseApiUrl" type="text" spellcheck="false" placeholder="http://127.0.0.1:3000">
+          <span>Managed api-enhanced URL</span>
+          <input v-model="music.neteaseApiUrl" type="text" spellcheck="false" placeholder="http://127.0.0.1:3302">
         </label>
         <label v-if="neteaseMusicProvider" class="studio-wide-field">
           <span>NetEase Cookie</span>
           <input v-model="music.neteaseCookie" type="password" spellcheck="false" placeholder="Optional MUSIC_U / __csrf cookie">
+        </label>
+        <label v-if="neteaseMusicProvider" class="studio-wide-field">
+          <span>Cookie File Path</span>
+          <input v-model="music.neteaseCookiePath" type="text" spellcheck="false" placeholder="C:\Users\lenovo\Desktop\网易云cookie.txt">
         </label>
         <label v-if="neteaseMusicProvider">
           <span>Quality</span>

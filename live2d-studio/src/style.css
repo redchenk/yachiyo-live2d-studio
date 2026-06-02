@@ -736,6 +736,258 @@
   color: rgba(235, 242, 255, 0.72);
 }
 
+.studio-music-page {
+  position: fixed;
+  inset: 0;
+  overflow: auto;
+  padding: 1rem 1rem 1rem 7rem;
+  color: rgba(248, 251, 255, 0.94);
+  background:
+    linear-gradient(135deg, rgba(6, 10, 22, 0.94), rgba(16, 23, 38, 0.96)),
+    #090d18;
+}
+
+.studio-music-toolbar {
+  min-height: 4.4rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.75rem;
+  border: 1px solid rgba(235, 242, 255, 0.14);
+  border-radius: 8px;
+  padding: 0.8rem 0.9rem;
+  background: rgba(255, 255, 255, 0.055);
+}
+
+.studio-music-toolbar header,
+.studio-music-card header {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.studio-music-toolbar header {
+  display: grid;
+  gap: 0.12rem;
+}
+
+.studio-music-toolbar span,
+.studio-music-card header h2,
+.studio-music-card label span,
+.studio-music-now span,
+.studio-music-status-grid span {
+  color: rgba(235, 242, 255, 0.58);
+  font-size: 0.72rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.studio-music-toolbar strong {
+  font-size: 1.16rem;
+  font-weight: 950;
+}
+
+.studio-music-grid {
+  display: grid;
+  grid-template-columns: minmax(18rem, 0.9fr) minmax(22rem, 1.15fr);
+  gap: 0.75rem;
+  align-items: start;
+}
+
+.studio-music-card {
+  min-width: 0;
+  display: grid;
+  gap: 0.72rem;
+  border: 1px solid rgba(235, 242, 255, 0.14);
+  border-radius: 8px;
+  padding: 0.82rem;
+  background: rgba(255, 255, 255, 0.055);
+}
+
+.studio-music-card header h2 {
+  margin: 0;
+  color: rgba(248, 251, 255, 0.9);
+  font-size: 0.82rem;
+}
+
+.studio-music-card header .ts-icon {
+  color: rgba(158, 232, 255, 0.8);
+}
+
+.studio-music-card label {
+  min-width: 0;
+  display: grid;
+  gap: 0.35rem;
+}
+
+.studio-music-card input:not([type="checkbox"]),
+.studio-music-card select {
+  width: 100%;
+  border: 1px solid rgba(235, 242, 255, 0.18);
+  border-radius: 7px;
+  padding: 0.64rem 0.7rem;
+  outline: none;
+  color: rgba(248, 251, 255, 0.94);
+  background: rgba(3, 7, 18, 0.42);
+  font: inherit;
+  font-size: 0.82rem;
+}
+
+.studio-music-card input:focus,
+.studio-music-card select:focus {
+  border-color: rgba(158, 232, 255, 0.54);
+  box-shadow: 0 0 0 3px rgba(158, 232, 255, 0.1);
+}
+
+.studio-music-settings-row,
+.studio-music-status-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.55rem;
+}
+
+.studio-music-actions,
+.studio-music-search-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.studio-music-search-form {
+  flex-wrap: nowrap;
+  align-items: center;
+}
+
+.studio-music-search-form input {
+  min-width: 0;
+  flex: 1;
+}
+
+.studio-music-song-list {
+  max-height: 24rem;
+  display: grid;
+  gap: 0.46rem;
+  overflow: auto;
+  padding-right: 0.18rem;
+}
+
+.studio-music-song {
+  min-width: 0;
+  display: grid;
+  gap: 0.16rem;
+  border: 1px solid rgba(235, 242, 255, 0.12);
+  border-radius: 8px;
+  padding: 0.62rem 0.7rem;
+  color: rgba(248, 251, 255, 0.9);
+  background: rgba(3, 7, 18, 0.24);
+  text-align: left;
+  cursor: pointer;
+}
+
+.studio-music-song:hover,
+.studio-music-song.selected {
+  border-color: rgba(158, 232, 255, 0.45);
+  background: rgba(158, 232, 255, 0.1);
+}
+
+.studio-music-song span,
+.studio-music-now strong {
+  min-width: 0;
+  overflow: hidden;
+  font-weight: 900;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.studio-music-song small,
+.studio-music-now small {
+  min-width: 0;
+  overflow: hidden;
+  color: rgba(235, 242, 255, 0.52);
+  font-size: 0.72rem;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.studio-music-now,
+.studio-music-status-grid div {
+  min-width: 0;
+  display: grid;
+  gap: 0.16rem;
+  border: 1px solid rgba(235, 242, 255, 0.12);
+  border-radius: 8px;
+  padding: 0.64rem 0.7rem;
+  background: rgba(3, 7, 18, 0.24);
+}
+
+.studio-music-status-grid strong {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 0.88rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.studio-music-log {
+  max-height: 18rem;
+  display: grid;
+  gap: 0.45rem;
+  overflow: auto;
+  padding-right: 0.18rem;
+}
+
+.studio-music-log article {
+  min-width: 0;
+  display: grid;
+  gap: 0.28rem;
+  border: 1px solid rgba(235, 242, 255, 0.11);
+  border-radius: 8px;
+  padding: 0.58rem 0.64rem;
+  background: rgba(3, 7, 18, 0.22);
+}
+
+.studio-music-log article.ok {
+  border-color: rgba(118, 233, 164, 0.32);
+}
+
+.studio-music-log article.warn {
+  border-color: rgba(255, 211, 118, 0.32);
+}
+
+.studio-music-log article.error {
+  border-color: rgba(255, 122, 122, 0.34);
+}
+
+.studio-music-log time {
+  color: rgba(158, 232, 255, 0.72);
+  font-size: 0.68rem;
+  font-weight: 850;
+}
+
+.studio-music-log span,
+.studio-music-song-list p,
+.studio-music-log p {
+  margin: 0;
+  color: rgba(235, 242, 255, 0.68);
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.studio-music-log pre {
+  max-height: 8rem;
+  margin: 0;
+  overflow: auto;
+  border-radius: 7px;
+  padding: 0.5rem;
+  color: rgba(235, 242, 255, 0.72);
+  background: rgba(0, 0, 0, 0.24);
+  font-size: 0.68rem;
+  white-space: pre-wrap;
+}
+
 .studio-scrim-enter-active,
 .studio-scrim-leave-active,
 .studio-settings-drawer-enter-active,
@@ -757,6 +1009,22 @@
 @media (max-width: 720px) {
   .studio-left-rail {
     display: none;
+  }
+
+  .studio-music-page {
+    padding: 0.75rem;
+  }
+
+  .studio-music-toolbar,
+  .studio-music-search-form,
+  .studio-music-settings-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .studio-music-grid,
+  .studio-music-status-grid {
+    grid-template-columns: 1fr;
   }
 
   .studio-settings-panel {

@@ -4,6 +4,7 @@ import Live2DPage from '../../src/frontend/pages/Live2DPage.vue';
 import TsIcon from '../../src/frontend/components/TsIcon.vue';
 import { readRoomLLMSettings, readRoomTTSSettings } from '../../src/frontend/services/room/roomSettings';
 import StudioSettingsPanel from './components/StudioSettingsPanel.vue';
+import MusicTestPage from './components/MusicTestPage.vue';
 
 function shouldOpenSettingsOnBoot() {
   const llm = readRoomLLMSettings();
@@ -12,11 +13,10 @@ function shouldOpenSettingsOnBoot() {
 }
 
 const settingsOpen = ref(shouldOpenSettingsOnBoot());
+const activeView = ref('live');
 const railItems = [
-  { id: 'live', label: '直播', icon: 'home', active: true },
-  { id: 'model', label: '模型', icon: 'userRound' },
-  { id: 'scene', label: '场景', icon: 'image' },
-  { id: 'assets', label: '资源', icon: 'package' }
+  { id: 'live', label: '直播', icon: 'home' },
+  { id: 'music', label: '音乐', icon: 'music' }
 ];
 
 onMounted(() => {
@@ -30,7 +30,8 @@ onUnmounted(() => {
 
 <template>
   <div class="studio-app-shell">
-    <Live2DPage />
+    <Live2DPage v-if="activeView === 'live'" />
+    <MusicTestPage v-else-if="activeView === 'music'" />
     <aside class="studio-left-rail" aria-label="Studio navigation">
       <div class="studio-rail-brand">
         <span>Y</span>
@@ -40,10 +41,11 @@ onUnmounted(() => {
           v-for="item in railItems"
           :key="item.id"
           class="studio-rail-item"
-          :class="{ active: item.active }"
+          :class="{ active: activeView === item.id }"
           type="button"
           :title="item.label"
-          :aria-current="item.active ? 'page' : undefined"
+          :aria-current="activeView === item.id ? 'page' : undefined"
+          @click="activeView = item.id"
         >
           <TsIcon :name="item.icon" :size="25" />
           <span>{{ item.label }}</span>
