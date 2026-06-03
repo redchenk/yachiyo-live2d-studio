@@ -699,6 +699,59 @@ function normalizeMemoryWritesFromPayload(data) {
   return sanitizeMemoryWrites(data?.memory_writes || data?.memoryWrites || []);
 }
 
+function normalizeMusicFromPayload(data = {}) {
+  if (!data || typeof data !== 'object') return null;
+  const nestedSources = [
+    data.music,
+    data.music_request,
+    data.musicRequest,
+    data.appleMusic,
+    data.neteaseMusic,
+    data.netease_music,
+    data.song_request,
+    data.songRequest,
+    data.requestSong,
+    data['点歌'],
+    data['音乐']
+  ];
+  for (const source of nestedSources) {
+    const command = normalizeLive2DMusicCommand(source);
+    if (command) return command;
+  }
+
+  const rootMusicKeys = [
+    'action',
+    'command',
+    'type',
+    'intent',
+    'query',
+    'keyword',
+    'keywords',
+    'search',
+    'song',
+    'title',
+    'name',
+    'songName',
+    'track',
+    'artist',
+    'artistName',
+    'singer',
+    'singers',
+    'artists',
+    'songId',
+    'url',
+    '动作',
+    '查询',
+    '关键词',
+    '歌曲',
+    '歌名',
+    '歌手',
+    '艺人'
+  ];
+  if (!rootMusicKeys.some((key) => Object.prototype.hasOwnProperty.call(data, key))) return null;
+  return normalizeLive2DMusicCommand(data);
+}
+
 export function parseLive2DControlPayload(rawText) {
   const jsonText = extractLabeledJsonObject(rawText) || extractJsonObject(rawText);
   try {
@@ -716,7 +769,7 @@ export function parseLive2DControlPayload(rawText) {
     return {
       reply: reply || 'OK.',
       live2d,
-      music: normalizeLive2DMusicCommand(data.music || data.appleMusic || data.song_request || data.songRequest),
+      music: normalizeMusicFromPayload(data),
       memoryWrites: normalizeMemoryWritesFromPayload(data),
       raw: data
     };
@@ -939,6 +992,7 @@ export function live2DControlSystemPrompt() {
     'Optional interruptPolicy controls action orchestration: use mode blend for normal replies, replace for urgent reactions, protect for moments that should finish; priority is 0-10.',
     'Optional music controls the song request engine. Only include it when the user explicitly asks to request, play next, skip, pause, resume, stop, clear, or inspect music; otherwise set music to null.',
     'Music schema examples: {"action":"request","query":"song title artist"}, {"action":"play_next","query":"song title artist"}, {"action":"skip"}, {"action":"pause"}, {"action":"resume"}, {"action":"stop"}, {"action":"queue"}. The runtime may use a local music library, NetEase Cloud Music, or Apple Music; never include tokens, cookies, or credentials.',
+    'For song requests, always put the executable request in music JSON instead of only saying it in reply. For Chinese requests like 点歌, 来一首, or 放歌, use {"action":"request","query":"song title artist"}. If the user asks to play immediately, use action play_now; if they ask to put it next, use play_next.',
     'Use duration in seconds. Overlapping actions are allowed by repeating similar delay values; omit delay for a natural staggered performance.',
     'Only when a durable, low-risk memory is clearly confirmed, include memory_writes items with scope, type, title, text, optional episode, facts, foresight, importance, confidence, and tags. Otherwise use an empty array.',
     'Memory facts must be atomic and verifiable. Foresight must be conservative, evidence-based, and include confidence when useful.',
@@ -974,6 +1028,7 @@ export function live2DStreamingControlSystemPrompt() {
     'Use intensity 0.45-0.85 for normal talking, 0.85-1.0 for punchlines or surprise.',
     'Optional interruptPolicy controls action orchestration: mode blend for normal replies, replace for urgent reactions, protect for a beat that should complete; priority is 0-10.',
     'Optional music controls the song request engine in the final CONTROL only. Use it only when the user explicitly asks for music; otherwise set music to null. Examples: {"action":"request","query":"song title artist"}, {"action":"play_next","query":"song title artist"}, {"action":"skip"}, {"action":"pause"}, {"action":"resume"}, {"action":"stop"}, {"action":"queue"}. The runtime may use a local music library, NetEase Cloud Music, or Apple Music; never include tokens, cookies, or credentials.',
+    'For song requests, always put the executable request in final CONTROL music JSON instead of only saying it in VOICE. For Chinese requests like 点歌, 来一首, or 放歌, use {"action":"request","query":"song title artist"}. If the user asks to play immediately, use action play_now; if they ask to put it next, use play_next.',
     'Only when a durable, low-risk memory is clearly confirmed, include memory_writes items with scope, type, title, text, optional episode, facts, foresight, importance, confidence, and tags. Otherwise use an empty array.',
     'Memory facts must be atomic and verifiable. Foresight must be conservative, evidence-based, and include confidence when useful.',
     'Never propose secrets, API keys, sensitive personal data, raw chat dumps, guesses about a user, or negative personality labels as memory.',

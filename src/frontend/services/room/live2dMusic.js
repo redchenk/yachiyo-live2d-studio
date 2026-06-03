@@ -70,8 +70,31 @@ function firstText(...values) {
   return '';
 }
 
+function textList(value) {
+  if (Array.isArray(value)) {
+    return value.map((item) => {
+      if (typeof item === 'string') return item;
+      return firstText(item?.name, item?.artistName, item?.title, item?.text);
+    }).map(asText).filter(Boolean).join(' ');
+  }
+  return asText(value);
+}
+
 function normalizeMusicAction(value) {
-  const action = asText(value).toLowerCase().replace(/[^a-z0-9_-]/g, '');
+  const rawAction = asText(value).toLowerCase();
+  if (/清空|清除|clear/.test(rawAction)) return 'clear';
+  if (/队列|歌单|列表|状态|queue|list|status/.test(rawAction)) return 'queue';
+  if (/删除|移除|remove|delete/.test(rawAction)) return 'remove';
+  if (/暂停|停一下|pause/.test(rawAction)) return 'pause';
+  if (/继续|恢复|接着|resume|continue/.test(rawAction)) return 'resume';
+  if (/停止|别放|stop|halt/.test(rawAction)) return 'stop';
+  if (/切歌|跳过|下一曲|skip|next_track/.test(rawAction)) return 'skip';
+  if (/下一首|下首|插队|优先|play_next|playnext|next_song/.test(rawAction)) return 'play_next';
+  if (/马上|立刻|立即|现在播放|play_now|playnow|immediate|cut_in/.test(rawAction)) return 'play_now';
+  if (/点歌|来一首|加歌|排歌|song_request|request_song|request|order|enqueue|append/.test(rawAction)) return 'request';
+  if (/播放|放歌|play|start/.test(rawAction)) return 'play';
+
+  const action = rawAction.replace(/[^a-z0-9_-]/g, '');
   if (action === 'start') return 'play';
   if (action === 'continue') return 'resume';
   if (action === 'halt') return 'stop';
@@ -88,6 +111,62 @@ function normalizeStorefront(value, fallback = 'cn') {
   return asText(value).toLowerCase().replace(/[^a-z]/g, '').slice(0, 2) || fallback;
 }
 
+function musicQueryFromParts(source = {}, nested = {}) {
+  const directQuery = firstText(
+    source.query,
+    source.keyword,
+    source.keywords,
+    source.search,
+    source.text,
+    source['查询'],
+    source['关键词'],
+    nested.query,
+    nested.keyword,
+    nested.keywords,
+    nested.search,
+    nested.text,
+    nested['查询'],
+    nested['关键词']
+  );
+  if (directQuery) return directQuery;
+
+  const title = firstText(
+    source.song,
+    source.title,
+    source.name,
+    source.songName,
+    source.track,
+    source['歌曲'],
+    source['歌名'],
+    nested.song,
+    nested.title,
+    nested.name,
+    nested.songName,
+    nested.track,
+    nested['歌曲'],
+    nested['歌名']
+  );
+  const artist = firstText(
+    textList(source.artist),
+    textList(source.artistName),
+    textList(source.singer),
+    textList(source.singers),
+    textList(source.artists),
+    source.byArtist,
+    source['歌手'],
+    source['艺人'],
+    textList(nested.artist),
+    textList(nested.artistName),
+    textList(nested.singer),
+    textList(nested.singers),
+    textList(nested.artists),
+    nested.byArtist,
+    nested['歌手'],
+    nested['艺人']
+  );
+  return [title, artist].map(asText).filter(Boolean).join(' ');
+}
+
 export function normalizeLive2DMusicCommand(rawCommand = null) {
   if (!rawCommand) return null;
 
@@ -97,19 +176,19 @@ export function normalizeLive2DMusicCommand(rawCommand = null) {
   if (!source) return null;
 
   const nested = source.music && typeof source.music === 'object' ? source.music : {};
-  const action = normalizeMusicAction(source.action || source.command || source.type || nested.action || nested.command);
-  const query = firstText(
-    source.query,
-    source.song,
-    source.title,
-    source.name,
-    source.text,
-    nested.query,
-    nested.song,
-    nested.title,
-    nested.name,
-    nested.text
+  const action = normalizeMusicAction(
+    source.action ||
+    source.command ||
+    source.type ||
+    source.intent ||
+    source['动作'] ||
+    nested.action ||
+    nested.command ||
+    nested.type ||
+    nested.intent ||
+    nested['动作']
   );
+  const query = musicQueryFromParts(source, nested);
   const songId = firstText(
     source.songId,
     source.catalogId,
