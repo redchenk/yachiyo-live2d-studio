@@ -41,10 +41,20 @@ try {
     ]
   }, 1000);
 
+  const lastActiveFrame = brain.sample(1960);
+  const lastActiveCubismFrame = sampleCubismBehaviorFrame(lastActiveFrame, 1960);
+  const lastActiveVerticalBody = Math.abs(paramValue(lastActiveCubismFrame, 'ParamBodyInput_BodyY'));
+
   const completedFrame = brain.sample(2020);
   assert.equal(completedFrame.completed, true);
+  assert.equal(completedFrame.active, true);
+  assert.equal(completedFrame.handoffActive, true);
   const completedCubismFrame = sampleCubismBehaviorFrame(completedFrame, 2020);
   const completedVerticalBody = Math.abs(paramValue(completedCubismFrame, 'ParamBodyInput_BodyY'));
+  assert.ok(
+    completedVerticalBody < lastActiveVerticalBody * 1.35,
+    'completed streaming queues should hold the outgoing Cubism posture instead of dropping to listening before the next queue arrives'
+  );
 
   brain.onRoomAct({
     source: 'streaming-speech',
@@ -64,7 +74,7 @@ try {
   const handoffCubismFrame = sampleCubismBehaviorFrame(handoffFrame, 2120);
   const handoffVerticalBody = Math.abs(paramValue(handoffCubismFrame, 'ParamBodyInput_BodyY'));
   assert.ok(
-    handoffVerticalBody < completedVerticalBody * 0.65,
+    handoffVerticalBody < lastActiveVerticalBody * 1.35,
     'Cubism action handoff should not briefly take over with the idle/listening vertical body pose'
   );
 } finally {

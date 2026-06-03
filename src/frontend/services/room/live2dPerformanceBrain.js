@@ -21,6 +21,7 @@ const STREAMING_QUEUE_HANDOFF_GRACE_MS = 1200;
 const STREAMING_QUEUE_HANDOFF_MIN_DELAY_MS = 120;
 const STREAMING_QUEUE_HANDOFF_OVERLAP_MS = 260;
 const STREAMING_QUEUE_HANDOFF_BLEND_IN_MS = 520;
+const STREAMING_QUEUE_POSTURE_HOLD_MS = 1200;
 
 function nowMs() {
   if (typeof performance !== 'undefined' && typeof performance.now === 'function') return performance.now();
@@ -141,6 +142,12 @@ export function createLive2DPerformanceBrain() {
     return shouldExtendStreamingBehaviorPlan(recentReleasedPlan.plan, nextPlan, at)
       ? recentReleasedPlan.plan
       : null;
+  }
+
+  function streamingPostureHandoffActive(at) {
+    if (!recentReleasedPlan || !isStreamingSpeechSource(recentReleasedPlan.plan?.source)) return false;
+    const elapsedAfterRelease = Math.max(0, at - (Number(recentReleasedPlan.releasedAt) || at));
+    return elapsedAfterRelease <= STREAMING_QUEUE_POSTURE_HOLD_MS;
   }
 
   function streamingAppendAt(currentPlan, elapsed) {
@@ -357,6 +364,7 @@ export function createLive2DPerformanceBrain() {
       intensityScale
     }) : [];
     const samples = [...trailingSamples, ...activeSamples];
+    const handoffActive = !activePlan && !trailingSamples.length && streamingPostureHandoffActive(now);
     const dominant = activePlan
       ? pickDominantMotion(activeSamples.length ? activeSamples : samples)
       : pickDominantMotion(samples);
@@ -367,7 +375,8 @@ export function createLive2DPerformanceBrain() {
       samples,
       dominant,
       expression: activePlan?.expression || outgoingExpression || character.emotion,
-      active: Boolean(activePlan || trailingSamples.length),
+      active: Boolean(activePlan || trailingSamples.length || handoffActive),
+      handoffActive,
       completed: Boolean(currentPlan && !activePlan)
     };
     publishRoomLive2DPerformanceDebug(cachedFrame);
