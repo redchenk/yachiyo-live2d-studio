@@ -27,6 +27,7 @@ const EYE_OWNING_EXPRESSIONS = new Set([
   'fire',
   'namida',
   'shy',
+  'smile',
   'smug',
   'surprised',
   'tears',
@@ -35,17 +36,20 @@ const EYE_OWNING_EXPRESSIONS = new Set([
 
 const MOMENTARY_EXPRESSION_IDS = new Set(['tongue']);
 const MOMENTARY_PULSE_MS = 620;
+const CLOSED_SMILE_EYE_SHAPE = {
+  happySmile: 0.92,
+  eyeSmile: 0.82,
+  hideOpenEye: 0.9,
+  cheek: 0.3
+};
 const EXPRESSION_EYE_OPEN_GUARDS = new Map([
+  ['smile', 0.015],
   ['closed_smile', 0.015],
   ['closed_eyes', 0.015]
 ]);
 const EXPRESSION_CUBISM_EYE_SHAPES = new Map([
-  ['closed_smile', {
-    happySmile: 0.92,
-    eyeSmile: 0.82,
-    hideOpenEye: 0.9,
-    cheek: 0.3
-  }],
+  ['smile', CLOSED_SMILE_EYE_SHAPE],
+  ['closed_smile', CLOSED_SMILE_EYE_SHAPE],
   ['closed_eyes', {
     happySmile: 0.64,
     eyeSmile: 0.72,
@@ -424,10 +428,6 @@ function applyAction(frame, sample, options = {}) {
       }, 0.48);
       setMouthSmile(frame, 0.74 + 0.16 * e, 0.84);
       setBrows(frame, 0.56 + 0.08 * e, 0.56 + 0.08 * e, 0.58);
-      setEyes(frame, 0, -0.05 * e, 0.42);
-      setFrameValue(frame, 'ParamExpression_1', 0.06 + 0.12 * e, 0.34);
-      setFrameValue(frame, 'ParamEyeLSmile', 0.08 + 0.16 * e, 0.38);
-      setFrameValue(frame, 'ParamEyeRSmile', 0.08 + 0.16 * e, 0.38);
       setFrameValue(frame, 'ParamCheek', 0.08 + 0.16 * e, 0.42);
       break;
     case 'smirk':

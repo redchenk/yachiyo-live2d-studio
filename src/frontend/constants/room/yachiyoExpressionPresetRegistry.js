@@ -40,7 +40,7 @@ export const YACHIYO_EXPRESSION_PRESETS = [
     prompt: 'warm, happy, reassured, cheerful, or gentle smile',
     aliases: ['happy', 'joy', 'cheerful', 'gentle', 'warm', 'laugh'],
     expression: 'smile',
-    files: ['smile', 'happy', 'expression_smile'],
+    files: ['笑咪咪', '笑眯眯', 'smile', 'happy', 'expression_smile'],
     actions: [
       action('look_at_chat', 1.0),
       action('smile', 1.6, 0.05),

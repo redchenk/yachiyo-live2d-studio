@@ -8,7 +8,10 @@
     ],
     "Expressions": [
       { "Name": "neutral", "File": "expression_neutral.exp3.json" },
-      { "Name": "smile", "File": "expression_smile.exp3.json" },
+      { "Name": "smile", "File": "笑咪咪.exp3.json" },
+      { "Name": "closed_smile", "File": "笑咪咪.exp3.json" },
+      { "Name": "笑咪咪", "File": "笑咪咪.exp3.json" },
+      { "Name": "open_smile", "File": "expression_smile.exp3.json" },
       { "Name": "bsmile", "File": "expression_bsmile.exp3.json" },
       { "Name": "shy", "File": "expression_shy.exp3.json" },
       { "Name": "smug", "File": "expression_smug.exp3.json" },
