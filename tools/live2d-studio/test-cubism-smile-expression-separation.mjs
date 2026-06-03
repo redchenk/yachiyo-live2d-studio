@@ -47,6 +47,13 @@ try {
     false,
     'plain smile should not stack the model-specific closed-smile eye expression'
   );
+  assert.equal(hasParam(smileFrame, 'ParamHide_EyesL1'), false, 'plain smile should not hide the open-eye layer');
+  assert.ok(
+    paramValue(smileFrame, 'ParamExpression_1') > 0 &&
+      paramValue(smileFrame, 'ParamEyeLSmile') > 0 &&
+      paramValue(smileFrame, 'ParamEyeRSmile') > 0,
+    'plain smile should keep a subtle eye highlight and open-eye smile shape'
+  );
 
   brain.onRoomAct({
     expression: 'closed_smile',

@@ -424,6 +424,10 @@ function applyAction(frame, sample, options = {}) {
       }, 0.48);
       setMouthSmile(frame, 0.74 + 0.16 * e, 0.84);
       setBrows(frame, 0.56 + 0.08 * e, 0.56 + 0.08 * e, 0.58);
+      setEyes(frame, 0, -0.05 * e, 0.42);
+      setFrameValue(frame, 'ParamExpression_1', 0.06 + 0.12 * e, 0.34);
+      setFrameValue(frame, 'ParamEyeLSmile', 0.08 + 0.16 * e, 0.38);
+      setFrameValue(frame, 'ParamEyeRSmile', 0.08 + 0.16 * e, 0.38);
       setFrameValue(frame, 'ParamCheek', 0.08 + 0.16 * e, 0.42);
       break;
     case 'smirk':
