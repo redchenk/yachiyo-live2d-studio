@@ -30,6 +30,7 @@ const LOCAL_MUSIC_SEARCH_ENDPOINT = '/api/music/local/search';
 const NETEASE_MUSIC_SEARCH_ENDPOINT = '/api/music/netease/search';
 const NETEASE_MUSIC_RESOLVE_ENDPOINT = '/api/music/netease/resolve';
 const DEFAULT_SEARCH_LIMIT = 25;
+const SILENT_AUDIO_DATA_URL = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQQAAAAAAA==';
 const PLAYABLE_ACTIONS = new Set([
   'play',
   'request',
@@ -52,6 +53,7 @@ let musicKitConfigurePromise = null;
 let musicKitConfigureKey = '';
 let playbackTimer = 0;
 let localAudio = null;
+let musicWarmupActive = false;
 
 function asText(value) {
   return String(value ?? '').trim();
@@ -264,6 +266,30 @@ function publishMusicDebug(type, detail = {}, provider = '') {
     developerToken: detail.developerToken ? '[configured]' : undefined,
     musicUserToken: detail.musicUserToken ? '[authorized]' : undefined
   });
+}
+
+function browserPlaybackErrorMessage(error) {
+  const name = asText(error?.name);
+  if (name === 'NotAllowedError') {
+    return 'Music playback was blocked by the studio window. Click Send, Start Live, or a music button once, then ask again.';
+  }
+  return musicErrorMessage(error, 'Music audio playback failed.');
+}
+
+async function playBrowserAudio(audio, detail = {}, provider = '') {
+  try {
+    await audio.play();
+  } catch (error) {
+    const message = browserPlaybackErrorMessage(error);
+    publishMusicDebug('music-error', {
+      action: detail.action || 'audio-play',
+      query: detail.query,
+      songId: detail.songId,
+      provider: provider || detail.provider,
+      message
+    }, provider || detail.provider);
+    throw new Error(message);
+  }
 }
 
 function loadMusicKitScript() {
@@ -545,6 +571,7 @@ function ensureLocalAudio() {
   localAudio = new Audio();
   localAudio.preload = 'auto';
   localAudio.addEventListener('ended', () => {
+    if (musicWarmupActive) return;
     const settings = readRoomMusicSettings();
     const current = readLive2DMusicQueueState().current;
     const provider = current?.provider || settings.provider;
@@ -576,6 +603,66 @@ function ensureLocalAudio() {
     }, provider);
   });
   return localAudio;
+}
+
+export async function warmupLive2DMusicPlayback() {
+  if (typeof window === 'undefined') return false;
+  const audio = ensureLocalAudio();
+  if (audio.src && !audio.ended) return !audio.paused;
+
+  const previousMuted = audio.muted;
+  const previousVolume = Number.isFinite(Number(audio.volume)) ? audio.volume : 1;
+  musicWarmupActive = true;
+  try {
+    audio.pause();
+    audio.muted = false;
+    audio.volume = 0;
+    audio.src = SILENT_AUDIO_DATA_URL;
+    audio.currentTime = 0;
+    await audio.play();
+    audio.pause();
+    audio.removeAttribute('src');
+    audio.load?.();
+    return true;
+  } catch (error) {
+    publishMusicDebug('music-warmup-failed', {
+      action: 'warmup',
+      message: musicErrorMessage(error, 'Music warmup failed.')
+    }, readRoomMusicSettings().provider);
+    return false;
+  } finally {
+    audio.muted = previousMuted;
+    audio.volume = previousVolume;
+    musicWarmupActive = false;
+  }
+}
+
+function localAudioHasActiveSource() {
+  return Boolean(localAudio && localAudio.src && !localAudio.ended);
+}
+
+function localAudioIsPlaying() {
+  return Boolean(localAudioHasActiveSource() && !localAudio.paused);
+}
+
+function reconcileBrowserMusicCurrent(state, provider) {
+  const current = state?.current;
+  if (!current || (provider !== LOCAL_MUSIC_PROVIDER && provider !== NETEASE_MUSIC_PROVIDER)) return state;
+  if (current.provider && current.provider !== LOCAL_MUSIC_PROVIDER && current.provider !== NETEASE_MUSIC_PROVIDER) {
+    return state;
+  }
+  if (localAudioIsPlaying()) return state;
+  if (current.status === 'paused' && localAudioHasActiveSource()) return state;
+
+  publishMusicDebug('music-stale-current-cleared', {
+    action: 'reconcile-current',
+    provider,
+    staleProvider: current.provider,
+    status: current.status,
+    songId: current.songId,
+    title: current.title
+  }, provider);
+  return clearLive2DMusicCurrent(state);
 }
 
 function clearPlaybackTimer() {
@@ -800,7 +887,12 @@ async function playLocalMusicCandidate(candidate, settings) {
   audio.pause();
   audio.src = normalizedCandidate.url;
   audio.currentTime = 0;
-  await audio.play();
+  await playBrowserAudio(audio, {
+    action: 'play',
+    provider: LOCAL_MUSIC_PROVIDER,
+    query: normalizedCandidate.query,
+    songId: normalizedCandidate.songId
+  }, LOCAL_MUSIC_PROVIDER);
 
   const state = setLive2DMusicCurrent(normalizedCandidate, {
     status: 'playing',
@@ -884,10 +976,7 @@ async function resolveLocalMusicCandidate(command, settings) {
 
 async function requestLocalMusic(command, settings) {
   const candidate = await resolveLocalMusicCandidate(command, settings);
-  let state = readLive2DMusicQueueState();
-  if (state.current?.status === 'playing' && (!localAudio || !localAudio.src || localAudio.paused)) {
-    state = clearLive2DMusicCurrent(state);
-  }
+  let state = reconcileBrowserMusicCurrent(readLive2DMusicQueueState(), LOCAL_MUSIC_PROVIDER);
   const mode = command.action === 'play_next' ? 'next' : command.action === 'play_now' ? 'immediate' : 'append';
 
   if (mode === 'immediate') {
@@ -964,7 +1053,12 @@ async function playNeteaseMusicCandidate(candidate, settings) {
   audio.pause();
   audio.src = normalizedCandidate.url;
   audio.currentTime = 0;
-  await audio.play();
+  await playBrowserAudio(audio, {
+    action: 'play',
+    provider: NETEASE_MUSIC_PROVIDER,
+    query: normalizedCandidate.query,
+    songId: normalizedCandidate.songId
+  }, NETEASE_MUSIC_PROVIDER);
 
   const state = setLive2DMusicCurrent(normalizedCandidate, {
     status: 'playing',
@@ -1036,10 +1130,7 @@ async function resolveNeteaseMusicCandidate(command, settings) {
 
 async function requestNeteaseMusic(command, settings) {
   const candidate = await resolveNeteaseMusicCandidate(command, settings);
-  let state = readLive2DMusicQueueState();
-  if (state.current?.status === 'playing' && (!localAudio || !localAudio.src || localAudio.paused)) {
-    state = clearLive2DMusicCurrent(state);
-  }
+  let state = reconcileBrowserMusicCurrent(readLive2DMusicQueueState(), NETEASE_MUSIC_PROVIDER);
   const mode = command.action === 'play_next' ? 'next' : command.action === 'play_now' ? 'immediate' : 'append';
 
   if (mode === 'immediate') {
@@ -1115,9 +1206,12 @@ export async function unauthorizeLive2DMusic(settings = readRoomMusicSettings())
   return saved;
 }
 
-export async function executeLive2DMusicCommand(rawCommand, settings = readRoomMusicSettings()) {
-  const command = normalizeLive2DMusicCommand(rawCommand);
+export async function executeLive2DMusicCommand(rawCommand, settings = readRoomMusicSettings(), options = {}) {
+  let command = normalizeLive2DMusicCommand(rawCommand);
   if (!command) return null;
+  if (options.playRequestsImmediately && ['play', 'request'].includes(command.action)) {
+    command = { ...command, action: 'play_now' };
+  }
 
   const providerOverride = normalizeMusicProvider(command.provider, '');
   const normalizedSettings = normalizeRoomMusicSettings({
@@ -1160,7 +1254,11 @@ export async function executeLive2DMusicCommand(rawCommand, settings = readRoomM
         const current = readLive2DMusicQueueState().current;
         if (!current) return playNextLocalMusic(normalizedSettings);
         if (!audio.src && current.url) audio.src = current.url;
-        await audio.play();
+        await playBrowserAudio(audio, {
+          action: 'resume',
+          provider: LOCAL_MUSIC_PROVIDER,
+          songId: current.songId
+        }, provider);
         const pausedAt = Number(current.pausedAt) || Date.now();
         updateLive2DMusicCurrent({
           status: 'playing',
@@ -1214,7 +1312,11 @@ export async function executeLive2DMusicCommand(rawCommand, settings = readRoomM
         const current = readLive2DMusicQueueState().current;
         if (!current) return playNextNeteaseMusic(normalizedSettings);
         if (!audio.src && current.url) audio.src = current.url;
-        await audio.play();
+        await playBrowserAudio(audio, {
+          action: 'resume',
+          provider: NETEASE_MUSIC_PROVIDER,
+          songId: current.songId
+        }, provider);
         const pausedAt = Number(current.pausedAt) || Date.now();
         updateLive2DMusicCurrent({
           status: 'playing',

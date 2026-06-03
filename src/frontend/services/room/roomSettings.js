@@ -13,6 +13,7 @@ const ROOM_MODEL_RENDER_DEFAULTS_MIGRATION_KEY = 'roomModelRenderDefaultsMigrate
 const ROOM_MEMORY_MANAGED_MILVUS_DEFAULTS_MIGRATION_KEY = 'roomMemoryManagedMilvusDefaultsMigratedV1';
 const ROOM_MUSIC_LOCAL_DEFAULTS_MIGRATION_KEY = 'roomMusicLocalDefaultsMigratedV1';
 const ROOM_MUSIC_NETEASE_DEFAULTS_MIGRATION_KEY = 'roomMusicNeteaseDefaultsMigratedV1';
+const ROOM_MUSIC_ENABLED_DEFAULTS_MIGRATION_KEY = 'roomMusicEnabledDefaultsMigratedV1';
 const LEGACY_ROOM_MODEL_STAGE_IDLE_SCALE = 0.9;
 const LEGACY_ROOM_MODEL_STAGE_MOTION_SCALE = 0.75;
 const LEGACY_ROOM_MODEL_RENDER_DPRS = [3, 4];
@@ -164,7 +165,7 @@ export const DEFAULT_ROOM_MEMORY_SETTINGS = {
 };
 
 export const DEFAULT_ROOM_MUSIC_SETTINGS = {
-  enabled: false,
+  enabled: true,
   provider: 'netease-cloud',
   developerToken: '',
   musicUserToken: '',
@@ -565,6 +566,23 @@ function upgradeLegacyRoomMusicDefaults(settings, rawSettings = {}) {
       if (looksLikeOldLocalDefault) {
         upgraded = normalizeRoomMusicSettings({
           ...upgraded,
+          provider: 'netease-cloud'
+        });
+        changed = true;
+      }
+    }
+
+    if (localStorage.getItem(ROOM_MUSIC_ENABLED_DEFAULTS_MIGRATION_KEY) !== '1') {
+      localStorage.setItem(ROOM_MUSIC_ENABLED_DEFAULTS_MIGRATION_KEY, '1');
+      const looksLikeOldDisabledDefault = rawSettings.enabled === false &&
+        (!rawProvider || rawProvider === 'netease-cloud' || rawProvider === 'local-library') &&
+        !String(rawSettings.localLibraryPaths || '').trim() &&
+        !asText(rawSettings.developerToken) &&
+        !asText(rawSettings.musicUserToken);
+      if (looksLikeOldDisabledDefault) {
+        upgraded = normalizeRoomMusicSettings({
+          ...upgraded,
+          enabled: true,
           provider: 'netease-cloud'
         });
         changed = true;

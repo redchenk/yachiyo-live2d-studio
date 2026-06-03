@@ -19,7 +19,10 @@ import {
   readRoomLive2DDebugState
 } from '../services/room/live2dDebug';
 import { createLive2DAsrRecorder } from '../services/room/live2dAsr';
-import { executeLive2DMusicCommand } from '../services/room/live2dMusic';
+import {
+  executeLive2DMusicCommand,
+  warmupLive2DMusicPlayback
+} from '../services/room/live2dMusic';
 import {
   LIVE2D_MUSIC_QUEUE_EVENT,
   readLive2DMusicQueueState
@@ -436,9 +439,11 @@ function pushLog(role, text, meta = {}) {
 async function executeMusicFromLLMResult(result, source = 'manual') {
   if (!result?.music) return null;
   try {
-    const musicResult = await executeLive2DMusicCommand(result.music);
+    const musicResult = await executeLive2DMusicCommand(result.music, undefined, {
+      playRequestsImmediately: true
+    });
     musicQueueState.value = readLive2DMusicQueueState();
-    if (!musicResult || musicResult.status === 'disabled') return musicResult;
+    if (!musicResult) return musicResult;
     pushLog('system', musicResultLabel(musicResult), { music: musicResult, source });
     return musicResult;
   } catch (error) {
@@ -468,6 +473,7 @@ function formatMusicDuration(durationMs = 0) {
 
 function musicResultLabel(result = {}) {
   const title = result.title || musicSongTitle(result.current) || result.songId || 'song';
+  if (result.status === 'disabled') return 'Music is disabled. Enable Music in studio settings.';
   if (result.status === 'playing') return `Music playing: ${title}`;
   if (result.status === 'queued') return `Queued: ${title}${result.waitLabel ? `, wait ${result.waitLabel}` : ''}`;
   if (result.status === 'duplicate') return `Already queued: ${title}`;
@@ -480,10 +486,11 @@ function musicResultLabel(result = {}) {
 
 async function runMusicCommand(command, source = 'panel') {
   if (!command) return null;
+  warmupLive2DMusicPlayback().catch(() => {});
   try {
     const result = await executeLive2DMusicCommand(command);
     musicQueueState.value = readLive2DMusicQueueState();
-    if (result && result.status !== 'disabled' && source !== 'silent') {
+    if (result && source !== 'silent') {
       pushLog('system', musicResultLabel(result), { music: result, source });
     }
     return result;
@@ -896,6 +903,7 @@ async function performStreamingLiveTurn(message) {
 async function runLLMControl() {
   const message = prompt.value.trim();
   if (!message || llmState.value.loading) return;
+  warmupLive2DMusicPlayback().catch(() => {});
   const result = await performLLMAct(message, 'manual').catch(() => null);
   if (result?.reply) pushLog('yachiyo', result.reply, { live2d: result.live2d });
 }
@@ -976,6 +984,7 @@ async function runLiveTurn() {
 function startLiveDirector() {
   if (liveDirector.running) return;
   speechPlayer?.warmup?.();
+  warmupLive2DMusicPlayback().catch(() => {});
   liveDirector.running = true;
   liveDirector.status = 'starting';
   liveDirector.error = '';
@@ -998,6 +1007,7 @@ function stopLiveDirector() {
 function submitAudienceLine(text, meta = {}) {
   const value = String(text || '').trim();
   if (!value) return;
+  warmupLive2DMusicPlayback().catch(() => {});
   if (!meta.keepInput) audienceInput.value = '';
   audienceQueue.value.push(value);
   pushLog('audience', value, meta);
@@ -1020,6 +1030,7 @@ function toggleFullscreen() {
 
 async function toggleAudienceAsr() {
   if (!asrRecorder) return;
+  warmupLive2DMusicPlayback().catch(() => {});
   try {
     if (asrRecorder.isRecording()) {
       await asrRecorder.stop();
@@ -1037,6 +1048,7 @@ async function toggleAudienceAsr() {
 
 function handleStudioSettingsSaved() {
   speechPlayer?.warmup?.();
+  warmupLive2DMusicPlayback().catch(() => {});
 }
 
 function handleLive2DDebugEvent(event) {

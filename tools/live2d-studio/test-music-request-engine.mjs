@@ -34,6 +34,7 @@ try {
     action: 'clear'
   });
   assert.equal(DEFAULT_ROOM_MUSIC_SETTINGS.provider, 'netease-cloud');
+  assert.equal(DEFAULT_ROOM_MUSIC_SETTINGS.enabled, true);
   assert.equal(normalizeRoomMusicSettings({}).provider, 'netease-cloud');
   assert.deepEqual(
     normalizeRoomMusicSettings({
@@ -42,7 +43,7 @@ try {
       localMaxScanFiles: 500
     }),
     {
-      enabled: false,
+      enabled: true,
       provider: 'local-library',
       developerToken: '',
       musicUserToken: '',
@@ -80,7 +81,7 @@ try {
       neteaseUnblockSource: 'kugou'
     }),
     {
-      enabled: false,
+      enabled: true,
       provider: 'netease-cloud',
       developerToken: '',
       musicUserToken: '',
