@@ -27,7 +27,6 @@ const EYE_OWNING_EXPRESSIONS = new Set([
   'fire',
   'namida',
   'shy',
-  'smile',
   'smug',
   'surprised',
   'tears',
@@ -37,17 +36,10 @@ const EYE_OWNING_EXPRESSIONS = new Set([
 const MOMENTARY_EXPRESSION_IDS = new Set(['tongue']);
 const MOMENTARY_PULSE_MS = 620;
 const EXPRESSION_EYE_OPEN_GUARDS = new Map([
-  ['smile', 0.02],
   ['closed_smile', 0.015],
   ['closed_eyes', 0.015]
 ]);
 const EXPRESSION_CUBISM_EYE_SHAPES = new Map([
-  ['smile', {
-    happySmile: 0.72,
-    eyeSmile: 0.58,
-    hideOpenEye: 0.68,
-    cheek: 0.24
-  }],
   ['closed_smile', {
     happySmile: 0.92,
     eyeSmile: 0.82,
