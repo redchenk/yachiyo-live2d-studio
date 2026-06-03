@@ -671,6 +671,35 @@ function finalizeFrame(frame) {
   return mapTrackingFrameToYachiyoCubismParameters([...frame.values()]);
 }
 
+function behaviorFrameIsMotionActive(performanceFrame, samples) {
+  return Boolean(
+    performanceFrame?.active ||
+    performanceFrame?.behaviorPlan ||
+    (Array.isArray(samples) && samples.length)
+  );
+}
+
+export function sampleCubismBehaviorFrame(performanceFrame = {}, now = performance.now(), options = {}) {
+  const { behaviorPlan, character, dominant, samples = [] } = performanceFrame || {};
+  const expression = performanceFrame?.expression;
+  const suppressEyeOpen = expressionOwnsEyeOpen(expression);
+  const frame = createFrame({ suppressEyeOpen });
+  const speakingBlend = characterSpeakingBlend(character);
+  const motionActive = behaviorFrameIsMotionActive(performanceFrame, samples);
+  const characterStrength = motionActive
+    ? lerp(0.66, 0.42, speakingBlend)
+    : lerp(1, 0.82, speakingBlend);
+
+  applyCharacterState(frame, character, characterStrength, { suppressEyeOpen });
+  applySemanticOverlay(frame, expression, behaviorPlan ? 0.76 : 0.48, { suppressEyeOpen });
+  samples.forEach((sample) => applyAction(frame, sample, { dominant: sample === dominant, suppressEyeOpen }));
+  applyMomentaryPulse(frame, options.momentaryPulse);
+  applyAutoBlink(frame, samples, now, character?.eyeOpen, { suppressEyeOpen });
+  applyExpressionEyeGuard(frame, expression);
+
+  return finalizeFrame(frame);
+}
+
 export function mountCubismBehaviorBridge(options = {}) {
   if (typeof window === 'undefined') return () => {};
 
@@ -693,27 +722,11 @@ export function mountCubismBehaviorBridge(options = {}) {
 
   function sample(now = performance.now()) {
     const performanceFrame = performanceBrain.sample(now, { intensityScale: LOCAL_CUBISM_ACTION_INTENSITY_SCALE });
-    const { behaviorPlan, character, dominant, samples } = performanceFrame;
     if (momentaryPulse && now - momentaryPulse.startedAt > momentaryPulse.durationMs) {
       momentaryPulse = null;
     }
 
-    const expression = performanceFrame.expression;
-    const suppressEyeOpen = expressionOwnsEyeOpen(expression);
-    const frame = createFrame({ suppressEyeOpen });
-    const speakingBlend = characterSpeakingBlend(character);
-    const characterStrength = behaviorPlan && dominant
-      ? lerp(0.66, 0.42, speakingBlend)
-      : lerp(1, 0.82, speakingBlend);
-
-    applyCharacterState(frame, character, characterStrength, { suppressEyeOpen });
-    applySemanticOverlay(frame, expression, behaviorPlan ? 0.76 : 0.48, { suppressEyeOpen });
-    samples.forEach((sample) => applyAction(frame, sample, { dominant: sample === dominant, suppressEyeOpen }));
-    applyMomentaryPulse(frame, momentaryPulse);
-    applyAutoBlink(frame, samples, now, character.eyeOpen, { suppressEyeOpen });
-    applyExpressionEyeGuard(frame, expression);
-
-    return finalizeFrame(frame);
+    return sampleCubismBehaviorFrame(performanceFrame, now, { momentaryPulse });
   }
 
   function tick(now = performance.now()) {

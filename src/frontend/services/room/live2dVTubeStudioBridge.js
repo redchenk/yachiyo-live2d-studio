@@ -1346,7 +1346,8 @@ function sampleVTSBehaviorActions(actions, elapsedMs, nowMs = performance.now(),
   const frame = createDirectTrackingFrame({ suppressEyeOpen });
   const speakingBlend = characterSpeakingBlend(character);
   const dominant = options.dominant || pickBehaviorDominantMotion(samples);
-  applyCharacterStateFrame(frame, character, dominant ? lerp(0.68, 0.42, speakingBlend) : lerp(0.68, 0.82, speakingBlend));
+  const motionActive = Boolean(options.motionActive || dominant || samples.length);
+  applyCharacterStateFrame(frame, character, motionActive ? lerp(0.68, 0.42, speakingBlend) : lerp(0.68, 0.82, speakingBlend));
   applySemanticExpressionOverlay(frame, expression || character?.emotion, lerp(0.82, 0.68, speakingBlend));
   applyDirectMotion(frame, dominant);
   samples.forEach((sample) => applyDirectOverlay(frame, sample, dominant, { faceOnly: false, suppressEyeOpen }));
@@ -1887,7 +1888,12 @@ export function mountVTubeStudioBridge() {
 
   function tickBehavior(now = performance.now()) {
     const performanceFrame = performanceBrain.sample(now, { intensityScale: 1.62 });
-    if (!performanceFrame.behaviorPlan) {
+    const behaviorActive = Boolean(
+      performanceFrame.behaviorPlan ||
+      performanceFrame.active ||
+      performanceFrame.samples?.length
+    );
+    if (!behaviorActive) {
       stopBehaviorFrame();
       if (performanceFrame.completed) {
         queueInjection(sampleVTSIdleFrame(now, performanceFrame.character, {
@@ -1897,7 +1903,7 @@ export function mountVTubeStudioBridge() {
       return;
     }
     queueInjection(sampleVTSBehaviorActions(
-      performanceFrame.behaviorPlan.actions,
+      performanceFrame.behaviorPlan?.actions || [],
       performanceFrame.elapsedMs,
       now,
       performanceFrame.character,
@@ -1905,7 +1911,8 @@ export function mountVTubeStudioBridge() {
       {
         dominant: performanceFrame.dominant,
         samples: performanceFrame.samples,
-        suppressEyeOpen: performanceFrame.behaviorPlan.suppressEyeOpen || activeExpressionOwnsEyeOpen()
+        motionActive: behaviorActive,
+        suppressEyeOpen: performanceFrame.behaviorPlan?.suppressEyeOpen || activeExpressionOwnsEyeOpen()
       }
     ));
     behaviorFrameId = window.requestAnimationFrame(tickBehavior);
@@ -1917,7 +1924,7 @@ export function mountVTubeStudioBridge() {
       return;
     }
     const performanceFrame = performanceBrain.sample(now, { intensityScale: 1.62 });
-    if (!performanceFrame.behaviorPlan) {
+    if (!performanceFrame.active) {
       queueInjection(sampleVTSIdleFrame(now, performanceFrame.character, {
         suppressEyeOpen: activeExpressionOwnsEyeOpen()
       }));
