@@ -9,8 +9,12 @@ const server = await createServer({
 
 try {
   const {
+    executeLive2DMusicCommand,
     normalizeLive2DMusicCommand
   } = await server.ssrLoadModule('/src/frontend/services/room/live2dMusic.js');
+  const {
+    DEFAULT_ROOM_MUSIC_SETTINGS
+  } = await server.ssrLoadModule('/src/frontend/services/room/roomSettings.js');
   const {
     live2DControlSystemPrompt,
     parseLive2DControlPayload
@@ -30,6 +34,11 @@ try {
   });
   assert.deepEqual(normalizeLive2DMusicCommand({ action: '立即播放', song: '晴天', singer: '周杰伦' }), {
     action: 'play_now',
+    query: '晴天 周杰伦'
+  });
+  assert.deepEqual(normalizeLive2DMusicCommand({ action: '点歌', provider: '网易云', title: '晴天', artist: '周杰伦' }), {
+    action: 'request',
+    provider: 'netease-cloud',
     query: '晴天 周杰伦'
   });
 
@@ -70,6 +79,39 @@ try {
     query: '晴天 周杰伦'
   });
 
+  const parsedNeteaseRequest = parseLive2DControlPayload(JSON.stringify({
+    reply: '好，我用网易云点这首。',
+    emotion: 'smile',
+    actions: [{ type: 'look_at_chat', duration: 1.1 }, { type: 'smile', duration: 1.2 }],
+    music: {
+      action: '点歌',
+      platform: '网易云',
+      title: '晴天',
+      artist: '周杰伦'
+    }
+  }));
+  assert.deepEqual(parsedNeteaseRequest.music, {
+    action: 'request',
+    provider: 'netease-cloud',
+    query: '晴天 周杰伦'
+  });
+
+  const parsedNeteaseAlias = parseLive2DControlPayload(JSON.stringify({
+    reply: '好，我走网易云。',
+    emotion: 'smile',
+    actions: [{ type: 'look_at_chat', duration: 1.1 }, { type: 'smile', duration: 1.2 }],
+    neteaseMusic: {
+      action: '点歌',
+      title: '晴天',
+      artist: '周杰伦'
+    }
+  }));
+  assert.deepEqual(parsedNeteaseAlias.music, {
+    action: 'request',
+    provider: 'netease-cloud',
+    query: '晴天 周杰伦'
+  });
+
   const parsedMusicOnly = parseLive2DControlPayload(JSON.stringify({
     action: '点歌',
     song: '晴天',
@@ -79,6 +121,12 @@ try {
     action: 'request',
     query: '晴天 周杰伦'
   });
+
+  const queueStatus = await executeLive2DMusicCommand(
+    { action: 'queue', provider: '网易云' },
+    { ...DEFAULT_ROOM_MUSIC_SETTINGS, enabled: true, provider: 'local-library' }
+  );
+  assert.equal(queueStatus.provider, 'netease-cloud');
 } finally {
   await server.close();
 }

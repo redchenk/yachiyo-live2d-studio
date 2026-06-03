@@ -45,6 +45,7 @@ const PLAYABLE_ACTIONS = new Set([
   'authorize'
 ]);
 const STATE_ONLY_ACTIONS = new Set(['queue', 'clear', 'remove']);
+const MUSIC_PROVIDERS = new Set([APPLE_MUSIC_PROVIDER, LOCAL_MUSIC_PROVIDER, NETEASE_MUSIC_PROVIDER]);
 
 let musicKitScriptPromise = null;
 let musicKitConfigurePromise = null;
@@ -109,6 +110,16 @@ function normalizeMusicAction(value) {
 
 function normalizeStorefront(value, fallback = 'cn') {
   return asText(value).toLowerCase().replace(/[^a-z]/g, '').slice(0, 2) || fallback;
+}
+
+function normalizeMusicProvider(value, fallback = '') {
+  const rawProvider = asText(value).toLowerCase();
+  if (!rawProvider) return fallback;
+  if (/网易|網易|netease|163|cloud\s*music|ncm/.test(rawProvider)) return NETEASE_MUSIC_PROVIDER;
+  if (/本地|local|library|file|folder/.test(rawProvider)) return LOCAL_MUSIC_PROVIDER;
+  if (/apple|music\s*kit|itunes/.test(rawProvider)) return APPLE_MUSIC_PROVIDER;
+  const provider = rawProvider.replace(/[^a-z0-9_-]/g, '');
+  return MUSIC_PROVIDERS.has(provider) ? provider : fallback;
 }
 
 function musicQueryFromParts(source = {}, nested = {}) {
@@ -200,6 +211,25 @@ export function normalizeLive2DMusicCommand(rawCommand = null) {
     nested.id
   );
   const url = firstText(source.url, source.musicUrl, source.appleMusicUrl, nested.url, nested.musicUrl, nested.appleMusicUrl);
+  const provider = normalizeMusicProvider(
+    firstText(
+      source.provider,
+      source.platform,
+      source.service,
+      source.source,
+      source.engine,
+      source['平台'],
+      source['来源'],
+      nested.provider,
+      nested.platform,
+      nested.service,
+      nested.source,
+      nested.engine,
+      nested['平台'],
+      nested['来源']
+    ),
+    ''
+  );
   const storefront = normalizeStorefront(source.storefront || source.storefrontId || nested.storefront || nested.storefrontId, '');
   const requestedBy = firstText(source.requestedBy, source.by, source.user, source.viewer, nested.requestedBy, nested.by, nested.user, nested.viewer);
   const removeId = firstText(source.removeId, source.queueId, source.uid, nested.removeId, nested.queueId, nested.uid);
@@ -209,6 +239,7 @@ export function normalizeLive2DMusicCommand(rawCommand = null) {
 
   return compactObject({
     action,
+    provider,
     query,
     songId,
     url,
@@ -515,10 +546,11 @@ function ensureLocalAudio() {
   localAudio.preload = 'auto';
   localAudio.addEventListener('ended', () => {
     const settings = readRoomMusicSettings();
-    const provider = settings.provider;
+    const current = readLive2DMusicQueueState().current;
+    const provider = current?.provider || settings.provider;
     if (provider !== LOCAL_MUSIC_PROVIDER && provider !== NETEASE_MUSIC_PROVIDER) return;
     const playNext = provider === NETEASE_MUSIC_PROVIDER ? playNextNeteaseMusic : playNextLocalMusic;
-    playNext(settings).catch((error) => {
+    playNext({ ...settings, provider }).catch((error) => {
       publishMusicDebug('music-error', {
         action: 'auto-next',
         provider,
@@ -1099,8 +1131,10 @@ export async function executeLive2DMusicCommand(rawCommand, settings = readRoomM
   const command = normalizeLive2DMusicCommand(rawCommand);
   if (!command) return null;
 
+  const providerOverride = normalizeMusicProvider(command.provider, '');
   const normalizedSettings = normalizeRoomMusicSettings({
     ...settings,
+    provider: providerOverride || settings.provider,
     storefront: command.storefront || settings.storefront
   });
   const provider = normalizedSettings.provider || LOCAL_MUSIC_PROVIDER;
