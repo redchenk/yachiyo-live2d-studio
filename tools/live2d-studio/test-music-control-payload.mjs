@@ -36,6 +36,10 @@ try {
     action: 'play_now',
     query: '晴天 周杰伦'
   });
+  assert.deepEqual(normalizeLive2DMusicCommand({ action: '放歌', song: '晴天', singer: '周杰伦' }), {
+    action: 'play_now',
+    query: '晴天 周杰伦'
+  });
   assert.deepEqual(normalizeLive2DMusicCommand({ action: '点歌', provider: '网易云', title: '晴天', artist: '周杰伦' }), {
     action: 'request',
     provider: 'netease-cloud',

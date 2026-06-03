@@ -552,16 +552,25 @@ C# 本地 API 做了以下限制：
 
 ## 点歌功能
 
-默认点歌 provider 是 `local-library`，不需要 Apple Developer Token。
+默认点歌 provider 是 `NetEase Cloud`，不需要 Apple Developer Token。`.exe` 会自动启动项目依赖中的 `@neteasecloudmusicapienhanced/api`，不需要手动开终端。
 
 使用方式：
 
 1. 打开 `Start-Live2D-Studio.exe`。
-2. 进入 Settings -> Music。
-3. 勾选 `Enable music control`。
-4. Provider 保持 `Local Library`。
-5. 在 `Local Library Paths` 中填入本地音乐文件夹，每行一个路径，例如 `E:\Music`。
-6. 保存后，直播间右侧 Music 面板或 LLM 输出的 `music` 控制都可以搜索本地曲库并加入队列。
+2. 在左侧进入 Music 测试页，点击 `Probe` 检查 managed api-enhanced、Cookie 文件和服务状态。
+3. 进入 Settings -> Music。
+4. 勾选 `Enable music control`。
+5. Provider 保持 `NetEase Cloud`。
+6. `Managed api-enhanced URL` 默认是 `http://127.0.0.1:3302`，通常不用改。
+7. `Cookie File Path` 默认是 `C:\Users\lenovo\Desktop\网易云cookie.txt`；也可以直接在 `NetEase Cookie` 粘贴 Cookie 覆盖文件。
+8. 保存后，直播间右侧 Music 面板和 LLM 输出的 `music` 控制会通过 `.exe` 代理搜索、解析并播放网易云歌曲。
+
+网易云播放优先调用 api-enhanced 的 `/song/url/v1`，按 `Quality` 获取播放地址；拿不到时会回退到旧 `/song/url` 和 `Fallback Bitrate`。真实音频外链不会直接暴露给前端队列，`.exe` 会创建短期 stream token 并转发音频。
+
+如果切换 Provider 为 `Local Library`，可以使用本地曲库：
+
+1. 在 `Local Library Paths` 中填入本地音乐文件夹，每行一个路径，例如 `E:\Music`。
+2. 保存后，直播间右侧 Music 面板或 LLM 输出的 `music` 控制都可以搜索本地曲库并加入队列。
 
 本地库会扫描：
 
@@ -570,17 +579,6 @@ C# 本地 API 做了以下限制：
 - 项目内 `music/` 和 `assets/music/` 文件夹
 
 支持的音频扩展名包括 `.mp3`、`.m4a`、`.aac`、`.wav`、`.flac`、`.ogg`、`.oga`、`.opus`。本地播放通过 `.exe` 的 loopback API 读取音频文件，不会调用 Apple Music API。
-
-如果切换 Provider 为 `NetEase Cloud`，`.exe` 会自动启动项目依赖中的 `@neteasecloudmusicapienhanced/api`，不需要手动开终端。
-
-1. 打开 `Start-Live2D-Studio.exe`。
-2. 在左侧进入 Music 测试页，点击 `Probe` 检查 managed api-enhanced、Cookie 文件和服务状态。
-3. Settings -> Music 中 Provider 选择 `NetEase Cloud`。
-4. `Managed api-enhanced URL` 默认是 `http://127.0.0.1:3302`，通常不用改。
-5. `Cookie File Path` 默认是 `C:\Users\lenovo\Desktop\网易云cookie.txt`；也可以直接在 `NetEase Cookie` 粘贴 Cookie 覆盖文件。
-6. 保存后，直播间右侧 Music 面板和 LLM 输出的 `music` 控制会通过 `.exe` 代理搜索、解析并播放网易云歌曲。
-
-网易云播放优先调用 api-enhanced 的 `/song/url/v1`，按 `Quality` 获取播放地址；拿不到时会回退到旧 `/song/url` 和 `Fallback Bitrate`。真实音频外链不会直接暴露给前端队列，`.exe` 会创建短期 stream token 并转发音频。
 
 如果切换 Provider 为 `Apple Music`，才需要 Apple Developer Token 和 MusicKit 授权。Developer Token 是 Apple Developer MusicKit key 生成的 JWT，不是 Apple ID 密码，也不是普通 API Key。
 

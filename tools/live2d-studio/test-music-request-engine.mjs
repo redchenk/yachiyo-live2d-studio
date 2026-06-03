@@ -33,7 +33,8 @@ try {
   assert.deepEqual(normalizeLive2DMusicCommand({ action: 'clear_queue' }), {
     action: 'clear'
   });
-  assert.equal(DEFAULT_ROOM_MUSIC_SETTINGS.provider, 'local-library');
+  assert.equal(DEFAULT_ROOM_MUSIC_SETTINGS.provider, 'netease-cloud');
+  assert.equal(normalizeRoomMusicSettings({}).provider, 'netease-cloud');
   assert.deepEqual(
     normalizeRoomMusicSettings({
       provider: 'local-library',

@@ -12,6 +12,7 @@ const ROOM_MODEL_STAGE_DEFAULTS_MIGRATION_KEY = 'roomModelStageDefaultsMigratedV
 const ROOM_MODEL_RENDER_DEFAULTS_MIGRATION_KEY = 'roomModelRenderDefaultsMigratedV2';
 const ROOM_MEMORY_MANAGED_MILVUS_DEFAULTS_MIGRATION_KEY = 'roomMemoryManagedMilvusDefaultsMigratedV1';
 const ROOM_MUSIC_LOCAL_DEFAULTS_MIGRATION_KEY = 'roomMusicLocalDefaultsMigratedV1';
+const ROOM_MUSIC_NETEASE_DEFAULTS_MIGRATION_KEY = 'roomMusicNeteaseDefaultsMigratedV1';
 const LEGACY_ROOM_MODEL_STAGE_IDLE_SCALE = 0.9;
 const LEGACY_ROOM_MODEL_STAGE_MOTION_SCALE = 0.75;
 const LEGACY_ROOM_MODEL_RENDER_DPRS = [3, 4];
@@ -164,7 +165,7 @@ export const DEFAULT_ROOM_MEMORY_SETTINGS = {
 
 export const DEFAULT_ROOM_MUSIC_SETTINGS = {
   enabled: false,
-  provider: 'local-library',
+  provider: 'netease-cloud',
   developerToken: '',
   musicUserToken: '',
   storefront: 'cn',
@@ -534,19 +535,43 @@ export function normalizeRoomMusicSettings(settings = {}) {
 function upgradeLegacyRoomMusicDefaults(settings, rawSettings = {}) {
   if (typeof localStorage === 'undefined') return settings;
   try {
-    if (localStorage.getItem(ROOM_MUSIC_LOCAL_DEFAULTS_MIGRATION_KEY) === '1') return settings;
-    localStorage.setItem(ROOM_MUSIC_LOCAL_DEFAULTS_MIGRATION_KEY, '1');
-    const rawProvider = asText(rawSettings.provider);
-    const looksLikeOldAppleDefault = (!rawProvider || rawProvider === 'apple-music') &&
-      !asText(rawSettings.developerToken) &&
-      !asText(rawSettings.musicUserToken) &&
-      !String(rawSettings.localLibraryPaths || '').trim();
-    if (!looksLikeOldAppleDefault) return settings;
+    let upgraded = settings;
+    let changed = false;
 
-    const upgraded = normalizeRoomMusicSettings({
-      ...settings,
-      provider: 'local-library'
-    });
+    const rawProvider = asText(rawSettings.provider);
+    if (localStorage.getItem(ROOM_MUSIC_LOCAL_DEFAULTS_MIGRATION_KEY) !== '1') {
+      localStorage.setItem(ROOM_MUSIC_LOCAL_DEFAULTS_MIGRATION_KEY, '1');
+      const looksLikeOldAppleDefault = (!rawProvider || rawProvider === 'apple-music') &&
+        !asText(rawSettings.developerToken) &&
+        !asText(rawSettings.musicUserToken) &&
+        !String(rawSettings.localLibraryPaths || '').trim();
+      if (looksLikeOldAppleDefault) {
+        upgraded = normalizeRoomMusicSettings({
+          ...upgraded,
+          provider: 'netease-cloud'
+        });
+        changed = true;
+      }
+    }
+
+    if (localStorage.getItem(ROOM_MUSIC_NETEASE_DEFAULTS_MIGRATION_KEY) !== '1') {
+      localStorage.setItem(ROOM_MUSIC_NETEASE_DEFAULTS_MIGRATION_KEY, '1');
+      const looksLikeOldLocalDefault = rawProvider === 'local-library' &&
+        !String(rawSettings.localLibraryPaths || '').trim() &&
+        rawSettings.localIncludeProjectMusic !== false &&
+        rawSettings.localIncludeUserMusic !== false &&
+        !asText(rawSettings.developerToken) &&
+        !asText(rawSettings.musicUserToken);
+      if (looksLikeOldLocalDefault) {
+        upgraded = normalizeRoomMusicSettings({
+          ...upgraded,
+          provider: 'netease-cloud'
+        });
+        changed = true;
+      }
+    }
+
+    if (!changed) return settings;
     writeJson(ROOM_MUSIC_SETTINGS_KEY, upgraded);
     return upgraded;
   } catch (_) {

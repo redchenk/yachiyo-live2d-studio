@@ -91,9 +91,9 @@ function normalizeMusicAction(value) {
   if (/停止|别放|stop|halt/.test(rawAction)) return 'stop';
   if (/切歌|跳过|下一曲|skip|next_track/.test(rawAction)) return 'skip';
   if (/下一首|下首|插队|优先|play_next|playnext|next_song/.test(rawAction)) return 'play_next';
-  if (/马上|立刻|立即|现在播放|play_now|playnow|immediate|cut_in/.test(rawAction)) return 'play_now';
+  if (/马上|立刻|立即|现在播放|播放|放歌|播一下|给我放|play_now|playnow|immediate|cut_in/.test(rawAction)) return 'play_now';
   if (/点歌|来一首|加歌|排歌|song_request|request_song|request|order|enqueue|append/.test(rawAction)) return 'request';
-  if (/播放|放歌|play|start/.test(rawAction)) return 'play';
+  if (/play|start/.test(rawAction)) return 'play';
 
   const action = rawAction.replace(/[^a-z0-9_-]/g, '');
   if (action === 'start') return 'play';
@@ -1008,18 +1008,6 @@ async function resolveNeteaseMusicCandidate(command, settings) {
       title: command.query || command.songId || command.url,
       query: command.query,
       requestedBy: command.requestedBy
-    });
-  }
-
-  const known = pickKnownMusicCandidate(command, settings);
-  if (known) {
-    return normalizeMusicCandidate({
-      ...known,
-      provider: NETEASE_MUSIC_PROVIDER,
-      url: '',
-      query: command.query,
-      requestedBy: command.requestedBy,
-      requestedAt: Date.now()
     });
   }
 
