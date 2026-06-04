@@ -470,7 +470,9 @@ try {
   assert.equal(moustacheManifestFollow.Profile, 'mouth');
   assert.equal(moustacheManifestFollow.Auto, true);
   assert.ok(moustacheManifestFollow.HeadX > 1.5, 'mouth profile should follow horizontal head turns');
-  assert.ok(moustacheManifestFollow.PinWeight > 0.5, 'mouth profile should orbit around the face pivot');
+  assert.ok(moustacheManifestFollow.PinWeight > 0.2, 'mouth profile should orbit around the face pivot');
+  assert.equal(moustacheManifestFollow.PositionX, 0, 'auto face profiles should not multiply FacePositionX');
+  assert.equal(moustacheManifestFollow.PositionY, 0, 'auto face profiles should not multiply FacePositionY');
 
   const followInferred = normalizeLocalVtsItemManifest({
     Version: 1,
@@ -501,6 +503,41 @@ try {
   assert.ok(facePinnedTransform.x > 10, 'moustache should translate with head turn');
   assert.ok(facePinnedTransform.rotation > 10, 'moustache should rotate with head tilt');
   assert.ok(facePinnedTransform.scaleX < 1, 'moustache should receive subtle yaw depth scaling');
+
+  const positionOnlyTransform = localVtsItemTransform(followInferred, {
+    headX: 0,
+    headY: 0,
+    headZ: 0,
+    bodyX: 0,
+    bodyY: 0,
+    bodyZ: 0,
+    positionX: 15,
+    positionY: -15
+  }, {
+    containerWidth: 1000,
+    containerHeight: 800
+  });
+  assert.equal(positionOnlyTransform.x, 0, 'FacePositionX should not fling auto-pinned image items');
+  assert.equal(positionOnlyTransform.y, 0, 'FacePositionY should not fling auto-pinned image items');
+
+  const frozenTransform = localVtsItemTransform(followInferred, {
+    headX: 18,
+    headY: 6,
+    headZ: 12,
+    bodyX: 7,
+    bodyY: -4,
+    bodyZ: 5,
+    positionX: 15,
+    positionY: -15
+  }, {
+    containerWidth: 1000,
+    containerHeight: 800,
+    freezeFollow: true
+  });
+  assert.equal(frozenTransform.x, 0, 'selected items should stay stable while adjusting');
+  assert.equal(frozenTransform.y, 0, 'selected items should stay stable while adjusting');
+  assert.equal(frozenTransform.rotation, 0, 'selected items should not rotate from model motion while adjusting');
+  assert.equal(frozenTransform.scaleX, 1, 'selected items should not depth-scale while adjusting');
 
   const noKeywordStatic = normalizeLocalVtsItemManifest({
     Version: 1,

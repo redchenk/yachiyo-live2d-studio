@@ -53,9 +53,9 @@ const FOLLOW_PROFILES = Object.freeze({
     bodyX: 0.22,
     bodyY: -0.12,
     bodyZ: 0.16,
-    positionX: 48,
-    positionY: -34,
-    pinWeight: 0.85,
+    positionX: 0,
+    positionY: 0,
+    pinWeight: 0.32,
     depth: 0.55,
     pivotX: 0.5,
     pivotY: 0.45,
@@ -69,9 +69,9 @@ const FOLLOW_PROFILES = Object.freeze({
     bodyX: 0.2,
     bodyY: -0.1,
     bodyZ: 0.14,
-    positionX: 54,
-    positionY: -30,
-    pinWeight: 0.95,
+    positionX: 0,
+    positionY: 0,
+    pinWeight: 0.36,
     depth: 0.68,
     pivotX: 0.5,
     pivotY: 0.46,
@@ -85,9 +85,9 @@ const FOLLOW_PROFILES = Object.freeze({
     bodyX: 0.18,
     bodyY: -0.12,
     bodyZ: 0.18,
-    positionX: 44,
-    positionY: -38,
-    pinWeight: 1,
+    positionX: 0,
+    positionY: 0,
+    pinWeight: 0.42,
     depth: 0.5,
     pivotX: 0.5,
     pivotY: 0.36,
@@ -101,9 +101,9 @@ const FOLLOW_PROFILES = Object.freeze({
     bodyX: 0.78,
     bodyY: -0.48,
     bodyZ: 0.58,
-    positionX: 34,
-    positionY: -22,
-    pinWeight: 0.55,
+    positionX: 0,
+    positionY: 0,
+    pinWeight: 0.24,
     depth: 0.16,
     pivotX: 0.5,
     pivotY: 0.64,
@@ -740,19 +740,20 @@ export function localVtsItemTransform(item, frameState = {}, options = {}) {
   const state = Array.isArray(frameState)
     ? localVtsFrameStateFromParameters(frameState)
     : { ...localVtsFrameStateFromParameters([]), ...frameState };
+  const dynamicState = options.freezeFollow ? localVtsFrameStateFromParameters([]) : state;
   const follow = item?.follow || {};
   const offset = item?.offset || { x: 0, y: 0 };
   let x = normalizeNumber(offset.x, 0) +
-    state.headX * normalizeNumber(follow.headX, 0) +
-    state.bodyX * normalizeNumber(follow.bodyX, 0) +
-    state.positionX * normalizeNumber(follow.positionX, 0);
+    dynamicState.headX * normalizeNumber(follow.headX, 0) +
+    dynamicState.bodyX * normalizeNumber(follow.bodyX, 0) +
+    dynamicState.positionX * normalizeNumber(follow.positionX, 0);
   let y = normalizeNumber(offset.y, 0) +
-    state.headY * normalizeNumber(follow.headY, 0) +
-    state.bodyY * normalizeNumber(follow.bodyY, 0) +
-    state.positionY * normalizeNumber(follow.positionY, 0);
+    dynamicState.headY * normalizeNumber(follow.headY, 0) +
+    dynamicState.bodyY * normalizeNumber(follow.bodyY, 0) +
+    dynamicState.positionY * normalizeNumber(follow.positionY, 0);
   const followRotation =
-    state.headZ * normalizeNumber(follow.headZ, 0) +
-    state.bodyZ * normalizeNumber(follow.bodyZ, 0);
+    dynamicState.headZ * normalizeNumber(follow.headZ, 0) +
+    dynamicState.bodyZ * normalizeNumber(follow.bodyZ, 0);
   const rotation = normalizeNumber(item?.rotation, 0) + followRotation;
   const pinWeight = normalizeNumber(follow.pinWeight, 0);
   if (Math.abs(pinWeight) >= FOLLOW_EPSILON) {
@@ -773,8 +774,8 @@ export function localVtsItemTransform(item, frameState = {}, options = {}) {
   let scaleY = scale * normalizeNumber(item?.scaleY, 1) * (item?.flipY ? -1 : 1);
   const depth = clampNumber(follow.depth, 0, 2, 0);
   if (depth >= FOLLOW_EPSILON) {
-    const yaw = Math.min(Math.abs(normalizeNumber(state.headX, 0)) / 30, 1);
-    const pitch = Math.min(Math.abs(normalizeNumber(state.headY, 0)) / 30, 1);
+    const yaw = Math.min(Math.abs(normalizeNumber(dynamicState.headX, 0)) / 30, 1);
+    const pitch = Math.min(Math.abs(normalizeNumber(dynamicState.headY, 0)) / 30, 1);
     scaleX *= 1 - yaw * depth * 0.08;
     scaleY *= 1 - pitch * depth * 0.04;
   }
@@ -1450,7 +1451,12 @@ export function mountLocalVtsItemOverlay(options = {}) {
         element.src = item.assetUrl;
       }
       applyItemSizing(element, item, container);
-      element.style.transform = localVtsItemTransform(item, frameState, transformOptions).cssTransform;
+      element.style.transform = localVtsItemTransform(item, frameState, {
+        ...transformOptions,
+        freezeFollow: editorEnabled
+          && item.id === selectedItemId
+          && (editDragState?.id === item.id || selectedHighlightActive(item))
+      }).cssTransform;
     }
     if (needsNextAnimationFrame) scheduleApply();
   }
