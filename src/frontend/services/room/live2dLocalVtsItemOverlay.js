@@ -1,3 +1,5 @@
+import { createLocalVtsCubismItemRenderer } from './live2dLocalVtsCubismItemRenderer';
+
 const DEFAULT_MODEL_BASE_URL = '/models/tsukimi-yachiyo/';
 const DEFAULT_ITEM_BASE_PATH = 'items';
 const DEFAULT_MANIFEST_URLS = [
@@ -12,7 +14,9 @@ export const LOCAL_CUBISM_FRAME_EVENT = 'tsukuyomi:live2d-local-cubism-frame';
 const OVERLAY_STATE_KEY = '__TSUKUYOMI_LOCAL_VTS_ITEM_OVERLAY_STATE__';
 const FRONT_LAYER = 'front';
 const BEHIND_LAYER = 'behind';
-const IMAGE_FILE_RE = /\.(?:png|jpe?g|webp|gif|avif)$/i;
+const IMAGE_FILE_RE = /\.(?:png|jpe?g|webp|gif|avif|svg)$/i;
+const MODEL3_FILE_RE = /\.model3\.json$/i;
+const MOC3_FILE_RE = /\.moc3$/i;
 const LIVE2D_ITEM_FILE_RE = /\.(?:model3\.json|moc3)$/i;
 
 const DEFAULT_ANCHOR = { x: 0.5, y: 0.5 };
@@ -208,6 +212,10 @@ function normalizeFile(rawItem) {
   return normalizeString(pickField(rawItem, [
     'file',
     'File',
+    'model',
+    'Model',
+    'modelFile',
+    'ModelFile',
     'fileName',
     'FileName',
     'filename',
@@ -225,6 +233,52 @@ function normalizeFile(rawItem) {
     'texture',
     'Texture'
   ]));
+}
+
+function normalizeVTubeFile(rawItem) {
+  return normalizeString(pickField(rawItem, [
+    'vtubeFile',
+    'VTubeFile',
+    'vTubeFile',
+    'VtubeFile',
+    'itemSettingsFile',
+    'ItemSettingsFile'
+  ]));
+}
+
+function normalizeIconFile(rawItem) {
+  return normalizeString(pickField(rawItem, [
+    'icon',
+    'Icon',
+    'iconFile',
+    'IconFile',
+    'preview',
+    'Preview',
+    'previewFile',
+    'PreviewFile'
+  ]));
+}
+
+function normalizeRenderType(rawItem, file) {
+  const explicitType = normalizeString(pickField(rawItem, [
+    'type',
+    'Type',
+    'itemType',
+    'ItemType',
+    'renderType',
+    'RenderType'
+  ])).toLowerCase();
+  if (explicitType.includes('live2d') || explicitType.includes('cubism') || explicitType.includes('moc')) return 'live2d';
+  if (LIVE2D_ITEM_FILE_RE.test(file)) return 'live2d';
+  return 'image';
+}
+
+function deriveModel3File(file) {
+  const source = normalizeString(file);
+  if (!source) return '';
+  if (MODEL3_FILE_RE.test(source)) return source;
+  if (MOC3_FILE_RE.test(source)) return source.replace(/\.moc3$/i, '.model3.json');
+  return source;
 }
 
 function normalizeFrames(rawItem, options) {
@@ -268,9 +322,10 @@ function normalizeItemId(rawItem, index) {
   return `item-${index + 1}`;
 }
 
-function isSupportedItemFile(file, frames = []) {
+function isSupportedItemFile(file, frames = [], renderType = 'image') {
   if (frames.length > 0) return true;
   if (!file) return false;
+  if (renderType === 'live2d') return MODEL3_FILE_RE.test(file);
   if (LIVE2D_ITEM_FILE_RE.test(file)) return false;
   return IMAGE_FILE_RE.test(file) || !/\.[a-z0-9]+$/i.test(file);
 }
@@ -289,9 +344,17 @@ export function normalizeLocalVtsItemManifest(manifest, options = {}) {
 
   const items = (Array.isArray(rawItems) ? rawItems : []).map((rawItem, index) => {
     const basePath = normalizeString(pickField(rawItem, ['basePath', 'BasePath']), manifestBasePath);
-    const file = normalizeFile(rawItem);
+    const sourceFile = normalizeFile(rawItem);
+    const renderType = normalizeRenderType(rawItem, sourceFile);
+    const file = renderType === 'live2d' ? deriveModel3File(sourceFile) : sourceFile;
+    const vtubeFile = normalizeVTubeFile(rawItem);
+    const iconFile = normalizeIconFile(rawItem);
     const frames = normalizeFrames(rawItem, { modelBaseUrl, basePath });
     const assetUrl = file ? resolveLocalVtsItemAssetUrl(file, { modelBaseUrl, basePath }) : frames[0] || '';
+    const vtubeUrl = vtubeFile ? resolveLocalVtsItemAssetUrl(vtubeFile, { modelBaseUrl, basePath }) : '';
+    const previewUrl = iconFile
+      ? resolveLocalVtsItemAssetUrl(iconFile, { modelBaseUrl, basePath })
+      : (renderType === 'image' ? assetUrl : '');
     const baseId = normalizeItemId(rawItem, index);
     const seen = itemIdCounts.get(baseId) || 0;
     itemIdCounts.set(baseId, seen + 1);
@@ -308,12 +371,18 @@ export function normalizeLocalVtsItemManifest(manifest, options = {}) {
       'drawOrder',
       'DrawOrder'
     ]), index);
-    const supported = isSupportedItemFile(assetUrl, frames);
+    const supported = isSupportedItemFile(assetUrl, frames, renderType);
     const item = {
       id,
       name: normalizeString(pickField(rawItem, ['name', 'Name', 'displayName', 'DisplayName']), id),
       file,
       assetUrl,
+      modelUrl: renderType === 'live2d' ? assetUrl : '',
+      vtubeFile,
+      vtubeUrl,
+      iconFile,
+      previewUrl,
+      renderType,
       frames,
       fps: Math.min(Math.max(normalizeNumber(pickField(rawItem, ['fps', 'FPS', 'frameRate', 'FrameRate']), 12), 1), 60),
       visible: normalizeBoolean(pickField(rawItem, [
@@ -360,6 +429,7 @@ export function localVtsItemToManifestItem(item, options = {}) {
     Id: item.id,
     Name: item.name || item.id,
     File: item.file,
+    ItemType: item.renderType === 'live2d' ? 'live2d' : 'image',
     Visible: item.visible !== false,
     Layer: item.layer === BEHIND_LAYER ? BEHIND_LAYER : FRONT_LAYER,
     Anchor: {
@@ -376,6 +446,8 @@ export function localVtsItemToManifestItem(item, options = {}) {
     Opacity: round(item.opacity ?? 1, 4)
   };
   if (!manifestItem.Size) delete manifestItem.Size;
+  if (item.vtubeFile) manifestItem.VTubeFile = item.vtubeFile;
+  if (item.iconFile) manifestItem.Icon = item.iconFile;
   if (includeFollow) {
     manifestItem.Follow = {
       HeadX: round(item.follow?.headX ?? 0, 4),
@@ -415,7 +487,10 @@ export function localVtsFrameStateFromParameters(parameters) {
     bodyY: parameterValue(values, ['ParamAngle_BodyY', 'ParamAngle_BodyY2', 'ParamBodyAngleY', 'MocopiBodyAngleY']),
     bodyZ: parameterValue(values, ['ParamAngle_BodyZ', 'ParamAngle_BodyZ2', 'ParamAngle_ChestZ', 'ParamBodyAngleZ', 'MocopiBodyAngleZ']),
     positionX: parameterValue(values, ['FacePositionX', 'PositionX', 'MocopiBodyPositionX']),
-    positionY: parameterValue(values, ['FacePositionY', 'PositionY', 'MocopiBodyPositionY'])
+    positionY: parameterValue(values, ['FacePositionY', 'PositionY', 'MocopiBodyPositionY']),
+    mouthOpen: parameterValue(values, ['ParamMouthOpenY', 'MouthOpen', 'MouthOpenY']),
+    eyeOpenLeft: parameterValue(values, ['ParamEyeLOpen', 'EyeOpenLeft'], 1),
+    eyeOpenRight: parameterValue(values, ['ParamEyeROpen', 'EyeOpenRight'], 1)
   };
 }
 
@@ -503,17 +578,23 @@ function applyItemSizing(element, item, container) {
   const reference = Math.max(rect.width || 0, 1);
   const width = item.size?.width || item.size?.size;
   const height = item.size?.height;
-  element.style.width = resolveSizeCss(width, reference);
-  element.style.height = resolveSizeCss(height, rect.height || reference);
+  const widthCss = resolveSizeCss(width, reference);
+  const heightCss = resolveSizeCss(height, rect.height || reference);
+  element.style.width = widthCss;
+  element.style.height = heightCss;
+  element.style.setProperty('--live2d-item-width', widthCss || '160px');
+  element.style.setProperty('--live2d-item-height', heightCss || widthCss || '160px');
 }
 
 function applyItemStaticStyle(element, item, container) {
   element.dataset.itemId = item.id;
   element.dataset.layer = item.layer;
-  element.alt = item.name || item.id;
+  if ('alt' in element) element.alt = item.name || item.id;
   element.draggable = false;
-  element.decoding = 'async';
-  element.loading = 'eager';
+  if (element.tagName === 'IMG') {
+    element.decoding = 'async';
+    element.loading = 'eager';
+  }
   element.style.left = `${round((item.anchor?.x ?? 0.5) * 100, 4)}%`;
   element.style.top = `${round((item.anchor?.y ?? 0.5) * 100, 4)}%`;
   element.style.opacity = String(item.opacity);
@@ -532,6 +613,7 @@ export function mountLocalVtsItemOverlay(options = {}) {
   const modelBaseUrl = options.modelBaseUrl || DEFAULT_MODEL_BASE_URL;
   const manifestUrls = options.manifestUrls || DEFAULT_MANIFEST_URLS;
   const elements = new Map();
+  const cubismRenderers = new Map();
   const visibilityOverrides = new Map();
   let items = [];
   let unsupported = [];
@@ -566,6 +648,12 @@ export function mountLocalVtsItemOverlay(options = {}) {
       name: item.name,
       file: item.file,
       assetUrl: item.assetUrl,
+      modelUrl: item.modelUrl,
+      vtubeFile: item.vtubeFile,
+      vtubeUrl: item.vtubeUrl,
+      iconFile: item.iconFile,
+      previewUrl: item.previewUrl,
+      renderType: item.renderType,
       visible: itemVisible(item, visibilityOverrides),
       layer: item.layer,
       anchor: { ...(item.anchor || DEFAULT_ANCHOR) },
@@ -778,6 +866,44 @@ export function mountLocalVtsItemOverlay(options = {}) {
     event.preventDefault();
   }
 
+  function destroyCubismRenderer(id) {
+    const renderer = cubismRenderers.get(id);
+    if (!renderer) return;
+    renderer.destroy?.();
+    cubismRenderers.delete(id);
+  }
+
+  function elementMatchesItem(element, item) {
+    const tag = String(element?.tagName || '').toLowerCase();
+    return item.renderType === 'live2d' ? tag === 'canvas' : tag === 'img';
+  }
+
+  function attachItemListeners(element) {
+    element.addEventListener('pointerdown', onItemPointerDown);
+    element.addEventListener('pointermove', onItemPointerMove);
+    element.addEventListener('pointerup', onItemPointerEnd);
+    element.addEventListener('pointercancel', onItemPointerEnd);
+    element.addEventListener('lostpointercapture', onItemPointerEnd);
+    element.addEventListener('wheel', onItemWheel, { passive: false });
+  }
+
+  function createItemElement(item) {
+    const element = document.createElement(item.renderType === 'live2d' ? 'canvas' : 'img');
+    element.className = item.renderType === 'live2d'
+      ? 'live2d-vts-item live2d-vts-item-canvas'
+      : 'live2d-vts-item';
+    if (item.renderType === 'live2d') {
+      try {
+        cubismRenderers.set(item.id, createLocalVtsCubismItemRenderer(element));
+      } catch (error) {
+        element.dataset.live2dItemError = error?.message || 'Live2D item renderer unavailable';
+      }
+    }
+    attachItemListeners(element);
+    elements.set(item.id, element);
+    return element;
+  }
+
   function renderItems() {
     const container = findContainer();
     if (!container) return;
@@ -788,6 +914,7 @@ export function mountLocalVtsItemOverlay(options = {}) {
     const validIds = new Set(items.map((item) => item.id));
     for (const [id, element] of elements) {
       if (!validIds.has(id)) {
+        destroyCubismRenderer(id);
         element.remove();
         elements.delete(id);
       }
@@ -796,17 +923,13 @@ export function mountLocalVtsItemOverlay(options = {}) {
     for (const item of items) {
       const layer = item.layer === BEHIND_LAYER ? behindLayer : frontLayer;
       let element = elements.get(item.id);
-      if (!element) {
-        element = document.createElement('img');
-        element.className = 'live2d-vts-item';
-        element.addEventListener('pointerdown', onItemPointerDown);
-        element.addEventListener('pointermove', onItemPointerMove);
-        element.addEventListener('pointerup', onItemPointerEnd);
-        element.addEventListener('pointercancel', onItemPointerEnd);
-        element.addEventListener('lostpointercapture', onItemPointerEnd);
-        element.addEventListener('wheel', onItemWheel, { passive: false });
-        elements.set(item.id, element);
+      if (element && !elementMatchesItem(element, item)) {
+        destroyCubismRenderer(item.id);
+        element.remove();
+        elements.delete(item.id);
+        element = null;
       }
+      if (!element) element = createItemElement(item);
       if (element.parentElement !== layer) layer.appendChild(element);
       applyItemStaticStyle(element, item, container);
       element.classList.toggle('editing', editorEnabled);
@@ -814,7 +937,7 @@ export function mountLocalVtsItemOverlay(options = {}) {
       element.tabIndex = editorEnabled ? 0 : -1;
       const visible = itemVisible(item, visibilityOverrides);
       element.hidden = !visible;
-      if (visible && !element.src) element.src = item.assetUrl;
+      if (visible && item.renderType !== 'live2d' && !element.src) element.src = item.assetUrl;
     }
 
     setOverlayState({
@@ -835,7 +958,11 @@ export function mountLocalVtsItemOverlay(options = {}) {
     for (const item of items) {
       const element = elements.get(item.id);
       if (!element || element.hidden) continue;
-      if (item.frames.length > 1) {
+      if (item.renderType === 'live2d') {
+        const renderer = cubismRenderers.get(item.id);
+        renderer?.render?.(item, frameState);
+        if (renderer?.loadPromise) scheduleApply();
+      } else if (item.frames.length > 1) {
         const frameIndex = Math.floor((now / 1000) * item.fps) % item.frames.length;
         const frameUrl = item.frames[frameIndex];
         if (frameUrl && element.src !== new URL(frameUrl, window.location.href).href) element.src = frameUrl;
@@ -934,6 +1061,7 @@ export function mountLocalVtsItemOverlay(options = {}) {
       name: item.name,
       visible: itemVisible(item, visibilityOverrides),
       layer: item.layer,
+      renderType: item.renderType,
       source: item.source
     }))
   };
@@ -949,6 +1077,8 @@ export function mountLocalVtsItemOverlay(options = {}) {
     frameId = 0;
     const container = findContainer();
     removeOverlayLayers(container);
+    cubismRenderers.forEach((renderer) => renderer.destroy?.());
+    cubismRenderers.clear();
     elements.clear();
     if (window.TSUKUYOMI_LOCAL_VTS_ITEMS) delete window.TSUKUYOMI_LOCAL_VTS_ITEMS;
     setOverlayState({ mounted: false, status: 'destroyed', itemCount: 0, visibleItemCount: 0 });

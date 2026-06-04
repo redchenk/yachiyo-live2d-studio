@@ -872,7 +872,7 @@ internal static class DesktopApiProxy
     private const int MaxVisionCropSize = 1400;
     private const uint GA_ROOT = 2;
     private static readonly string[] LocalMusicPathSeparators = new[] { "\r\n", "\n", "\r", ";" };
-    private static readonly string[] Live2DItemExtensions = new[] { ".png", ".jpg", ".jpeg", ".webp", ".gif", ".avif", ".svg" };
+    private static readonly string[] Live2DImageItemExtensions = new[] { ".png", ".jpg", ".jpeg", ".webp", ".gif", ".avif", ".svg" };
 
     [StructLayout(LayoutKind.Sequential)]
     private struct NativePoint
@@ -1134,7 +1134,7 @@ internal static class DesktopApiProxy
                 if (bytes.Length <= 0 || bytes.Length > 24 * 1024 * 1024) continue;
                 var destination = Path.Combine(Live2DItemDirectory(), name);
                 File.WriteAllBytes(destination, bytes);
-                imported.Add(DescribeLive2DItemFile(destination));
+                imported.Add(DescribeImportedLive2DItemFile(destination));
             }
             return JsonOk(new Dictionary<string, object>
             {
@@ -1182,42 +1182,155 @@ internal static class DesktopApiProxy
 
     private static List<Dictionary<string, object>> ListLive2DItemFiles()
     {
-        var result = new List<Dictionary<string, object>>();
-        var root = Live2DItemDirectory().TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
-        foreach (var file in Directory.GetFiles(Live2DItemDirectory(), "*", SearchOption.AllDirectories))
-        {
-            if (!IsLive2DItemFile(file)) continue;
-            var normalized = Path.GetFullPath(file);
-            if (!normalized.StartsWith(root, StringComparison.OrdinalIgnoreCase)) continue;
-            result.Add(DescribeLive2DItemFile(normalized));
-        }
+        var result = ListLive2DItemFilesInDirectory(Live2DItemDirectory());
         result.Sort((left, right) => string.Compare(GetString(left, "file"), GetString(right, "file"), StringComparison.OrdinalIgnoreCase));
         return result;
     }
 
-    private static Dictionary<string, object> DescribeLive2DItemFile(string file)
+    private static List<Dictionary<string, object>> ListLive2DItemFilesInDirectory(string directory)
+    {
+        var result = new List<Dictionary<string, object>>();
+        var modelAssets = DiscoverLive2DModelAssets(directory);
+        if (modelAssets.Count > 0) return modelAssets;
+
+        foreach (var childDirectory in Directory.GetDirectories(directory))
+        {
+            var name = Path.GetFileName(childDirectory);
+            if (string.IsNullOrWhiteSpace(name) || name.StartsWith(".")) continue;
+            result.AddRange(ListLive2DItemFilesInDirectory(childDirectory));
+        }
+
+        foreach (var file in Directory.GetFiles(directory))
+        {
+            if (Path.GetFileName(file).StartsWith(".")) continue;
+            if (!IsLive2DImageItemFile(file)) continue;
+            result.Add(DescribeLive2DImageItemFile(file));
+        }
+        return result;
+    }
+
+    private static List<Dictionary<string, object>> DiscoverLive2DModelAssets(string directory)
+    {
+        var result = new List<Dictionary<string, object>>();
+        var modelFiles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var file in Directory.GetFiles(directory))
+        {
+            if (IsModel3File(file)) modelFiles.Add(Path.GetFileName(file));
+        }
+
+        foreach (var vtubePath in Directory.GetFiles(directory, "*.vtube.json"))
+        {
+            Dictionary<string, object> vtube = null;
+            try { vtube = Json.DeserializeObject(File.ReadAllText(vtubePath, Encoding.UTF8)) as Dictionary<string, object>; } catch {}
+            var refs = GetObject(vtube, "FileReferences");
+            var modelFile = GetString(refs, "Model");
+            if (string.IsNullOrWhiteSpace(modelFile) || !modelFiles.Contains(modelFile) || !File.Exists(Path.Combine(directory, modelFile))) continue;
+            result.Add(DescribeLive2DModelItemFile(directory, modelFile, Path.GetFileName(vtubePath), vtube));
+            modelFiles.Remove(modelFile);
+        }
+
+        foreach (var modelFile in modelFiles)
+        {
+            result.Add(DescribeLive2DModelItemFile(directory, modelFile, string.Empty, null));
+        }
+
+        return result;
+    }
+
+    private static string Live2DItemRelativePath(string file)
     {
         var root = Live2DItemDirectory().TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
-        var relative = Path.GetFullPath(file).Substring(root.Length).Replace(Path.DirectorySeparatorChar, '/');
+        return Path.GetFullPath(file).Substring(root.Length).Replace(Path.DirectorySeparatorChar, '/');
+    }
+
+    private static Dictionary<string, object> DescribeLive2DImageItemFile(string file)
+    {
+        var relative = Live2DItemRelativePath(file);
         var info = new FileInfo(file);
         return new Dictionary<string, object>
         {
+            { "type", "image" },
+            { "itemType", "image" },
             { "file", relative },
             { "name", Path.GetFileNameWithoutExtension(file) },
             { "url", "/models/tsukimi-yachiyo/items/" + relative },
+            { "previewUrl", "/models/tsukimi-yachiyo/items/" + relative },
             { "sizeBytes", info.Length },
             { "updatedAt", new DateTimeOffset(info.LastWriteTimeUtc).ToUnixTimeMilliseconds() }
         };
     }
 
-    private static bool IsLive2DItemFile(string file)
+    private static Dictionary<string, object> DescribeLive2DModelItemFile(string directory, string modelFile, string vtubeFile, Dictionary<string, object> vtube)
+    {
+        var absoluteModel = Path.Combine(directory, modelFile);
+        var relativeModel = Live2DItemRelativePath(absoluteModel);
+        var relativeVTube = string.IsNullOrWhiteSpace(vtubeFile) ? string.Empty : Live2DItemRelativePath(Path.Combine(directory, vtubeFile));
+        var refs = GetObject(vtube, "FileReferences");
+        var iconFile = GetString(refs, "Icon");
+        var relativeIcon = !string.IsNullOrWhiteSpace(iconFile) && File.Exists(Path.Combine(directory, iconFile))
+            ? Live2DItemRelativePath(Path.Combine(directory, iconFile))
+            : string.Empty;
+        var info = new FileInfo(absoluteModel);
+        var name = FirstNonEmpty(GetString(vtube, "Name"), System.Text.RegularExpressions.Regex.Replace(Path.GetFileName(modelFile), @"\.(model3|vtube)\.json$", string.Empty, System.Text.RegularExpressions.RegexOptions.IgnoreCase));
+        return new Dictionary<string, object>
+        {
+            { "type", "live2d" },
+            { "itemType", "live2d" },
+            { "file", relativeModel },
+            { "modelFile", relativeModel },
+            { "vtubeFile", relativeVTube },
+            { "iconFile", relativeIcon },
+            { "name", name },
+            { "url", "/models/tsukimi-yachiyo/items/" + relativeModel },
+            { "previewUrl", string.IsNullOrWhiteSpace(relativeIcon) ? string.Empty : "/models/tsukimi-yachiyo/items/" + relativeIcon },
+            { "sizeBytes", info.Length },
+            { "updatedAt", new DateTimeOffset(info.LastWriteTimeUtc).ToUnixTimeMilliseconds() }
+        };
+    }
+
+    private static bool IsLive2DImageItemFile(string file)
     {
         var extension = Path.GetExtension(file).ToLowerInvariant();
-        foreach (var allowed in Live2DItemExtensions)
+        foreach (var allowed in Live2DImageItemExtensions)
         {
             if (extension == allowed) return true;
         }
         return false;
+    }
+
+    private static Dictionary<string, object> DescribeImportedLive2DItemFile(string file)
+    {
+        if (IsLive2DImageItemFile(file)) return DescribeLive2DImageItemFile(file);
+        if (IsModel3File(file)) return DescribeLive2DModelItemFile(Path.GetDirectoryName(file), Path.GetFileName(file), string.Empty, null);
+        var relative = Live2DItemRelativePath(file);
+        var info = new FileInfo(file);
+        return new Dictionary<string, object>
+        {
+            { "type", "live2d" },
+            { "itemType", "live2d" },
+            { "file", relative },
+            { "modelFile", string.Empty },
+            { "name", Path.GetFileNameWithoutExtension(file) },
+            { "url", "/models/tsukimi-yachiyo/items/" + relative },
+            { "previewUrl", string.Empty },
+            { "sizeBytes", info.Length },
+            { "updatedAt", new DateTimeOffset(info.LastWriteTimeUtc).ToUnixTimeMilliseconds() }
+        };
+    }
+
+    private static bool IsModel3File(string file)
+    {
+        return System.Text.RegularExpressions.Regex.IsMatch(Path.GetFileName(file) ?? string.Empty, @"\.model3\.json$", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+    }
+
+    private static bool IsVTubeFile(string file)
+    {
+        return System.Text.RegularExpressions.Regex.IsMatch(Path.GetFileName(file) ?? string.Empty, @"\.vtube\.json$", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+    }
+
+    private static bool IsLive2DModelPackageFile(string file)
+    {
+        return IsModel3File(file) || IsVTubeFile(file) || System.Text.RegularExpressions.Regex.IsMatch(Path.GetFileName(file) ?? string.Empty, @"\.moc3$", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
     }
 
     private static string SanitizeLive2DItemFileName(string name)
@@ -1228,7 +1341,7 @@ internal static class DesktopApiProxy
             fileName = fileName.Replace(invalid, '_');
         }
         if (string.IsNullOrWhiteSpace(fileName)) fileName = "item.png";
-        if (!IsLive2DItemFile(fileName)) throw new InvalidOperationException("Unsupported item file type.");
+        if (!IsLive2DImageItemFile(fileName) && !IsLive2DModelPackageFile(fileName)) throw new InvalidOperationException("Unsupported item file type.");
         return fileName;
     }
 

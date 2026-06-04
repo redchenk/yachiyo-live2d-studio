@@ -443,17 +443,21 @@ function slugLocalItemId(value) {
 
 function createLocalItemFromAsset(asset, anchor) {
   const id = `${slugLocalItemId(asset.file || asset.name)}-${Date.now().toString(36)}`;
+  const live2DItem = asset.type === 'live2d' || asset.itemType === 'live2d';
   return {
     Id: id,
     Name: asset.name || asset.file || id,
-    File: asset.file,
+    File: asset.modelFile || asset.file,
+    ItemType: live2DItem ? 'live2d' : 'image',
+    VTubeFile: asset.vtubeFile || '',
+    Icon: asset.iconFile || '',
     Visible: true,
     Layer: 'front',
     Anchor: {
       X: Number(anchor.x.toFixed(5)),
       Y: Number(anchor.y.toFixed(5))
     },
-    Size: 160,
+    Size: live2DItem ? 220 : 160,
     Scale: 1,
     Rotation: 0
   };
@@ -1417,7 +1421,10 @@ onUnmounted(() => {
             @dragstart="startLocalItemAssetDrag($event, asset)"
             @dblclick="addLocalItemAsset(asset)"
           >
-            <img :src="asset.url" alt="">
+            <img v-if="asset.previewUrl" :src="asset.previewUrl" alt="">
+            <span v-else class="live2d-item-asset-preview">
+              <TsIcon :name="asset.type === 'live2d' ? 'box' : 'image'" :size="24" />
+            </span>
             <span>{{ asset.name }}</span>
           </button>
         </div>
@@ -1438,7 +1445,10 @@ onUnmounted(() => {
             type="button"
             @click="selectLocalItem(item.id)"
           >
-            <img :src="item.assetUrl" alt="">
+            <img v-if="item.previewUrl || item.renderType !== 'live2d'" :src="item.previewUrl || item.assetUrl" alt="">
+            <span v-else class="live2d-item-row-preview">
+              <TsIcon name="box" :size="18" />
+            </span>
             <span>{{ item.name }}</span>
             <small>{{ Math.round(Number(item.scale || 1) * 100) }}%</small>
           </button>

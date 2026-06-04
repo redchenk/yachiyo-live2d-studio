@@ -61,10 +61,87 @@ function live2DItemUrl(relativeFile) {
   return `/models/tsukimi-yachiyo/items/${relativeFile.replace(/\\/g, '/')}`;
 }
 
+function isModel3File(fileName) {
+  return /\.model3\.json$/i.test(fileName);
+}
+
+function isVTubeFile(fileName) {
+  return /\.vtube\.json$/i.test(fileName);
+}
+
+function isLive2DModelPackageFile(fileName) {
+  return isModel3File(fileName) || isVTubeFile(fileName) || /\.moc3$/i.test(fileName);
+}
+
+function itemNameFromFile(fileName) {
+  return path.basename(fileName).replace(/\.(?:model3|vtube)\.json$/i, '').replace(/\.[^.]+$/i, '');
+}
+
+function readJsonFileMaybe(filePath) {
+  try {
+    return JSON.parse(readFileSync(filePath, 'utf8'));
+  } catch (_) {
+    return null;
+  }
+}
+
+function describeLive2DModelAsset(directory, relativeRoot, modelFile, vtubeFile = '') {
+  const absoluteModelPath = path.join(directory, modelFile);
+  const modelStat = statSync(absoluteModelPath);
+  const vtubeJson = vtubeFile ? readJsonFileMaybe(path.join(directory, vtubeFile)) : null;
+  const references = vtubeJson?.FileReferences || {};
+  const iconFile = typeof references.Icon === 'string' ? references.Icon : '';
+  const relativeModelFile = path.join(relativeRoot, modelFile).replace(/\\/g, '/');
+  const relativeVTubeFile = vtubeFile ? path.join(relativeRoot, vtubeFile).replace(/\\/g, '/') : '';
+  const relativeIconFile = iconFile && existsSync(path.join(directory, iconFile))
+    ? path.join(relativeRoot, iconFile).replace(/\\/g, '/')
+    : '';
+  const name = typeof vtubeJson?.Name === 'string' && vtubeJson.Name.trim()
+    ? vtubeJson.Name.trim()
+    : itemNameFromFile(modelFile);
+  return {
+    type: 'live2d',
+    itemType: 'live2d',
+    file: relativeModelFile,
+    modelFile: relativeModelFile,
+    vtubeFile: relativeVTubeFile,
+    iconFile: relativeIconFile,
+    name,
+    url: live2DItemUrl(relativeModelFile),
+    previewUrl: relativeIconFile ? live2DItemUrl(relativeIconFile) : '',
+    sizeBytes: modelStat.size,
+    updatedAt: modelStat.mtimeMs
+  };
+}
+
+function discoverLive2DModelAssets(directory, relativeRoot, entries) {
+  const files = entries.filter((entry) => entry.isFile()).map((entry) => entry.name);
+  const assets = [];
+  const modelFiles = new Set(files.filter(isModel3File));
+
+  for (const vtubeFile of files.filter(isVTubeFile)) {
+    const vtubeJson = readJsonFileMaybe(path.join(directory, vtubeFile));
+    const modelFile = vtubeJson?.FileReferences?.Model;
+    if (typeof modelFile !== 'string' || !modelFiles.has(modelFile) || !existsSync(path.join(directory, modelFile))) continue;
+    assets.push(describeLive2DModelAsset(directory, relativeRoot, modelFile, vtubeFile));
+    modelFiles.delete(modelFile);
+  }
+
+  for (const modelFile of modelFiles) {
+    assets.push(describeLive2DModelAsset(directory, relativeRoot, modelFile));
+  }
+
+  return assets;
+}
+
 function listLive2DItemFiles(directory = live2DItemRoot, relativeRoot = '') {
   ensureLive2DItemFolders();
   const files = [];
-  for (const entry of readdirSync(directory, { withFileTypes: true })) {
+  const entries = readdirSync(directory, { withFileTypes: true }).filter((entry) => !entry.name.startsWith('.'));
+  const modelAssets = discoverLive2DModelAssets(directory, relativeRoot, entries);
+  if (modelAssets.length) return modelAssets.sort((left, right) => left.file.localeCompare(right.file));
+
+  for (const entry of entries) {
     if (entry.name.startsWith('.')) continue;
     const absolutePath = path.join(directory, entry.name);
     const relativePath = path.join(relativeRoot, entry.name).replace(/\\/g, '/');
@@ -75,9 +152,12 @@ function listLive2DItemFiles(directory = live2DItemRoot, relativeRoot = '') {
     if (!entry.isFile() || !itemAssetExtensions.has(path.extname(entry.name).toLowerCase())) continue;
     const fileStat = statSync(absolutePath);
     files.push({
+      type: 'image',
+      itemType: 'image',
       file: relativePath,
       name: path.basename(entry.name, path.extname(entry.name)),
       url: live2DItemUrl(relativePath),
+      previewUrl: live2DItemUrl(relativePath),
       sizeBytes: fileStat.size,
       updatedAt: fileStat.mtimeMs
     });
@@ -132,7 +212,7 @@ function readRequestJson(request) {
 function safeLive2DItemFileName(fileName) {
   const baseName = path.basename(String(fileName || 'item.png')).replace(/[<>:"/\\|?*\u0000-\u001f]/g, '_');
   const extension = path.extname(baseName).toLowerCase();
-  if (!itemAssetExtensions.has(extension)) throw new Error('Unsupported item file type.');
+  if (!itemAssetExtensions.has(extension) && !isLive2DModelPackageFile(baseName)) throw new Error('Unsupported item file type.');
   return baseName || `item-${Date.now()}${extension || '.png'}`;
 }
 
@@ -192,9 +272,13 @@ function repoStaticAssetPlugin() {
               writeFileSync(path.join(live2DItemRoot, fileName), bytes);
               const fileStat = statSync(path.join(live2DItemRoot, fileName));
               files.push({
+                type: itemAssetExtensions.has(path.extname(fileName).toLowerCase()) ? 'image' : 'live2d',
+                itemType: itemAssetExtensions.has(path.extname(fileName).toLowerCase()) ? 'image' : 'live2d',
                 file: fileName,
+                modelFile: isModel3File(fileName) ? fileName : '',
                 name: path.basename(fileName, path.extname(fileName)),
                 url: live2DItemUrl(fileName),
+                previewUrl: itemAssetExtensions.has(path.extname(fileName).toLowerCase()) ? live2DItemUrl(fileName) : '',
                 sizeBytes: fileStat.size,
                 updatedAt: fileStat.mtimeMs
               });
