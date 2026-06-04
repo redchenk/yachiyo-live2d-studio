@@ -141,14 +141,9 @@ body.vue-live2d-route {
     opacity: 0.78;
 }
 
-.live2d-model.live2d-vts-item-dragging::after {
-    content: "";
-    position: absolute;
-    right: 0.35rem;
-    bottom: 0.35rem;
-    z-index: 6;
-    width: clamp(3.2rem, 12%, 5.8rem);
-    aspect-ratio: 1;
+.live2d-vts-item-delete-hotspot {
+    position: fixed;
+    z-index: 12;
     display: grid;
     place-items: center;
     border: 1px solid rgba(255, 128, 165, 0.44);
@@ -160,11 +155,18 @@ body.vue-live2d-route {
     background-size: 48% 48%;
     box-shadow: 0 14px 34px rgba(0, 0, 0, 0.32), inset 0 0 22px rgba(255, 100, 130, 0.14);
     pointer-events: none;
-    transition: transform 0.14s ease, border-color 0.14s ease, background 0.14s ease;
+    opacity: 0;
+    transform: translateY(0.35rem) scale(0.96);
+    transition: opacity 0.14s ease, transform 0.14s ease, border-color 0.14s ease, background-color 0.14s ease;
 }
 
-.live2d-model.live2d-vts-item-delete-ready::after {
-    transform: scale(1.08);
+.live2d-vts-item-delete-hotspot.visible {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+}
+
+.live2d-vts-item-delete-hotspot.ready {
+    transform: translateY(0) scale(1.08);
     border-color: rgba(255, 112, 145, 0.95);
     background-color: rgba(100, 20, 45, 0.72);
     box-shadow: 0 18px 42px rgba(0, 0, 0, 0.38), 0 0 24px rgba(255, 100, 130, 0.4);

@@ -122,6 +122,26 @@ class FakeElement {
   }
 
   getBoundingClientRect() {
+    if (this.rect) {
+      const rect = {
+        left: this.rect.left || 0,
+        top: this.rect.top || 0,
+        width: this.rect.width || 0,
+        height: this.rect.height || 0
+      };
+      return {
+        ...rect,
+        right: rect.left + rect.width,
+        bottom: rect.top + rect.height
+      };
+    }
+    const left = Number.parseFloat(this.style.left);
+    const top = Number.parseFloat(this.style.top);
+    const width = Number.parseFloat(this.style.width);
+    const height = Number.parseFloat(this.style.height);
+    if (Number.isFinite(left) && Number.isFinite(top) && Number.isFinite(width) && Number.isFinite(height)) {
+      return { left, top, width, height, right: left + width, bottom: top + height };
+    }
     return { left: 0, top: 0, width: 1000, height: 800 };
   }
 }
@@ -150,7 +170,12 @@ function matchesFakeSelector(element, selector) {
 }
 
 function createFakeOverlayDom() {
+  const page = new FakeElement('main');
   const container = new FakeElement('div');
+  const caption = new FakeElement('section');
+  caption.rect = { left: 100, top: 600, width: 360, height: 90 };
+  page.appendChild(caption);
+  page.appendChild(container);
   const frameQueue = [];
   const images = new Map();
   let nextFrameId = 1;
@@ -177,6 +202,8 @@ function createFakeOverlayDom() {
   }
   const fakeWindow = {
     location: { href: 'http://127.0.0.1/' },
+    innerWidth: 1280,
+    innerHeight: 720,
     Image: FakeImage,
     requestAnimationFrame(callback) {
       const id = nextFrameId++;
@@ -201,8 +228,15 @@ function createFakeOverlayDom() {
     }
   };
   const fakeDocument = {
+    body: page,
     createElement: (tagName) => new FakeElement(tagName),
-    querySelector: (selector) => (selector === '#live2d-container' ? container : null)
+    documentElement: { clientWidth: 1280, clientHeight: 720 },
+    querySelector: (selector) => {
+      if (selector === '#live2d-container') return container;
+      if (selector === '.live2d-page') return page;
+      if (selector === '.live2d-caption') return caption;
+      return null;
+    }
   };
   return {
     window: fakeWindow,
@@ -476,9 +510,9 @@ try {
     await new Promise((resolve) => setTimeout(resolve, 30));
     assert.doesNotMatch(image.className, /\bselected\b/);
     image.dispatch('pointerdown', { pointerId: 9, clientX: 500, clientY: 400 });
-    image.dispatch('pointermove', { pointerId: 9, clientX: 980, clientY: 780 });
+    image.dispatch('pointermove', { pointerId: 9, clientX: 500, clientY: 640 });
     assert.match(image.className, /\bdelete-target\b/);
-    image.dispatch('pointerup', { pointerId: 9, clientX: 980, clientY: 780 });
+    image.dispatch('pointerup', { pointerId: 9, clientX: 500, clientY: 640 });
     assert.equal(
       overlayDom.window.TSUKUYOMI_LOCAL_VTS_ITEMS.snapshot().some((item) => item.id === 'delete-me'),
       false
