@@ -48,6 +48,9 @@ class FakeElement {
     this.hidden = false;
     this.src = '';
     this.alt = '';
+    this.width = 0;
+    this.height = 0;
+    this.drawnFrames = [];
     this.eventListeners = new Map();
   }
 
@@ -78,6 +81,16 @@ class FakeElement {
     return collectDescendants(this).filter((element) => matchesFakeSelector(element, selector));
   }
 
+  getContext(type) {
+    if (this.tagName !== 'CANVAS' || type !== '2d') return null;
+    return {
+      clearRect: () => {},
+      drawImage: (image) => {
+        this.drawnFrames.push(image.src);
+      }
+    };
+  }
+
   getBoundingClientRect() {
     return { left: 0, top: 0, width: 1000, height: 800 };
   }
@@ -93,6 +106,7 @@ function collectDescendants(root) {
 
 function matchesFakeSelector(element, selector) {
   if (selector === 'img') return element.tagName === 'IMG';
+  if (selector === 'canvas') return element.tagName === 'CANVAS';
   if (selector === '.live2d-vts-item-layer[data-live2d-vts-item-layer]') {
     return String(element.className || '').split(/\s+/).includes('live2d-vts-item-layer')
       && Boolean(element.dataset.live2dVtsItemLayer);
@@ -170,6 +184,7 @@ function createFakeOverlayDom() {
       assert.ok(image, `expected ${url} to be preloaded`);
       image.complete = true;
       image.naturalWidth = 64;
+      image.naturalHeight = 32;
       image.onload?.();
     },
     flushNextFrame(now) {
@@ -400,19 +415,22 @@ try {
       Visible: true,
       Size: 120
     });
-    const image = overlayDom.container.querySelector('img');
-    assert.ok(image, 'sequence item should render as an image');
+    const canvas = overlayDom.container.querySelector('canvas');
+    assert.ok(canvas, 'sequence item should render as a canvas');
     const firstFrame = 'http://127.0.0.1/models/tsukimi-yachiyo/items/star-01.png';
     const secondFrame = 'http://127.0.0.1/models/tsukimi-yachiyo/items/star-02.png';
     overlayDom.loadImage(firstFrame);
     overlayDom.flushNextFrame(0);
-    assert.equal(image.src, firstFrame);
+    assert.equal(canvas.dataset.frameUrl, firstFrame);
+    assert.deepEqual(canvas.drawnFrames, [firstFrame]);
     assert.equal(overlayDom.queuedFrameCount(), 1, 'visible sequence item should keep the animation loop alive');
     overlayDom.flushNextFrame(600);
-    assert.equal(image.src, firstFrame, 'unloaded sequence frames should not replace the visible frame');
+    assert.equal(canvas.dataset.frameUrl, firstFrame, 'unloaded sequence frames should not replace the visible frame');
+    assert.deepEqual(canvas.drawnFrames, [firstFrame]);
     overlayDom.loadImage(secondFrame);
     overlayDom.flushNextFrame(600);
-    assert.equal(image.src, secondFrame);
+    assert.equal(canvas.dataset.frameUrl, secondFrame);
+    assert.deepEqual(canvas.drawnFrames, [firstFrame, secondFrame]);
     assert.equal(overlayDom.queuedFrameCount(), 1, 'sequence item should schedule the following frame after advancing');
     destroyOverlay();
     assert.equal(overlayDom.queuedFrameCount(), 0);

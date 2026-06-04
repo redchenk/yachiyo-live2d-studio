@@ -908,6 +908,7 @@ export function mountLocalVtsItemOverlay(options = {}) {
     const image = new window.Image();
     image.decoding = 'async';
     image.loading = 'eager';
+    cache.images.set(url, image);
     cache.pending.set(url, image);
     image.onload = () => {
       const decodePromise = typeof image.decode === 'function' ? image.decode() : null;
@@ -934,6 +935,7 @@ export function mountLocalVtsItemOverlay(options = {}) {
     if (!cache || cache.signature !== signature) {
       cache = {
         signature,
+        images: new Map(),
         loaded: new Set(),
         pending: new Map(),
         failed: new Set()
@@ -944,9 +946,26 @@ export function mountLocalVtsItemOverlay(options = {}) {
     return cache;
   }
 
+  function isSequenceImageItem(item) {
+    return item?.renderType !== 'live2d' && Array.isArray(item?.frames) && item.frames.length > 1;
+  }
+
+  function drawSequenceFrame(canvas, image, frameUrl) {
+    if (!canvas || canvas.tagName !== 'CANVAS' || !image || !frameUrl || canvas.dataset.frameUrl === frameUrl) return;
+    const width = Math.max(1, Math.round(image.naturalWidth || image.width || 1));
+    const height = Math.max(1, Math.round(image.naturalHeight || image.height || width));
+    const context = canvas.getContext?.('2d');
+    if (!context) return;
+    if (canvas.width !== width) canvas.width = width;
+    if (canvas.height !== height) canvas.height = height;
+    context.clearRect(0, 0, width, height);
+    context.drawImage(image, 0, 0, width, height);
+    canvas.dataset.frameUrl = frameUrl;
+  }
+
   function elementMatchesItem(element, item) {
     const tag = String(element?.tagName || '').toLowerCase();
-    return item.renderType === 'live2d' ? tag === 'canvas' : tag === 'img';
+    return item.renderType === 'live2d' || isSequenceImageItem(item) ? tag === 'canvas' : tag === 'img';
   }
 
   function attachItemListeners(element) {
@@ -959,10 +978,13 @@ export function mountLocalVtsItemOverlay(options = {}) {
   }
 
   function createItemElement(item) {
-    const element = document.createElement(item.renderType === 'live2d' ? 'canvas' : 'img');
+    const canvasItem = item.renderType === 'live2d' || isSequenceImageItem(item);
+    const element = document.createElement(canvasItem ? 'canvas' : 'img');
     element.className = item.renderType === 'live2d'
       ? 'live2d-vts-item live2d-vts-item-canvas'
-      : 'live2d-vts-item';
+      : isSequenceImageItem(item)
+        ? 'live2d-vts-item live2d-vts-item-sequence-canvas'
+        : 'live2d-vts-item';
     if (item.renderType === 'live2d') {
       try {
         cubismRenderers.set(item.id, createLocalVtsCubismItemRenderer(element));
@@ -1010,8 +1032,8 @@ export function mountLocalVtsItemOverlay(options = {}) {
       const visible = itemVisible(item, visibilityOverrides);
       element.hidden = !visible;
       if (visible && item.renderType !== 'live2d') {
-        if (item.frames.length > 1) ensureSequenceFrameCache(item);
-        if (!element.src) element.src = item.assetUrl;
+        if (isSequenceImageItem(item)) ensureSequenceFrameCache(item);
+        else if (!element.src) element.src = item.assetUrl;
       }
     }
 
@@ -1038,12 +1060,12 @@ export function mountLocalVtsItemOverlay(options = {}) {
         const renderer = cubismRenderers.get(item.id);
         renderer?.render?.(item, frameState);
         if (renderer?.loadPromise) scheduleApply();
-      } else if (item.frames.length > 1) {
+      } else if (isSequenceImageItem(item)) {
         needsNextAnimationFrame = true;
         const cache = ensureSequenceFrameCache(item);
         const frameIndex = Math.floor((now / 1000) * item.fps) % item.frames.length;
         const frameUrl = resolveFrameHref(item.frames[frameIndex]);
-        if (frameUrl && cache.loaded.has(frameUrl) && element.src !== frameUrl) element.src = frameUrl;
+        if (frameUrl && cache.loaded.has(frameUrl)) drawSequenceFrame(element, cache.images.get(frameUrl), frameUrl);
       } else if (!element.src && item.assetUrl) {
         element.src = item.assetUrl;
       }
