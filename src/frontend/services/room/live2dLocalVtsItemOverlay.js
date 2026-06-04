@@ -35,6 +35,7 @@ const DEFAULT_FOLLOW = {
   positionY: 0,
   pinWeight: 0,
   depth: 0,
+  maxOffset: 0,
   pivotX: DEFAULT_PIN_PIVOT.x,
   pivotY: DEFAULT_PIN_PIVOT.y,
   profile: '',
@@ -47,64 +48,68 @@ const FOLLOW_PROFILES = Object.freeze({
     auto: true
   },
   face: {
-    headX: 1.65,
-    headY: -1.1,
-    headZ: 0.9,
-    bodyX: 0.22,
-    bodyY: -0.12,
-    bodyZ: 0.16,
+    headX: 0.22,
+    headY: -0.14,
+    headZ: 0.28,
+    bodyX: 0.02,
+    bodyY: -0.01,
+    bodyZ: 0.02,
     positionX: 0,
     positionY: 0,
-    pinWeight: 0.32,
-    depth: 0.55,
+    pinWeight: 0.08,
+    depth: 0.45,
+    maxOffset: 8,
     pivotX: 0.5,
     pivotY: 0.45,
     profile: 'face',
     auto: true
   },
   mouth: {
-    headX: 1.95,
-    headY: -0.95,
-    headZ: 0.92,
-    bodyX: 0.2,
-    bodyY: -0.1,
-    bodyZ: 0.14,
+    headX: 0.28,
+    headY: -0.12,
+    headZ: 0.3,
+    bodyX: 0.02,
+    bodyY: -0.01,
+    bodyZ: 0.02,
     positionX: 0,
     positionY: 0,
-    pinWeight: 0.36,
-    depth: 0.68,
+    pinWeight: 0.1,
+    depth: 0.55,
+    maxOffset: 8,
     pivotX: 0.5,
     pivotY: 0.46,
     profile: 'mouth',
     auto: true
   },
   head: {
-    headX: 1.38,
-    headY: -1.35,
-    headZ: 1,
-    bodyX: 0.18,
-    bodyY: -0.12,
-    bodyZ: 0.18,
+    headX: 0.24,
+    headY: -0.2,
+    headZ: 0.34,
+    bodyX: 0.02,
+    bodyY: -0.02,
+    bodyZ: 0.03,
     positionX: 0,
     positionY: 0,
-    pinWeight: 0.42,
+    pinWeight: 0.12,
     depth: 0.5,
+    maxOffset: 10,
     pivotX: 0.5,
     pivotY: 0.36,
     profile: 'head',
     auto: true
   },
   body: {
-    headX: 0.18,
-    headY: -0.08,
-    headZ: 0.08,
-    bodyX: 0.78,
-    bodyY: -0.48,
-    bodyZ: 0.58,
+    headX: 0.02,
+    headY: -0.01,
+    headZ: 0.01,
+    bodyX: 0.08,
+    bodyY: -0.05,
+    bodyZ: 0.07,
     positionX: 0,
     positionY: 0,
-    pinWeight: 0.24,
-    depth: 0.16,
+    pinWeight: 0.06,
+    depth: 0.12,
+    maxOffset: 8,
     pivotX: 0.5,
     pivotY: 0.64,
     profile: 'body',
@@ -384,6 +389,7 @@ function normalizeFollow(rawItem) {
       'Orbit'
     ]), 0),
     depth: normalizeNumber(pickField(follow, ['depth', 'Depth', 'perspective', 'Perspective']), 0),
+    maxOffset: normalizeNumber(pickField(follow, ['maxOffset', 'MaxOffset', 'maxFollowOffset', 'MaxFollowOffset']), 0),
     pivotX: normalizeNumber(pickField(follow, ['pivotX', 'PivotX', 'pinPivotX', 'PinPivotX']), DEFAULT_PIN_PIVOT.x),
     pivotY: normalizeNumber(pickField(follow, ['pivotY', 'PivotY', 'pinPivotY', 'PinPivotY']), DEFAULT_PIN_PIVOT.y),
     profile,
@@ -639,6 +645,9 @@ function localVtsFollowToManifestFollow(follow = {}) {
   if (Math.abs(normalizeNumber(follow.depth, 0)) >= FOLLOW_EPSILON) {
     manifestFollow.Depth = round(follow.depth, 4);
   }
+  if (Math.abs(normalizeNumber(follow.maxOffset, 0)) >= FOLLOW_EPSILON) {
+    manifestFollow.MaxOffset = round(follow.maxOffset, 4);
+  }
   if (Math.abs(normalizeNumber(follow.pivotX, DEFAULT_PIN_PIVOT.x) - DEFAULT_PIN_PIVOT.x) >= FOLLOW_EPSILON) {
     manifestFollow.PivotX = round(follow.pivotX, 4);
   }
@@ -743,11 +752,11 @@ export function localVtsItemTransform(item, frameState = {}, options = {}) {
   const dynamicState = options.freezeFollow ? localVtsFrameStateFromParameters([]) : state;
   const follow = item?.follow || {};
   const offset = item?.offset || { x: 0, y: 0 };
-  let x = normalizeNumber(offset.x, 0) +
+  let dynamicX =
     dynamicState.headX * normalizeNumber(follow.headX, 0) +
     dynamicState.bodyX * normalizeNumber(follow.bodyX, 0) +
     dynamicState.positionX * normalizeNumber(follow.positionX, 0);
-  let y = normalizeNumber(offset.y, 0) +
+  let dynamicY =
     dynamicState.headY * normalizeNumber(follow.headY, 0) +
     dynamicState.bodyY * normalizeNumber(follow.bodyY, 0) +
     dynamicState.positionY * normalizeNumber(follow.positionY, 0);
@@ -766,9 +775,20 @@ export function localVtsItemTransform(item, frameState = {}, options = {}) {
     const radians = followRotation * Math.PI / 180;
     const rotatedX = radiusX * Math.cos(radians) - radiusY * Math.sin(radians);
     const rotatedY = radiusX * Math.sin(radians) + radiusY * Math.cos(radians);
-    x += (rotatedX - radiusX) * pinWeight;
-    y += (rotatedY - radiusY) * pinWeight;
+    dynamicX += (rotatedX - radiusX) * pinWeight;
+    dynamicY += (rotatedY - radiusY) * pinWeight;
   }
+  const maxOffset = normalizeNumber(follow.maxOffset, 0);
+  if (maxOffset > FOLLOW_EPSILON) {
+    const dynamicLength = Math.hypot(dynamicX, dynamicY);
+    if (dynamicLength > maxOffset) {
+      const limitScale = maxOffset / dynamicLength;
+      dynamicX *= limitScale;
+      dynamicY *= limitScale;
+    }
+  }
+  const x = normalizeNumber(offset.x, 0) + dynamicX;
+  const y = normalizeNumber(offset.y, 0) + dynamicY;
   const scale = normalizeNumber(item?.scale, 1);
   let scaleX = scale * normalizeNumber(item?.scaleX, 1) * (item?.flipX ? -1 : 1);
   let scaleY = scale * normalizeNumber(item?.scaleY, 1) * (item?.flipY ? -1 : 1);

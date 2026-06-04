@@ -469,8 +469,9 @@ try {
   }, { x: 0.5, y: 0.58 });
   assert.equal(moustacheManifestFollow.Profile, 'mouth');
   assert.equal(moustacheManifestFollow.Auto, true);
-  assert.ok(moustacheManifestFollow.HeadX > 1.5, 'mouth profile should follow horizontal head turns');
-  assert.ok(moustacheManifestFollow.PinWeight > 0.2, 'mouth profile should orbit around the face pivot');
+  assert.ok(moustacheManifestFollow.HeadX > 0.2 && moustacheManifestFollow.HeadX < 0.35, 'mouth profile should follow head turns gently');
+  assert.ok(moustacheManifestFollow.PinWeight > 0.05 && moustacheManifestFollow.PinWeight < 0.15, 'mouth profile should use a subtle face pivot orbit');
+  assert.equal(moustacheManifestFollow.MaxOffset, 8, 'auto-pinned mouth items should have a tight follow limit');
   assert.equal(moustacheManifestFollow.PositionX, 0, 'auto face profiles should not multiply FacePositionX');
   assert.equal(moustacheManifestFollow.PositionY, 0, 'auto face profiles should not multiply FacePositionY');
 
@@ -487,6 +488,7 @@ try {
     ]
   }).items[0];
   assert.equal(followInferred.follow.profile, 'mouth');
+  assert.equal(followInferred.follow.maxOffset, 8);
   const facePinnedTransform = localVtsItemTransform(followInferred, {
     headX: 18,
     headY: 6,
@@ -500,9 +502,27 @@ try {
     containerWidth: 1000,
     containerHeight: 800
   });
-  assert.ok(facePinnedTransform.x > 10, 'moustache should translate with head turn');
-  assert.ok(facePinnedTransform.rotation > 10, 'moustache should rotate with head tilt');
+  assert.ok(facePinnedTransform.x > 2 && facePinnedTransform.x < 8, 'moustache should translate with head turn without overshooting');
+  assert.ok(facePinnedTransform.rotation > 3 && facePinnedTransform.rotation < 5, 'moustache should rotate with head tilt subtly');
   assert.ok(facePinnedTransform.scaleX < 1, 'moustache should receive subtle yaw depth scaling');
+
+  const extremeFacePinnedTransform = localVtsItemTransform(followInferred, {
+    headX: 80,
+    headY: 40,
+    headZ: 60,
+    bodyX: 20,
+    bodyY: -20,
+    bodyZ: 20,
+    positionX: 0,
+    positionY: 0
+  }, {
+    containerWidth: 1600,
+    containerHeight: 1200
+  });
+  assert.ok(
+    Math.hypot(extremeFacePinnedTransform.x, extremeFacePinnedTransform.y) <= followInferred.follow.maxOffset + 0.75,
+    'auto-pinned item translation should stay within its follow limit even on a large stage'
+  );
 
   const positionOnlyTransform = localVtsItemTransform(followInferred, {
     headX: 0,
