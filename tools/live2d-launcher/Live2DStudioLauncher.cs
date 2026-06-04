@@ -400,6 +400,24 @@ internal sealed class LocalStudioServer : IDisposable
                 return;
             }
 
+            if ((method == "GET" || method == "HEAD") && string.Equals(path, "/api/live2d/items", StringComparison.OrdinalIgnoreCase))
+            {
+                WriteApiResponse(stream, DesktopApiProxy.Live2DItems());
+                return;
+            }
+
+            if (method == "POST" && string.Equals(path, "/api/live2d/items/import", StringComparison.OrdinalIgnoreCase))
+            {
+                WriteApiResponse(stream, DesktopApiProxy.Live2DItemsImport(request.Body));
+                return;
+            }
+
+            if (method == "POST" && string.Equals(path, "/api/live2d/items/manifest", StringComparison.OrdinalIgnoreCase))
+            {
+                WriteApiResponse(stream, DesktopApiProxy.Live2DItemsManifest(request.Body));
+                return;
+            }
+
             if (method == "POST" && string.Equals(path, "/api/music/local/search", StringComparison.OrdinalIgnoreCase))
             {
                 WriteApiResponse(stream, DesktopApiProxy.LocalMusicSearch(request.Body));
@@ -753,6 +771,8 @@ internal sealed class LocalStudioServer : IDisposable
                 return "image/gif";
             case ".webp":
                 return "image/webp";
+            case ".avif":
+                return "image/avif";
             case ".ico":
                 return "image/x-icon";
             case ".mp3":
@@ -792,7 +812,12 @@ internal sealed class LocalStudioServer : IDisposable
             case ".json":
             case ".moc3":
             case ".png":
+            case ".jpg":
+            case ".jpeg":
             case ".webp":
+            case ".gif":
+            case ".avif":
+            case ".svg":
                 return "no-store";
             default:
                 return "public, max-age=3600";
@@ -847,6 +872,7 @@ internal static class DesktopApiProxy
     private const int MaxVisionCropSize = 1400;
     private const uint GA_ROOT = 2;
     private static readonly string[] LocalMusicPathSeparators = new[] { "\r\n", "\n", "\r", ";" };
+    private static readonly string[] Live2DItemExtensions = new[] { ".png", ".jpg", ".jpeg", ".webp", ".gif", ".avif", ".svg" };
 
     [StructLayout(LayoutKind.Sequential)]
     private struct NativePoint
@@ -1039,6 +1065,171 @@ internal static class DesktopApiProxy
         {
             return JsonError(500, ex.Message);
         }
+    }
+
+    public static StudioApiResponse Live2DItems()
+    {
+        try
+        {
+            EnsureLive2DItemDirectory();
+            return JsonOk(new Dictionary<string, object>
+            {
+                { "success", true },
+                { "itemDirectory", Live2DItemDirectory() },
+                { "manifestPath", Live2DItemManifestPath() },
+                { "files", ListLive2DItemFiles() },
+                { "manifest", ReadLive2DItemManifest() }
+            });
+        }
+        catch (Exception ex)
+        {
+            return JsonError(500, ex.Message);
+        }
+    }
+
+    public static StudioApiResponse Live2DItemsManifest(byte[] body)
+    {
+        try
+        {
+            var input = ParseObject(body);
+            var itemsValue = GetArray(input, "Items") ?? GetArray(input, "items") ?? new object[0];
+            var manifest = new Dictionary<string, object>
+            {
+                { "Version", GetDouble(input, "Version", GetDouble(input, "version", 1, 1, 99), 1, 99) },
+                { "BasePath", "items" },
+                { "Items", itemsValue }
+            };
+            EnsureLive2DItemDirectory();
+            File.WriteAllText(Live2DItemManifestPath(), Json.Serialize(manifest) + Environment.NewLine, Encoding.UTF8);
+            return JsonOk(new Dictionary<string, object>
+            {
+                { "success", true },
+                { "manifest", manifest }
+            });
+        }
+        catch (Exception ex)
+        {
+            return JsonError(400, ex.Message);
+        }
+    }
+
+    public static StudioApiResponse Live2DItemsImport(byte[] body)
+    {
+        try
+        {
+            var input = ParseObject(body);
+            var files = GetArray(input, "files") ?? new object[0];
+            var imported = new List<Dictionary<string, object>>();
+            EnsureLive2DItemDirectory();
+            foreach (var file in files)
+            {
+                var data = file as Dictionary<string, object>;
+                if (data == null) continue;
+                var name = SanitizeLive2DItemFileName(FirstNonEmpty(GetString(data, "name"), GetString(data, "fileName"), "item.png"));
+                var encoded = FirstNonEmpty(GetString(data, "dataBase64"), GetString(data, "base64"), GetString(data, "data"));
+                if (string.IsNullOrWhiteSpace(encoded)) continue;
+                var comma = encoded.IndexOf(',');
+                if (comma >= 0) encoded = encoded.Substring(comma + 1);
+                var bytes = Convert.FromBase64String(encoded);
+                if (bytes.Length <= 0 || bytes.Length > 24 * 1024 * 1024) continue;
+                var destination = Path.Combine(Live2DItemDirectory(), name);
+                File.WriteAllBytes(destination, bytes);
+                imported.Add(DescribeLive2DItemFile(destination));
+            }
+            return JsonOk(new Dictionary<string, object>
+            {
+                { "success", true },
+                { "files", imported },
+                { "allFiles", ListLive2DItemFiles() }
+            });
+        }
+        catch (Exception ex)
+        {
+            return JsonError(400, ex.Message);
+        }
+    }
+
+    private static string Live2DItemDirectory()
+    {
+        return Path.Combine(repoRoot, "models", "tsukimi-yachiyo", "items");
+    }
+
+    private static string Live2DItemManifestPath()
+    {
+        return Path.Combine(repoRoot, "models", "tsukimi-yachiyo", "vts-items.local.json");
+    }
+
+    private static void EnsureLive2DItemDirectory()
+    {
+        Directory.CreateDirectory(Live2DItemDirectory());
+        Directory.CreateDirectory(Path.GetDirectoryName(Live2DItemManifestPath()));
+    }
+
+    private static object ReadLive2DItemManifest()
+    {
+        EnsureLive2DItemDirectory();
+        if (!File.Exists(Live2DItemManifestPath()))
+        {
+            return new Dictionary<string, object>
+            {
+                { "Version", 1 },
+                { "BasePath", "items" },
+                { "Items", new object[0] }
+            };
+        }
+        return Json.DeserializeObject(File.ReadAllText(Live2DItemManifestPath(), Encoding.UTF8));
+    }
+
+    private static List<Dictionary<string, object>> ListLive2DItemFiles()
+    {
+        var result = new List<Dictionary<string, object>>();
+        var root = Live2DItemDirectory().TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        foreach (var file in Directory.GetFiles(Live2DItemDirectory(), "*", SearchOption.AllDirectories))
+        {
+            if (!IsLive2DItemFile(file)) continue;
+            var normalized = Path.GetFullPath(file);
+            if (!normalized.StartsWith(root, StringComparison.OrdinalIgnoreCase)) continue;
+            result.Add(DescribeLive2DItemFile(normalized));
+        }
+        result.Sort((left, right) => string.Compare(GetString(left, "file"), GetString(right, "file"), StringComparison.OrdinalIgnoreCase));
+        return result;
+    }
+
+    private static Dictionary<string, object> DescribeLive2DItemFile(string file)
+    {
+        var root = Live2DItemDirectory().TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        var relative = Path.GetFullPath(file).Substring(root.Length).Replace(Path.DirectorySeparatorChar, '/');
+        var info = new FileInfo(file);
+        return new Dictionary<string, object>
+        {
+            { "file", relative },
+            { "name", Path.GetFileNameWithoutExtension(file) },
+            { "url", "/models/tsukimi-yachiyo/items/" + relative },
+            { "sizeBytes", info.Length },
+            { "updatedAt", new DateTimeOffset(info.LastWriteTimeUtc).ToUnixTimeMilliseconds() }
+        };
+    }
+
+    private static bool IsLive2DItemFile(string file)
+    {
+        var extension = Path.GetExtension(file).ToLowerInvariant();
+        foreach (var allowed in Live2DItemExtensions)
+        {
+            if (extension == allowed) return true;
+        }
+        return false;
+    }
+
+    private static string SanitizeLive2DItemFileName(string name)
+    {
+        var fileName = Path.GetFileName(name ?? string.Empty);
+        foreach (var invalid in Path.GetInvalidFileNameChars())
+        {
+            fileName = fileName.Replace(invalid, '_');
+        }
+        if (string.IsNullOrWhiteSpace(fileName)) fileName = "item.png";
+        if (!IsLive2DItemFile(fileName)) throw new InvalidOperationException("Unsupported item file type.");
+        return fileName;
     }
 
     public static StudioApiResponse LocalMusicSearch(byte[] body)

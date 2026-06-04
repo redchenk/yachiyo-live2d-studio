@@ -113,6 +113,17 @@ body.vue-live2d-route {
     will-change: transform;
 }
 
+.live2d-vts-item.editing {
+    pointer-events: auto;
+    cursor: move;
+}
+
+.live2d-vts-item.selected {
+    outline: 2px solid rgba(73, 220, 255, 0.86);
+    outline-offset: 5px;
+    filter: drop-shadow(0 0 12px rgba(73, 220, 255, 0.62));
+}
+
 .live2d-page.model-hidden .live2d-model {
     opacity: 0.05;
     filter: blur(4px);
@@ -290,6 +301,225 @@ body.vue-live2d-route {
     gap: 0.72rem;
     padding: 0.9rem;
     overflow: auto;
+}
+
+.live2d-item-editor {
+    position: fixed;
+    top: 1rem;
+    bottom: 1rem;
+    left: 6.45rem;
+    z-index: 6;
+    width: min(22rem, calc(100vw - 36rem));
+    min-width: 18rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.72rem;
+    padding: 0.86rem;
+    overflow: auto;
+    border: 1px solid rgba(160, 184, 255, 0.22);
+    border-radius: 8px;
+    background: rgba(18, 25, 49, 0.7);
+    box-shadow: 0 24px 64px rgba(0, 0, 0, 0.32);
+    backdrop-filter: blur(22px) saturate(1.16);
+}
+
+.live2d-item-file-input {
+    display: none;
+}
+
+.live2d-item-editor-head,
+.live2d-item-section-title,
+.live2d-item-detail-head,
+.live2d-item-row {
+    display: grid;
+    align-items: center;
+    gap: 0.52rem;
+    min-width: 0;
+}
+
+.live2d-item-editor-head {
+    grid-template-columns: minmax(0, 1fr) repeat(4, auto);
+}
+
+.live2d-item-editor-head > div {
+    display: grid;
+    gap: 0.08rem;
+    min-width: 0;
+}
+
+.live2d-item-editor-head span,
+.live2d-item-section-title span,
+.live2d-item-editor-head small,
+.live2d-item-section-title small,
+.live2d-item-row small,
+.live2d-item-empty {
+    color: var(--live2d-faint);
+    font-size: 0.72rem;
+    font-weight: 850;
+}
+
+.live2d-item-editor-head span,
+.live2d-item-section-title span {
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+.live2d-item-editor-head strong {
+    color: var(--live2d-cyan);
+    font-size: 1.16rem;
+}
+
+.live2d-item-assets,
+.live2d-item-attached,
+.live2d-item-detail {
+    display: grid;
+    gap: 0.62rem;
+}
+
+.live2d-item-section-title {
+    grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.live2d-item-asset-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.52rem;
+}
+
+.live2d-item-asset,
+.live2d-item-row,
+.live2d-item-detail {
+    border: 1px solid rgba(160, 184, 255, 0.14);
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.05);
+}
+
+.live2d-item-asset {
+    min-width: 0;
+    aspect-ratio: 1;
+    display: grid;
+    grid-template-rows: minmax(0, 1fr) auto;
+    gap: 0.36rem;
+    padding: 0.45rem;
+    color: var(--live2d-muted);
+    font: inherit;
+    font-size: 0.72rem;
+    font-weight: 850;
+    cursor: grab;
+}
+
+.live2d-item-asset:active {
+    cursor: grabbing;
+}
+
+.live2d-item-asset img,
+.live2d-item-row img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+}
+
+.live2d-item-asset img {
+    min-height: 0;
+}
+
+.live2d-item-asset span,
+.live2d-item-row span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.live2d-item-list {
+    display: grid;
+    gap: 0.4rem;
+    max-height: 12rem;
+    overflow: auto;
+    padding-right: 0.1rem;
+}
+
+.live2d-item-row {
+    grid-template-columns: 2.4rem minmax(0, 1fr) auto;
+    min-height: 3rem;
+    padding: 0.35rem 0.45rem;
+    color: var(--live2d-ink);
+    font: inherit;
+    font-size: 0.78rem;
+    font-weight: 850;
+    cursor: pointer;
+}
+
+.live2d-item-row.active {
+    border-color: rgba(73, 220, 255, 0.62);
+    background: rgba(73, 220, 255, 0.12);
+}
+
+.live2d-item-asset:hover,
+.live2d-item-row:hover {
+    border-color: rgba(73, 220, 255, 0.46);
+    background: rgba(73, 220, 255, 0.1);
+}
+
+.live2d-item-detail {
+    padding: 0.72rem;
+}
+
+.live2d-item-detail-head {
+    grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.live2d-item-detail-head strong {
+    min-width: 0;
+    overflow: hidden;
+    color: var(--live2d-ink);
+    font-size: 0.88rem;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.live2d-item-detail label {
+    display: grid;
+    gap: 0.36rem;
+    color: var(--live2d-muted);
+    font-size: 0.76rem;
+    font-weight: 850;
+}
+
+.live2d-item-detail select,
+.live2d-item-detail input[type="range"] {
+    width: 100%;
+}
+
+.live2d-item-detail select {
+    min-height: 2.3rem;
+    border: 1px solid rgba(160, 184, 255, 0.16);
+    border-radius: 8px;
+    color: var(--live2d-ink);
+    background: rgba(8, 12, 28, 0.62);
+    font: inherit;
+}
+
+.live2d-item-checkbox {
+    min-height: 2.1rem;
+    display: flex !important;
+    flex-direction: row;
+    align-items: center;
+}
+
+.live2d-item-checkbox input {
+    width: 1rem;
+    height: 1rem;
+    accent-color: var(--live2d-cyan);
+}
+
+.live2d-item-empty {
+    min-height: 3rem;
+    display: grid;
+    place-items: center;
+    margin: 0;
+    border: 1px dashed rgba(160, 184, 255, 0.16);
+    border-radius: 8px;
 }
 
 .live2d-panel-header {
@@ -1131,6 +1361,15 @@ body.vue-live2d-route {
         width: auto;
     }
 
+    .live2d-item-editor {
+        left: 6.3rem;
+        right: 1rem;
+        bottom: 21rem;
+        width: auto;
+        min-width: 0;
+        max-height: 17rem;
+    }
+
     .live2d-control-grid,
     .live2d-quick-actions > div {
         grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -1166,6 +1405,20 @@ body.vue-live2d-route {
         bottom: 0.75rem;
         width: auto;
         height: 21rem;
+    }
+
+    .live2d-item-editor {
+        left: 0.75rem;
+        right: 0.75rem;
+        top: 0.75rem;
+        bottom: auto;
+        width: auto;
+        min-width: 0;
+        max-height: 19rem;
+    }
+
+    .live2d-item-asset-grid {
+        grid-template-columns: repeat(4, minmax(0, 1fr));
     }
 
     .live2d-control-grid,

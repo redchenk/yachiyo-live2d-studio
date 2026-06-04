@@ -17,12 +17,12 @@ try {
 
   assert.equal(
     resolveLocalVtsItemAssetUrl('heart.gif'),
-    '/models/tsukimi-yachiyo/vts-items/heart.gif'
+    '/models/tsukimi-yachiyo/items/heart.gif'
   );
 
   const normalized = normalizeLocalVtsItemManifest({
     Version: 1,
-    BasePath: 'vts-items',
+    BasePath: 'items',
     Items: [
       {
         Id: 'heart',
@@ -65,20 +65,20 @@ try {
   assert.equal(normalized.unsupported.length, 1);
 
   const heart = normalized.items.find((item) => item.id === 'heart');
-  assert.equal(heart.assetUrl, '/models/tsukimi-yachiyo/vts-items/heart.gif');
+  assert.equal(heart.assetUrl, '/models/tsukimi-yachiyo/items/heart.gif');
   assert.equal(heart.visible, false);
   assert.equal(heart.layer, 'behind');
   assert.equal(heart.size.size, 0.2);
 
   const bow = normalized.items.find((item) => item.id === 'bow');
-  assert.equal(bow.assetUrl, '/models/tsukimi-yachiyo/vts-items/hair/bow.png');
+  assert.equal(bow.assetUrl, '/models/tsukimi-yachiyo/items/hair/bow.png');
   assert.deepEqual(bow.anchor, { x: 0.6, y: 0.7 });
   assert.equal(bow.size.size, 96);
 
   const animatedStar = normalized.items.find((item) => item.id === 'animated-star');
   assert.deepEqual(animatedStar.frames, [
-    '/models/tsukimi-yachiyo/vts-items/star-01.png',
-    '/models/tsukimi-yachiyo/vts-items/star-02.png'
+    '/models/tsukimi-yachiyo/items/star-01.png',
+    '/models/tsukimi-yachiyo/items/star-02.png'
   ]);
   assert.equal(animatedStar.fps, 8);
 

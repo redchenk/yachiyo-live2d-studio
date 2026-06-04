@@ -16,6 +16,7 @@ const settingsOpen = ref(shouldOpenSettingsOnBoot());
 const activeView = ref('live');
 const railItems = [
   { id: 'live', label: '直播', icon: 'home' },
+  { id: 'items', label: 'Items', icon: 'package' },
   { id: 'music', label: '音乐', icon: 'music' }
 ];
 
@@ -30,7 +31,11 @@ onUnmounted(() => {
 
 <template>
   <div class="studio-app-shell">
-    <Live2DPage v-if="activeView === 'live'" />
+    <Live2DPage
+      v-if="activeView === 'live' || activeView === 'items'"
+      :item-editor-open="activeView === 'items'"
+      @item-editor-close="activeView = 'live'"
+    />
     <MusicTestPage v-else-if="activeView === 'music'" />
     <aside class="studio-left-rail" aria-label="Studio navigation">
       <div class="studio-rail-brand">

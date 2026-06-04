@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, onUnmounted, reactive, ref } from 'vue';
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
 import TsIcon from '../components/TsIcon.vue';
 import { useLive2D } from '../composables/room/useLive2D';
 import {
@@ -35,6 +35,11 @@ import {
   behaviorBodyActionButtons
 } from '../constants/room/behaviorActionRegistry';
 
+const props = defineProps({
+  itemEditorOpen: { type: Boolean, default: false }
+});
+const emit = defineEmits(['item-editor-close']);
+
 const live2d = useLive2D();
 const booted = ref(false);
 const prompt = ref('Say hello to the audience and choose a bright expression.');
@@ -52,12 +57,19 @@ const modelHidden = ref(false);
 const modelLocked = ref(false);
 const micGain = ref(70);
 const modelContainerRef = ref(null);
+const itemFileInputRef = ref(null);
 const modelViewport = reactive({
   x: 0,
   y: 0,
   scale: 1,
   dragging: false
 });
+const itemPanelOpen = ref(props.itemEditorOpen);
+const localItemAssets = ref([]);
+const localItemLayout = ref([]);
+const localItemSelectedId = ref('');
+const localItemStatus = ref('');
+const localItemBusy = ref('');
 const llmState = ref({
   loading: false,
   error: '',
@@ -104,6 +116,8 @@ let asrRecorder = null;
 let modelDragState = null;
 const CHARACTER_STATE_EVENT = 'tsukuyomi:live2d-character-state';
 const SETTINGS_SAVED_EVENT = 'tsukuyomi:studio-settings-saved';
+const LOCAL_VTS_ITEM_CONTROL_EVENT = 'tsukuyomi:live2d-local-vts-item';
+const LOCAL_VTS_ITEM_STATE_EVENT = 'tsukuyomi:live2d-local-vts-item-state';
 const LIVE_DIRECTOR_AUTO_TURN_INTERVAL_MS = 60000;
 
 const debugEmotion = computed(() => (
@@ -141,6 +155,8 @@ const displayedChat = computed(() => showLog.value.slice(-4));
 const currentMusic = computed(() => musicQueueState.value.current || null);
 const queuedMusic = computed(() => (musicQueueState.value.queue || []).slice(0, 5));
 const musicHistory = computed(() => (musicQueueState.value.history || []).slice(0, 3));
+const selectedLocalItem = computed(() => localItemLayout.value.find((item) => item.id === localItemSelectedId.value) || null);
+const selectedLocalItemScale = computed(() => Math.round(Number(selectedLocalItem.value?.scale || 1) * 100));
 const musicStatusLabel = computed(() => {
   if (currentMusic.value?.status === 'playing') return 'PLAYING';
   if (currentMusic.value?.status === 'paused') return 'PAUSED';
@@ -300,6 +316,201 @@ function zoomModel(event) {
 
 function resetModelViewport() {
   setModelViewport({ x: 0, y: 0, scale: 1 }, { persist: true });
+}
+
+function dispatchLocalItemControl(detail) {
+  if (typeof window === 'undefined') return;
+  window.dispatchEvent(new CustomEvent(LOCAL_VTS_ITEM_CONTROL_EVENT, { detail }));
+}
+
+function setLocalItemEditorEnabled(enabled) {
+  dispatchLocalItemControl({ action: 'editor', enabled });
+}
+
+function openItemPanel() {
+  itemPanelOpen.value = true;
+  setLocalItemEditorEnabled(true);
+  refreshLocalItemAssets();
+}
+
+function closeItemPanel() {
+  itemPanelOpen.value = false;
+  setLocalItemEditorEnabled(false);
+  emit('item-editor-close');
+}
+
+function onLocalItemState(event) {
+  const detail = event.detail || {};
+  localItemLayout.value = Array.isArray(detail.items) ? detail.items : [];
+  localItemSelectedId.value = detail.selectedItemId || '';
+}
+
+async function readJsonResponse(response) {
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok || payload.success === false) {
+    throw new Error(payload.message || `HTTP ${response.status}`);
+  }
+  return payload;
+}
+
+async function refreshLocalItemAssets() {
+  if (localItemBusy.value === 'refresh') return;
+  localItemBusy.value = 'refresh';
+  try {
+    const response = await fetch('/api/live2d/items', { cache: 'no-store' });
+    const payload = await readJsonResponse(response);
+    localItemAssets.value = Array.isArray(payload.files) ? payload.files : [];
+    localItemStatus.value = payload.itemDirectory || '';
+    dispatchLocalItemControl({ action: 'reload' });
+  } catch (error) {
+    localItemStatus.value = error?.message || 'Unable to load items';
+  } finally {
+    localItemBusy.value = '';
+  }
+}
+
+function triggerLocalItemImport() {
+  itemFileInputRef.value?.click?.();
+}
+
+function readFileAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.addEventListener('load', () => resolve(String(reader.result || '')));
+    reader.addEventListener('error', () => reject(reader.error || new Error('Unable to read file')));
+    reader.readAsDataURL(file);
+  });
+}
+
+async function importLocalItemFiles(event) {
+  const files = Array.from(event.target?.files || []);
+  event.target.value = '';
+  if (!files.length) return;
+  localItemBusy.value = 'import';
+  try {
+    const payloadFiles = [];
+    for (const file of files) {
+      payloadFiles.push({
+        name: file.name,
+        dataBase64: await readFileAsDataUrl(file)
+      });
+    }
+    const response = await fetch('/api/live2d/items/import', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ files: payloadFiles })
+    });
+    const payload = await readJsonResponse(response);
+    localItemAssets.value = Array.isArray(payload.allFiles) ? payload.allFiles : localItemAssets.value;
+    localItemStatus.value = `${files.length} imported`;
+  } catch (error) {
+    localItemStatus.value = error?.message || 'Import failed';
+  } finally {
+    localItemBusy.value = '';
+  }
+}
+
+function localItemDragData(asset) {
+  return JSON.stringify({
+    file: asset.file,
+    name: asset.name || asset.file
+  });
+}
+
+function startLocalItemAssetDrag(event, asset) {
+  event.dataTransfer.effectAllowed = 'copy';
+  event.dataTransfer.setData('application/x-yachiyo-live2d-item', localItemDragData(asset));
+  event.dataTransfer.setData('text/plain', asset.file);
+}
+
+function localItemAnchorFromPointer(event) {
+  const container = modelContainerRef.value;
+  if (!container) return { x: 0.5, y: 0.5 };
+  const rect = container.getBoundingClientRect();
+  return {
+    x: clampModelViewportNumber((event.clientX - rect.left) / Math.max(rect.width, 1), -0.45, 1.45, 0.5),
+    y: clampModelViewportNumber((event.clientY - rect.top) / Math.max(rect.height, 1), -0.45, 1.45, 0.5)
+  };
+}
+
+function slugLocalItemId(value) {
+  return String(value || 'item')
+    .replace(/\.[^.]+$/, '')
+    .replace(/[^a-z0-9_-]+/gi, '-')
+    .replace(/^-+|-+$/g, '')
+    .toLowerCase() || 'item';
+}
+
+function createLocalItemFromAsset(asset, anchor) {
+  const id = `${slugLocalItemId(asset.file || asset.name)}-${Date.now().toString(36)}`;
+  return {
+    Id: id,
+    Name: asset.name || asset.file || id,
+    File: asset.file,
+    Visible: true,
+    Layer: 'front',
+    Anchor: {
+      X: Number(anchor.x.toFixed(5)),
+      Y: Number(anchor.y.toFixed(5))
+    },
+    Size: 160,
+    Scale: 1,
+    Rotation: 0
+  };
+}
+
+function addLocalItemAsset(asset, anchor = { x: 0.5, y: 0.38 }) {
+  const item = createLocalItemFromAsset(asset, anchor);
+  dispatchLocalItemControl({ action: 'upsert', basePath: 'items', item, select: true });
+  localItemStatus.value = item.Name;
+}
+
+function dropLocalItemOnModel(event) {
+  if (!itemPanelOpen.value) return;
+  const raw = event.dataTransfer?.getData('application/x-yachiyo-live2d-item');
+  if (!raw) return;
+  const asset = JSON.parse(raw);
+  addLocalItemAsset(asset, localItemAnchorFromPointer(event));
+  event.preventDefault();
+}
+
+function dragOverLocalItem(event) {
+  if (!itemPanelOpen.value) return;
+  event.dataTransfer.dropEffect = 'copy';
+  event.preventDefault();
+}
+
+function selectLocalItem(id) {
+  dispatchLocalItemControl({ action: 'select', id });
+}
+
+function updateSelectedLocalItem(patch) {
+  if (!selectedLocalItem.value) return;
+  dispatchLocalItemControl({ action: 'update', id: selectedLocalItem.value.id, patch });
+}
+
+function removeSelectedLocalItem() {
+  if (!selectedLocalItem.value) return;
+  dispatchLocalItemControl({ action: 'remove', id: selectedLocalItem.value.id });
+}
+
+async function saveLocalItemManifest() {
+  localItemBusy.value = 'save';
+  try {
+    const items = window.TSUKUYOMI_LOCAL_VTS_ITEMS?.manifestItems?.() || localItemLayout.value;
+    const response = await fetch('/api/live2d/items/manifest', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ Version: 1, BasePath: 'items', Items: items })
+    });
+    await readJsonResponse(response);
+    localItemStatus.value = 'saved';
+    dispatchLocalItemControl({ action: 'reload' });
+  } catch (error) {
+    localItemStatus.value = error?.message || 'Save failed';
+  } finally {
+    localItemBusy.value = '';
+  }
 }
 
 const statusLabel = computed(() => {
@@ -635,6 +846,10 @@ async function init() {
     }
   });
   await live2d.init();
+  if (itemPanelOpen.value) {
+    setLocalItemEditorEnabled(true);
+    refreshLocalItemAssets();
+  }
 }
 
 function runExpression(expression) {
@@ -1057,13 +1272,21 @@ function handleLive2DDebugEvent(event) {
   live2dDebug.value = event.detail || readRoomLive2DDebugState();
 }
 
+watch(() => props.itemEditorOpen, (open) => {
+  itemPanelOpen.value = Boolean(open);
+  setLocalItemEditorEnabled(itemPanelOpen.value);
+  if (itemPanelOpen.value) refreshLocalItemAssets();
+});
+
 onMounted(() => {
   window.addEventListener(SETTINGS_SAVED_EVENT, handleStudioSettingsSaved);
   window.addEventListener(ROOM_LIVE2D_DEBUG_EVENT, handleLive2DDebugEvent);
   window.addEventListener(LIVE2D_MUSIC_QUEUE_EVENT, handleLive2DMusicQueueEvent);
+  window.addEventListener(LOCAL_VTS_ITEM_STATE_EVENT, onLocalItemState);
   loadModelViewport();
   live2dDebug.value = readRoomLive2DDebugState();
   musicQueueState.value = readLive2DMusicQueueState();
+  if (itemPanelOpen.value) refreshLocalItemAssets();
   init();
 });
 
@@ -1071,6 +1294,8 @@ onUnmounted(() => {
   window.removeEventListener(SETTINGS_SAVED_EVENT, handleStudioSettingsSaved);
   window.removeEventListener(ROOM_LIVE2D_DEBUG_EVENT, handleLive2DDebugEvent);
   window.removeEventListener(LIVE2D_MUSIC_QUEUE_EVENT, handleLive2DMusicQueueEvent);
+  window.removeEventListener(LOCAL_VTS_ITEM_STATE_EVENT, onLocalItemState);
+  setLocalItemEditorEnabled(false);
   modelDragState = null;
   modelViewport.dragging = false;
   stopLiveDirector();
@@ -1098,8 +1323,11 @@ onUnmounted(() => {
         ref="modelContainerRef"
         class="live2d-model"
         :class="{ hidden: modelHidden, locked: modelLocked, dragging: modelViewport.dragging }"
+        :data-item-editor="itemPanelOpen ? 'true' : undefined"
         :data-speaking="speechState.status === 'playing' ? 'true' : undefined"
         title="拖动模型，滚轮缩放"
+        @dragover="dragOverLocalItem"
+        @drop="dropLocalItemOnModel"
         @pointerdown="startModelDrag"
         @pointermove="dragModel"
         @pointerup="endModelDrag"
@@ -1143,6 +1371,128 @@ onUnmounted(() => {
         </div>
       </section>
     </section>
+
+    <aside v-if="itemPanelOpen" class="live2d-item-editor" aria-label="Live2D item editor">
+      <input
+        ref="itemFileInputRef"
+        class="live2d-item-file-input"
+        type="file"
+        accept="image/png,image/jpeg,image/webp,image/gif,image/avif,image/svg+xml"
+        multiple
+        @change="importLocalItemFiles"
+      >
+      <header class="live2d-item-editor-head">
+        <div>
+          <span>Items</span>
+          <strong>挂件</strong>
+          <small>{{ localItemStatus || `${localItemAssets.length} files` }}</small>
+        </div>
+        <button class="live2d-icon-btn" type="button" title="导入" aria-label="导入" :disabled="Boolean(localItemBusy)" @click="triggerLocalItemImport">
+          <TsIcon name="upload" :size="18" />
+        </button>
+        <button class="live2d-icon-btn" type="button" title="刷新" aria-label="刷新" :disabled="Boolean(localItemBusy)" @click="refreshLocalItemAssets">
+          <TsIcon :name="localItemBusy === 'refresh' ? 'loader' : 'refresh'" :size="18" />
+        </button>
+        <button class="live2d-icon-btn" type="button" title="保存" aria-label="保存" :disabled="Boolean(localItemBusy)" @click="saveLocalItemManifest">
+          <TsIcon :name="localItemBusy === 'save' ? 'loader' : 'save'" :size="18" />
+        </button>
+        <button class="live2d-icon-btn" type="button" title="关闭" aria-label="关闭" @click="closeItemPanel">
+          <TsIcon name="x" :size="18" />
+        </button>
+      </header>
+
+      <section class="live2d-item-assets" aria-label="Item assets">
+        <div class="live2d-item-section-title">
+          <span>Assets</span>
+          <small>{{ localItemAssets.length }}</small>
+        </div>
+        <div v-if="localItemAssets.length" class="live2d-item-asset-grid">
+          <button
+            v-for="asset in localItemAssets"
+            :key="asset.file"
+            class="live2d-item-asset"
+            type="button"
+            draggable="true"
+            :title="asset.file"
+            @dragstart="startLocalItemAssetDrag($event, asset)"
+            @dblclick="addLocalItemAsset(asset)"
+          >
+            <img :src="asset.url" alt="">
+            <span>{{ asset.name }}</span>
+          </button>
+        </div>
+        <p v-else class="live2d-item-empty">models/tsukimi-yachiyo/items</p>
+      </section>
+
+      <section class="live2d-item-attached" aria-label="Attached items">
+        <div class="live2d-item-section-title">
+          <span>Attached</span>
+          <small>{{ localItemLayout.length }}</small>
+        </div>
+        <div v-if="localItemLayout.length" class="live2d-item-list">
+          <button
+            v-for="item in localItemLayout"
+            :key="item.id"
+            class="live2d-item-row"
+            :class="{ active: item.id === localItemSelectedId }"
+            type="button"
+            @click="selectLocalItem(item.id)"
+          >
+            <img :src="item.assetUrl" alt="">
+            <span>{{ item.name }}</span>
+            <small>{{ Math.round(Number(item.scale || 1) * 100) }}%</small>
+          </button>
+        </div>
+        <p v-else class="live2d-item-empty">No items</p>
+      </section>
+
+      <section v-if="selectedLocalItem" class="live2d-item-detail" aria-label="Selected item">
+        <div class="live2d-item-detail-head">
+          <strong>{{ selectedLocalItem.name }}</strong>
+          <button class="live2d-mini-btn" type="button" @click="removeSelectedLocalItem">
+            <TsIcon name="trash" :size="14" />
+            <span>删除</span>
+          </button>
+        </div>
+        <label>
+          <span>Layer</span>
+          <select :value="selectedLocalItem.layer" @change="updateSelectedLocalItem({ layer: $event.target.value })">
+            <option value="front">front</option>
+            <option value="behind">behind</option>
+          </select>
+        </label>
+        <label class="live2d-item-checkbox">
+          <input
+            type="checkbox"
+            :checked="selectedLocalItem.visible"
+            @change="updateSelectedLocalItem({ visible: $event.target.checked })"
+          >
+          <span>Visible</span>
+        </label>
+        <label>
+          <span>Scale {{ selectedLocalItemScale }}%</span>
+          <input
+            type="range"
+            min="0.05"
+            max="6"
+            step="0.01"
+            :value="selectedLocalItem.scale"
+            @input="updateSelectedLocalItem({ scale: Number($event.target.value) })"
+          >
+        </label>
+        <label>
+          <span>Rotation {{ Math.round(Number(selectedLocalItem.rotation || 0)) }}°</span>
+          <input
+            type="range"
+            min="-180"
+            max="180"
+            step="1"
+            :value="selectedLocalItem.rotation"
+            @input="updateSelectedLocalItem({ rotation: Number($event.target.value) })"
+          >
+        </label>
+      </section>
+    </aside>
 
     <aside class="live2d-control-panel" aria-label="Live controls">
       <header class="live2d-panel-header">

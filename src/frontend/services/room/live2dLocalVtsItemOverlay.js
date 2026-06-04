@@ -1,11 +1,12 @@
 const DEFAULT_MODEL_BASE_URL = '/models/tsukimi-yachiyo/';
-const DEFAULT_ITEM_BASE_PATH = 'vts-items';
+const DEFAULT_ITEM_BASE_PATH = 'items';
 const DEFAULT_MANIFEST_URLS = [
   `${DEFAULT_MODEL_BASE_URL}vts-items.local.json`,
   `${DEFAULT_MODEL_BASE_URL}items_pinned_to_model.json`
 ];
 
 export const LOCAL_VTS_ITEM_CONTROL_EVENT = 'tsukuyomi:live2d-local-vts-item';
+export const LOCAL_VTS_ITEM_STATE_EVENT = 'tsukuyomi:live2d-local-vts-item-state';
 export const LOCAL_CUBISM_FRAME_EVENT = 'tsukuyomi:live2d-local-cubism-frame';
 
 const OVERLAY_STATE_KEY = '__TSUKUYOMI_LOCAL_VTS_ITEM_OVERLAY_STATE__';
@@ -353,6 +354,43 @@ export function normalizeLocalVtsItemManifest(manifest, options = {}) {
   };
 }
 
+export function localVtsItemToManifestItem(item, options = {}) {
+  const includeFollow = options.includeFollow !== false;
+  const manifestItem = {
+    Id: item.id,
+    Name: item.name || item.id,
+    File: item.file,
+    Visible: item.visible !== false,
+    Layer: item.layer === BEHIND_LAYER ? BEHIND_LAYER : FRONT_LAYER,
+    Anchor: {
+      X: round(item.anchor?.x ?? 0.5, 5),
+      Y: round(item.anchor?.y ?? 0.5, 5)
+    },
+    Offset: {
+      X: round(item.offset?.x ?? 0, 3),
+      Y: round(item.offset?.y ?? 0, 3)
+    },
+    Size: item.size?.size || item.size?.width || null,
+    Scale: round(item.scale ?? 1, 4),
+    Rotation: round(item.rotation ?? 0, 3),
+    Opacity: round(item.opacity ?? 1, 4)
+  };
+  if (!manifestItem.Size) delete manifestItem.Size;
+  if (includeFollow) {
+    manifestItem.Follow = {
+      HeadX: round(item.follow?.headX ?? 0, 4),
+      HeadY: round(item.follow?.headY ?? 0, 4),
+      HeadZ: round(item.follow?.headZ ?? 0, 4),
+      BodyX: round(item.follow?.bodyX ?? 0, 4),
+      BodyY: round(item.follow?.bodyY ?? 0, 4),
+      BodyZ: round(item.follow?.bodyZ ?? 0, 4),
+      PositionX: round(item.follow?.positionX ?? 0, 4),
+      PositionY: round(item.follow?.positionY ?? 0, 4)
+    };
+  }
+  return manifestItem;
+}
+
 function parameterValue(values, ids, fallback = 0) {
   for (const id of ids) {
     const value = values[String(id)];
@@ -501,6 +539,9 @@ export function mountLocalVtsItemOverlay(options = {}) {
   let frameId = 0;
   let destroyed = false;
   let loadToken = 0;
+  let selectedItemId = '';
+  let editorEnabled = false;
+  let editDragState = null;
 
   function findContainer() {
     return document.querySelector(containerSelector);
@@ -509,6 +550,140 @@ export function mountLocalVtsItemOverlay(options = {}) {
   function scheduleApply() {
     if (frameId || destroyed) return;
     frameId = window.requestAnimationFrame(applyItems);
+  }
+
+  function visibleItems() {
+    return items.filter((item) => itemVisible(item, visibilityOverrides));
+  }
+
+  function itemStateSnapshot() {
+    return items.map((item) => ({
+      ...localVtsItemToManifestItem({
+        ...item,
+        visible: itemVisible(item, visibilityOverrides)
+      }),
+      id: item.id,
+      name: item.name,
+      file: item.file,
+      assetUrl: item.assetUrl,
+      visible: itemVisible(item, visibilityOverrides),
+      layer: item.layer,
+      anchor: { ...(item.anchor || DEFAULT_ANCHOR) },
+      offset: { ...(item.offset || { x: 0, y: 0 }) },
+      size: { ...(item.size || {}) },
+      scale: item.scale,
+      rotation: item.rotation,
+      opacity: item.opacity,
+      selected: item.id === selectedItemId,
+      source: item.source
+    }));
+  }
+
+  function emitItemState() {
+    window.dispatchEvent(new CustomEvent(LOCAL_VTS_ITEM_STATE_EVENT, {
+      detail: {
+        items: itemStateSnapshot(),
+        selectedItemId,
+        editorEnabled,
+        itemCount: items.length,
+        visibleItemCount: visibleItems().length,
+        unsupported
+      }
+    }));
+  }
+
+  function selectItem(id) {
+    selectedItemId = id && items.some((item) => item.id === String(id)) ? String(id) : '';
+    renderItems();
+  }
+
+  function normalizeEditorItem(rawItem, basePath = DEFAULT_ITEM_BASE_PATH) {
+    return normalizeLocalVtsItemManifest({
+      Version: 1,
+      BasePath: basePath || DEFAULT_ITEM_BASE_PATH,
+      Items: [rawItem]
+    }, {
+      modelBaseUrl,
+      source: 'local-item-editor'
+    }).items[0] || null;
+  }
+
+  function upsertItem(rawItem, options = {}) {
+    const item = normalizeEditorItem(rawItem, options.basePath);
+    if (!item) return null;
+    const existingIndex = items.findIndex((current) => current.id === item.id);
+    if (existingIndex >= 0) items.splice(existingIndex, 1, item);
+    else items.push(item);
+    if (options.select !== false) selectedItemId = item.id;
+    renderItems();
+    scheduleApply();
+    return item;
+  }
+
+  function mergePointPatch(current, patch, keys = ['x', 'y']) {
+    const point = normalizePoint(patch, null);
+    if (point) return point;
+    const next = { ...(current || { x: 0, y: 0 }) };
+    const x = Number(pickField(patch, [keys[0], keys[0].toUpperCase()]));
+    const y = Number(pickField(patch, [keys[1], keys[1].toUpperCase()]));
+    if (Number.isFinite(x)) next.x = x;
+    if (Number.isFinite(y)) next.y = y;
+    return next;
+  }
+
+  function updateItem(id, patch = {}) {
+    const item = items.find((candidate) => candidate.id === String(id || selectedItemId));
+    if (!item) return null;
+    const layer = pickField(patch, ['layer', 'Layer']);
+    const visible = pickField(patch, ['visible', 'Visible']);
+    const scale = pickField(patch, ['scale', 'Scale']);
+    const rotation = pickField(patch, ['rotation', 'Rotation']);
+    const opacity = pickField(patch, ['opacity', 'Opacity']);
+    const anchor = pickField(patch, ['anchor', 'Anchor']);
+    const offset = pickField(patch, ['offset', 'Offset']);
+    const size = pickField(patch, ['size', 'Size', 'itemSize', 'ItemSize']);
+
+    if (layer !== undefined) item.layer = normalizeLayer({ Layer: layer }, 0);
+    if (visible !== undefined) {
+      item.visible = normalizeBoolean(visible, true);
+      visibilityOverrides.delete(item.id);
+    }
+    if (scale !== undefined) item.scale = Math.min(Math.max(normalizeNumber(scale, item.scale), 0.05), 6);
+    if (rotation !== undefined) item.rotation = normalizeNumber(rotation, item.rotation);
+    if (opacity !== undefined) item.opacity = Math.min(Math.max(normalizeNumber(opacity, item.opacity), 0), 1);
+    if (anchor !== undefined) item.anchor = mergePointPatch(item.anchor, anchor);
+    if (offset !== undefined) item.offset = mergePointPatch(item.offset, offset);
+    if (size !== undefined) {
+      item.size = {
+        ...item.size,
+        size: Math.min(Math.max(normalizeNumber(size, item.size?.size || 160), 1), 2000)
+      };
+    }
+    renderItems();
+    scheduleApply();
+    return item;
+  }
+
+  function removeItem(id) {
+    const itemId = String(id || selectedItemId || '');
+    if (!itemId) return false;
+    const nextItems = items.filter((item) => item.id !== itemId);
+    if (nextItems.length === items.length) return false;
+    items = nextItems;
+    visibilityOverrides.delete(itemId);
+    if (selectedItemId === itemId) selectedItemId = '';
+    renderItems();
+    scheduleApply();
+    return true;
+  }
+
+  function setEditorEnabled(enabled) {
+    editorEnabled = Boolean(enabled);
+    if (!editorEnabled) {
+      selectedItemId = '';
+      editDragState = null;
+    }
+    renderItems();
   }
 
   function setVisible(id, visible) {
@@ -528,11 +703,88 @@ export function mountLocalVtsItemOverlay(options = {}) {
     scheduleApply();
   }
 
+  function clampAnchorValue(value) {
+    return Math.min(Math.max(Number(value) || 0, -0.45), 1.45);
+  }
+
+  function onItemPointerDown(event) {
+    if (!editorEnabled || (event.pointerType === 'mouse' && event.button !== 0)) return;
+    const id = event.currentTarget?.dataset?.itemId;
+    const item = items.find((candidate) => candidate.id === id);
+    const container = findContainer();
+    if (!item || !container) return;
+    const rect = container.getBoundingClientRect();
+    selectedItemId = item.id;
+    editDragState = {
+      id: item.id,
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      originX: item.anchor?.x ?? 0.5,
+      originY: item.anchor?.y ?? 0.5,
+      width: Math.max(rect.width, 1),
+      height: Math.max(rect.height, 1)
+    };
+    try {
+      event.currentTarget.setPointerCapture?.(event.pointerId);
+    } catch (_) {}
+    renderItems();
+    event.stopPropagation();
+    event.preventDefault();
+  }
+
+  function onItemPointerMove(event) {
+    if (!editorEnabled || !editDragState || event.pointerId !== editDragState.pointerId) return;
+    const item = items.find((candidate) => candidate.id === editDragState.id);
+    if (!item) return;
+    item.anchor = {
+      x: clampAnchorValue(editDragState.originX + (event.clientX - editDragState.startX) / editDragState.width),
+      y: clampAnchorValue(editDragState.originY + (event.clientY - editDragState.startY) / editDragState.height)
+    };
+    renderItems();
+    scheduleApply();
+    event.stopPropagation();
+    event.preventDefault();
+  }
+
+  function onItemPointerEnd(event) {
+    if (!editDragState || event.pointerId !== editDragState.pointerId) return;
+    try {
+      if (event.currentTarget?.hasPointerCapture?.(event.pointerId)) {
+        event.currentTarget.releasePointerCapture(event.pointerId);
+      }
+    } catch (_) {}
+    editDragState = null;
+    emitItemState();
+    event.stopPropagation();
+    event.preventDefault();
+  }
+
+  function onItemWheel(event) {
+    if (!editorEnabled) return;
+    const id = event.currentTarget?.dataset?.itemId;
+    const item = items.find((candidate) => candidate.id === id);
+    if (!item) return;
+    selectedItemId = item.id;
+    if (event.shiftKey) {
+      item.rotation = normalizeNumber(item.rotation, 0) - Number(event.deltaY || 0) * 0.06;
+    } else {
+      const rate = event.ctrlKey ? 0.00055 : 0.00145;
+      item.scale = Math.min(Math.max(normalizeNumber(item.scale, 1) * Math.exp(-Number(event.deltaY || 0) * rate), 0.05), 6);
+    }
+    renderItems();
+    scheduleApply();
+    event.stopPropagation();
+    event.preventDefault();
+  }
+
   function renderItems() {
     const container = findContainer();
     if (!container) return;
     const frontLayer = ensureLayer(container, FRONT_LAYER);
     const behindLayer = ensureLayer(container, BEHIND_LAYER);
+    frontLayer.classList.toggle('editing', editorEnabled);
+    behindLayer.classList.toggle('editing', editorEnabled);
     const validIds = new Set(items.map((item) => item.id));
     for (const [id, element] of elements) {
       if (!validIds.has(id)) {
@@ -547,10 +799,19 @@ export function mountLocalVtsItemOverlay(options = {}) {
       if (!element) {
         element = document.createElement('img');
         element.className = 'live2d-vts-item';
+        element.addEventListener('pointerdown', onItemPointerDown);
+        element.addEventListener('pointermove', onItemPointerMove);
+        element.addEventListener('pointerup', onItemPointerEnd);
+        element.addEventListener('pointercancel', onItemPointerEnd);
+        element.addEventListener('lostpointercapture', onItemPointerEnd);
+        element.addEventListener('wheel', onItemWheel, { passive: false });
         elements.set(item.id, element);
       }
       if (element.parentElement !== layer) layer.appendChild(element);
       applyItemStaticStyle(element, item, container);
+      element.classList.toggle('editing', editorEnabled);
+      element.classList.toggle('selected', editorEnabled && item.id === selectedItemId);
+      element.tabIndex = editorEnabled ? 0 : -1;
       const visible = itemVisible(item, visibilityOverrides);
       element.hidden = !visible;
       if (visible && !element.src) element.src = item.assetUrl;
@@ -563,6 +824,7 @@ export function mountLocalVtsItemOverlay(options = {}) {
       visibleItemCount: items.filter((item) => itemVisible(item, visibilityOverrides)).length,
       unsupportedCount: unsupported.length
     });
+    emitItemState();
   }
 
   function applyItems(now = performance.now()) {
@@ -598,9 +860,10 @@ export function mountLocalVtsItemOverlay(options = {}) {
       .map((entry) => normalizeLocalVtsItemManifest(entry.manifest, {
         modelBaseUrl,
         source: entry.url
-      }));
+    }));
     items = normalized.flatMap((entry) => entry.items);
     unsupported = normalized.flatMap((entry) => entry.unsupported);
+    if (selectedItemId && !items.some((item) => item.id === selectedItemId)) selectedItemId = '';
     renderItems();
     scheduleApply();
   }
@@ -631,6 +894,19 @@ export function mountLocalVtsItemOverlay(options = {}) {
       toggleVisible(id);
     } else if (action === 'set') {
       setVisible(id, normalizeBoolean(detail.visible, true));
+    } else if (action === 'editor' || action === 'set-editor') {
+      setEditorEnabled(normalizeBoolean(detail.enabled ?? detail.visible ?? detail.value, true));
+    } else if (action === 'select') {
+      selectItem(id);
+    } else if (action === 'upsert' || action === 'add') {
+      upsertItem(detail.item || detail.payload || detail, {
+        basePath: detail.basePath || DEFAULT_ITEM_BASE_PATH,
+        select: detail.select !== false
+      });
+    } else if (action === 'update') {
+      updateItem(id, detail.patch || detail.item || detail.payload || detail);
+    } else if (action === 'remove' || action === 'delete') {
+      removeItem(id);
     }
   }
 
@@ -643,6 +919,16 @@ export function mountLocalVtsItemOverlay(options = {}) {
     show: (id) => setVisible(id, true),
     hide: (id) => setVisible(id, false),
     toggle: (id) => toggleVisible(id),
+    select: (id) => selectItem(id),
+    setEditorEnabled,
+    upsert: (item, options = {}) => upsertItem(item, options),
+    update: (id, patch) => updateItem(id, patch),
+    remove: (id) => removeItem(id),
+    snapshot: () => itemStateSnapshot(),
+    manifestItems: () => items.map((item) => localVtsItemToManifestItem({
+      ...item,
+      visible: itemVisible(item, visibilityOverrides)
+    })),
     list: () => items.map((item) => ({
       id: item.id,
       name: item.name,
