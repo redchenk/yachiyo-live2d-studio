@@ -22,6 +22,8 @@ function contentType(filePath) {
       return 'application/json; charset=utf-8';
     case '.png':
       return 'image/png';
+    case '.gif':
+      return 'image/gif';
     case '.webp':
       return 'image/webp';
     case '.jpg':

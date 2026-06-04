@@ -6,6 +6,7 @@ import {
 } from './live2dDebug';
 
 const FACE_CAPTURE_EVENT = 'tsukuyomi:live2d-face';
+const LOCAL_CUBISM_FRAME_EVENT = 'tsukuyomi:live2d-local-cubism-frame';
 const LOCAL_BRIDGE_STATE_KEY = '__TSUKUYOMI_LOCAL_CUBISM_BRIDGE_STATE__';
 const LOCAL_CUBISM_FRAME_FLUSH_MS = 1000 / 60;
 const LOCAL_CUBISM_RELEASE_EPSILON = 0.0015;
@@ -128,6 +129,12 @@ function runtimeLocalBridge() {
 function dispatchFallbackFrame(parameters) {
   window.dispatchEvent(new CustomEvent(FACE_CAPTURE_EVENT, {
     detail: { source: 'cubism-behavior', parameters }
+  }));
+}
+
+function dispatchLocalCubismFrame(parameters, output) {
+  window.dispatchEvent(new CustomEvent(LOCAL_CUBISM_FRAME_EVENT, {
+    detail: { source: 'local-cubism', output, parameters }
   }));
 }
 
@@ -287,12 +294,14 @@ function flushLocalCubismFrame() {
   flushTimer = 0;
   const parameters = takePendingLocalCubismFrame();
   if (!parameters.length) return;
+  const frameParameters = smoothLocalCubismFrame(parameters);
+  if (!frameParameters.length) return;
 
   const bridge = runtimeLocalBridge();
   if (bridge && typeof bridge.setFrame === 'function') {
     try {
-      const frameParameters = smoothLocalCubismFrame(parameters);
       bridge.setFrame(frameParameters);
+      dispatchLocalCubismFrame(frameParameters, 'runtime-direct');
       publishRoomLive2DDebugState({
         cubismParameters: summarizeDebugParameters(frameParameters),
         cubismParameterCount: frameParameters.length,
@@ -319,11 +328,12 @@ function flushLocalCubismFrame() {
     }
   }
 
-  dispatchFallbackFrame(parameters);
+  dispatchLocalCubismFrame(frameParameters, 'runtime-event-fallback');
+  dispatchFallbackFrame(frameParameters);
   setLocalBridgeState({
     mounted: true,
     output: 'runtime-event-fallback',
-    parameterCount: Array.isArray(parameters) ? parameters.length : 0
+    parameterCount: frameParameters.length
   });
 }
 

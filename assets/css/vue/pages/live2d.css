@@ -87,6 +87,32 @@ body.vue-live2d-route {
     touch-action: none;
 }
 
+.live2d-vts-item-layer {
+    position: absolute;
+    inset: 0;
+    overflow: visible;
+    pointer-events: none;
+}
+
+.live2d-vts-item-layer[data-layer="behind"] {
+    z-index: 0;
+}
+
+.live2d-vts-item-layer[data-layer="front"] {
+    z-index: 2;
+}
+
+.live2d-vts-item {
+    position: absolute;
+    max-width: 75%;
+    max-height: 75%;
+    transform-origin: 50% 50%;
+    pointer-events: none;
+    user-select: none;
+    image-rendering: auto;
+    will-change: transform;
+}
+
 .live2d-page.model-hidden .live2d-model {
     opacity: 0.05;
     filter: blur(4px);

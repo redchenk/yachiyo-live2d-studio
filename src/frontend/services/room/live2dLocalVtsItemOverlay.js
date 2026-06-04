@@ -1,0 +1,670 @@
+const DEFAULT_MODEL_BASE_URL = '/models/tsukimi-yachiyo/';
+const DEFAULT_ITEM_BASE_PATH = 'vts-items';
+const DEFAULT_MANIFEST_URLS = [
+  `${DEFAULT_MODEL_BASE_URL}vts-items.local.json`,
+  `${DEFAULT_MODEL_BASE_URL}items_pinned_to_model.json`
+];
+
+export const LOCAL_VTS_ITEM_CONTROL_EVENT = 'tsukuyomi:live2d-local-vts-item';
+export const LOCAL_CUBISM_FRAME_EVENT = 'tsukuyomi:live2d-local-cubism-frame';
+
+const OVERLAY_STATE_KEY = '__TSUKUYOMI_LOCAL_VTS_ITEM_OVERLAY_STATE__';
+const FRONT_LAYER = 'front';
+const BEHIND_LAYER = 'behind';
+const IMAGE_FILE_RE = /\.(?:png|jpe?g|webp|gif|avif)$/i;
+const LIVE2D_ITEM_FILE_RE = /\.(?:model3\.json|moc3)$/i;
+
+const DEFAULT_ANCHOR = { x: 0.5, y: 0.5 };
+const DEFAULT_FOLLOW = {
+  headX: 1.15,
+  headY: -0.82,
+  headZ: 0.34,
+  bodyX: 0.32,
+  bodyY: -0.22,
+  bodyZ: 0.16,
+  positionX: 1.15,
+  positionY: -1.15
+};
+
+function isObject(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function pickField(source, keys) {
+  if (!isObject(source)) return undefined;
+  for (const key of keys) {
+    if (Object.prototype.hasOwnProperty.call(source, key)) return source[key];
+  }
+  const entries = Object.entries(source);
+  for (const key of keys) {
+    const lowerKey = String(key).toLowerCase();
+    const match = entries.find(([entryKey]) => String(entryKey).toLowerCase() === lowerKey);
+    if (match) return match[1];
+  }
+  return undefined;
+}
+
+function normalizeString(value, fallback = '') {
+  if (value === undefined || value === null) return fallback;
+  const text = String(value).trim();
+  return text || fallback;
+}
+
+function normalizeNumber(value, fallback = 0) {
+  if (value === undefined || value === null || value === '') return fallback;
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : fallback;
+}
+
+function normalizeBoolean(value, fallback = false) {
+  if (value === undefined || value === null || value === '') return fallback;
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'number') return value !== 0;
+  const text = String(value).trim().toLowerCase();
+  if (['true', '1', 'yes', 'on', 'visible', 'enabled'].includes(text)) return true;
+  if (['false', '0', 'no', 'off', 'hidden', 'disabled'].includes(text)) return false;
+  return fallback;
+}
+
+function normalizePoint(value, fallback = null) {
+  if (Array.isArray(value) && value.length >= 2) {
+    const x = Number(value[0]);
+    const y = Number(value[1]);
+    return Number.isFinite(x) && Number.isFinite(y) ? { x, y } : fallback;
+  }
+  if (!isObject(value)) return fallback;
+  const x = Number(pickField(value, ['x', 'X', 'positionX', 'PositionX']));
+  const y = Number(pickField(value, ['y', 'Y', 'positionY', 'PositionY']));
+  return Number.isFinite(x) && Number.isFinite(y) ? { x, y } : fallback;
+}
+
+function round(value, digits = 3) {
+  const factor = 10 ** digits;
+  return Math.round((Number(value) || 0) * factor) / factor;
+}
+
+function isAbsoluteAssetUrl(value) {
+  return /^(?:https?:|data:|blob:|\/)/i.test(String(value || ''));
+}
+
+function joinAssetUrl(base, path) {
+  const cleanBase = String(base || '').replace(/\/+$/, '');
+  const cleanPath = String(path || '').replace(/^\.?\//, '');
+  if (!cleanBase) return cleanPath;
+  if (!cleanPath) return `${cleanBase}/`;
+  return `${cleanBase}/${cleanPath}`;
+}
+
+export function resolveLocalVtsItemAssetUrl(file, options = {}) {
+  const sourceFile = normalizeString(file);
+  if (!sourceFile) return '';
+  if (isAbsoluteAssetUrl(sourceFile)) return sourceFile;
+
+  const modelBaseUrl = normalizeString(options.modelBaseUrl, DEFAULT_MODEL_BASE_URL);
+  const basePath = normalizeString(options.basePath, DEFAULT_ITEM_BASE_PATH);
+  if (basePath && sourceFile.replace(/\\/g, '/').startsWith(`${basePath.replace(/\\/g, '/')}/`)) {
+    return joinAssetUrl(modelBaseUrl, sourceFile.replace(/\\/g, '/'));
+  }
+  const assetBaseUrl = basePath ? joinAssetUrl(modelBaseUrl, basePath) : modelBaseUrl;
+  return joinAssetUrl(assetBaseUrl, sourceFile.replace(/\\/g, '/'));
+}
+
+function normalizeLayer(rawItem, index) {
+  const layer = normalizeString(pickField(rawItem, [
+    'layer',
+    'Layer',
+    'itemLayer',
+    'ItemLayer',
+    'sortingLayer',
+    'SortingLayer'
+  ])).toLowerCase();
+  if (layer.includes('behind') || layer.includes('back') || layer.includes('rear')) return BEHIND_LAYER;
+  if (layer.includes('front') || layer.includes('above') || layer.includes('foreground')) return FRONT_LAYER;
+
+  const order = normalizeNumber(pickField(rawItem, [
+    'zIndex',
+    'ZIndex',
+    'order',
+    'Order',
+    'itemOrder',
+    'ItemOrder',
+    'drawOrder',
+    'DrawOrder'
+  ]), index);
+  return order < 0 ? BEHIND_LAYER : FRONT_LAYER;
+}
+
+function normalizeAnchor(rawItem) {
+  const anchor = normalizePoint(pickField(rawItem, ['anchor', 'Anchor', 'modelAnchor', 'ModelAnchor']), null);
+  if (anchor) return anchor;
+
+  const position = normalizePoint(pickField(rawItem, [
+    'position',
+    'Position',
+    'itemPosition',
+    'ItemPosition',
+    'scenePosition',
+    'ScenePosition'
+  ]), null);
+  if (position) {
+    return {
+      x: 0.5 + position.x * 0.5,
+      y: 0.5 - position.y * 0.5
+    };
+  }
+
+  const positionX = pickField(rawItem, ['positionX', 'PositionX', 'itemPositionX', 'ItemPositionX', 'x', 'X']);
+  const positionY = pickField(rawItem, ['positionY', 'PositionY', 'itemPositionY', 'ItemPositionY', 'y', 'Y']);
+  const x = Number(positionX);
+  const y = Number(positionY);
+  if (Number.isFinite(x) && Number.isFinite(y)) {
+    return {
+      x: 0.5 + x * 0.5,
+      y: 0.5 - y * 0.5
+    };
+  }
+
+  return { ...DEFAULT_ANCHOR };
+}
+
+function normalizeOffset(rawItem) {
+  const offset = normalizePoint(pickField(rawItem, ['offset', 'Offset', 'itemOffset', 'ItemOffset']), null);
+  if (offset) return offset;
+  return {
+    x: normalizeNumber(pickField(rawItem, ['offsetX', 'OffsetX', 'xOffset', 'XOffset']), 0),
+    y: normalizeNumber(pickField(rawItem, ['offsetY', 'OffsetY', 'yOffset', 'YOffset']), 0)
+  };
+}
+
+function normalizeFollow(rawItem) {
+  const follow = pickField(rawItem, ['follow', 'Follow', 'tracking', 'Tracking', 'pinFollow', 'PinFollow']);
+  if (follow === false || normalizeString(follow).toLowerCase() === 'false') {
+    return {
+      headX: 0,
+      headY: 0,
+      headZ: 0,
+      bodyX: 0,
+      bodyY: 0,
+      bodyZ: 0,
+      positionX: 0,
+      positionY: 0
+    };
+  }
+  if (!isObject(follow)) return { ...DEFAULT_FOLLOW };
+  return {
+    headX: normalizeNumber(pickField(follow, ['headX', 'HeadX', 'faceAngleX', 'FaceAngleX', 'x', 'X']), 0),
+    headY: normalizeNumber(pickField(follow, ['headY', 'HeadY', 'faceAngleY', 'FaceAngleY', 'y', 'Y']), 0),
+    headZ: normalizeNumber(pickField(follow, ['headZ', 'HeadZ', 'faceAngleZ', 'FaceAngleZ', 'z', 'Z', 'rotation', 'Rotation']), 0),
+    bodyX: normalizeNumber(pickField(follow, ['bodyX', 'BodyX', 'bodyAngleX', 'BodyAngleX']), 0),
+    bodyY: normalizeNumber(pickField(follow, ['bodyY', 'BodyY', 'bodyAngleY', 'BodyAngleY']), 0),
+    bodyZ: normalizeNumber(pickField(follow, ['bodyZ', 'BodyZ', 'bodyAngleZ', 'BodyAngleZ']), 0),
+    positionX: normalizeNumber(pickField(follow, ['positionX', 'PositionX', 'facePositionX', 'FacePositionX']), 0),
+    positionY: normalizeNumber(pickField(follow, ['positionY', 'PositionY', 'facePositionY', 'FacePositionY']), 0)
+  };
+}
+
+function normalizeFile(rawItem) {
+  return normalizeString(pickField(rawItem, [
+    'file',
+    'File',
+    'fileName',
+    'FileName',
+    'filename',
+    'Filename',
+    'path',
+    'Path',
+    'image',
+    'Image',
+    'imageFile',
+    'ImageFile',
+    'itemFile',
+    'ItemFile',
+    'itemFileName',
+    'ItemFileName',
+    'texture',
+    'Texture'
+  ]));
+}
+
+function normalizeFrames(rawItem, options) {
+  const rawFrames = pickField(rawItem, ['frames', 'Frames', 'frameFiles', 'FrameFiles', 'files', 'Files']);
+  if (!Array.isArray(rawFrames)) return [];
+  return rawFrames
+    .map((frame) => normalizeFile(isObject(frame) ? frame : { file: frame }))
+    .filter(Boolean)
+    .map((file) => resolveLocalVtsItemAssetUrl(file, options));
+}
+
+function normalizeSizeValue(rawItem, keys) {
+  const value = pickField(rawItem, keys);
+  if (value === undefined || value === null || value === '') return null;
+  const numeric = Number(value);
+  return Number.isFinite(numeric) && numeric > 0 ? numeric : null;
+}
+
+function normalizeItemSize(rawItem) {
+  const size = normalizeSizeValue(rawItem, ['size', 'Size', 'itemSize', 'ItemSize']);
+  const width = normalizeSizeValue(rawItem, ['width', 'Width', 'w', 'W']);
+  const height = normalizeSizeValue(rawItem, ['height', 'Height', 'h', 'H']);
+  return { size, width, height };
+}
+
+function normalizeItemId(rawItem, index) {
+  const explicitId = normalizeString(pickField(rawItem, [
+    'id',
+    'Id',
+    'ID',
+    'itemId',
+    'ItemId',
+    'itemID',
+    'ItemID'
+  ]));
+  if (explicitId) return explicitId;
+  const name = normalizeString(pickField(rawItem, ['name', 'Name', 'displayName', 'DisplayName']));
+  if (name) return name.replace(/\s+/g, '-').toLowerCase();
+  const file = normalizeFile(rawItem);
+  if (file) return file.split(/[\\/]/).pop().replace(/\.[^.]+$/, '') || `item-${index + 1}`;
+  return `item-${index + 1}`;
+}
+
+function isSupportedItemFile(file, frames = []) {
+  if (frames.length > 0) return true;
+  if (!file) return false;
+  if (LIVE2D_ITEM_FILE_RE.test(file)) return false;
+  return IMAGE_FILE_RE.test(file) || !/\.[a-z0-9]+$/i.test(file);
+}
+
+export function normalizeLocalVtsItemManifest(manifest, options = {}) {
+  const modelBaseUrl = normalizeString(options.modelBaseUrl, DEFAULT_MODEL_BASE_URL);
+  const manifestBasePath = normalizeString(
+    pickField(manifest, ['basePath', 'BasePath', 'itemBasePath', 'ItemBasePath']),
+    DEFAULT_ITEM_BASE_PATH
+  );
+  const rawItems = Array.isArray(manifest)
+    ? manifest
+    : (pickField(manifest, ['items', 'Items', 'itemList', 'ItemList']) || []);
+  const itemIdCounts = new Map();
+  const unsupported = [];
+
+  const items = (Array.isArray(rawItems) ? rawItems : []).map((rawItem, index) => {
+    const basePath = normalizeString(pickField(rawItem, ['basePath', 'BasePath']), manifestBasePath);
+    const file = normalizeFile(rawItem);
+    const frames = normalizeFrames(rawItem, { modelBaseUrl, basePath });
+    const assetUrl = file ? resolveLocalVtsItemAssetUrl(file, { modelBaseUrl, basePath }) : frames[0] || '';
+    const baseId = normalizeItemId(rawItem, index);
+    const seen = itemIdCounts.get(baseId) || 0;
+    itemIdCounts.set(baseId, seen + 1);
+    const id = seen ? `${baseId}-${seen + 1}` : baseId;
+    const size = normalizeItemSize(rawItem);
+    const layer = normalizeLayer(rawItem, index);
+    const zIndex = normalizeNumber(pickField(rawItem, [
+      'zIndex',
+      'ZIndex',
+      'order',
+      'Order',
+      'itemOrder',
+      'ItemOrder',
+      'drawOrder',
+      'DrawOrder'
+    ]), index);
+    const supported = isSupportedItemFile(assetUrl, frames);
+    const item = {
+      id,
+      name: normalizeString(pickField(rawItem, ['name', 'Name', 'displayName', 'DisplayName']), id),
+      file,
+      assetUrl,
+      frames,
+      fps: Math.min(Math.max(normalizeNumber(pickField(rawItem, ['fps', 'FPS', 'frameRate', 'FrameRate']), 12), 1), 60),
+      visible: normalizeBoolean(pickField(rawItem, [
+        'visible',
+        'Visible',
+        'enabled',
+        'Enabled',
+        'active',
+        'Active',
+        'isVisible',
+        'IsVisible'
+      ]), true),
+      layer,
+      zIndex,
+      anchor: normalizeAnchor(rawItem),
+      offset: normalizeOffset(rawItem),
+      size,
+      scale: normalizeNumber(pickField(rawItem, ['scale', 'Scale']), 1),
+      scaleX: normalizeNumber(pickField(rawItem, ['scaleX', 'ScaleX']), 1),
+      scaleY: normalizeNumber(pickField(rawItem, ['scaleY', 'ScaleY']), 1),
+      flipX: normalizeBoolean(pickField(rawItem, ['flipX', 'FlipX', 'mirrorX', 'MirrorX', 'mirrored', 'Mirrored']), false),
+      flipY: normalizeBoolean(pickField(rawItem, ['flipY', 'FlipY', 'mirrorY', 'MirrorY']), false),
+      rotation: normalizeNumber(pickField(rawItem, ['rotation', 'Rotation', 'angle', 'Angle', 'itemRotation', 'ItemRotation']), 0),
+      opacity: Math.min(Math.max(normalizeNumber(pickField(rawItem, ['opacity', 'Opacity', 'alpha', 'Alpha']), 1), 0), 1),
+      follow: normalizeFollow(rawItem),
+      supported,
+      source: options.source || ''
+    };
+    if (!supported) unsupported.push({ id, file: assetUrl, source: item.source });
+    return item;
+  }).filter((item) => item.supported);
+
+  return {
+    version: normalizeNumber(pickField(manifest, ['version', 'Version']), 1),
+    basePath: manifestBasePath,
+    items,
+    unsupported
+  };
+}
+
+function parameterValue(values, ids, fallback = 0) {
+  for (const id of ids) {
+    const value = values[String(id)];
+    if (Number.isFinite(value)) return value;
+  }
+  return fallback;
+}
+
+export function localVtsFrameStateFromParameters(parameters) {
+  const values = {};
+  for (const item of Array.isArray(parameters) ? parameters : []) {
+    const id = normalizeString(pickField(item, ['id', 'Id', 'parameterId', 'ParameterId', 'name', 'Name']));
+    const value = Number(pickField(item, ['value', 'Value']));
+    if (!id || !Number.isFinite(value)) continue;
+    values[id] = value;
+  }
+  return {
+    headX: parameterValue(values, ['ParamAngle_HeadX', 'ParamAngleX', 'FaceAngleX', 'MocopiAngleX']),
+    headY: parameterValue(values, ['ParamAngle_HeadY', 'ParamAngleY', 'FaceAngleY', 'MocopiAngleY']),
+    headZ: parameterValue(values, ['ParamAngle_HeadZ', 'ParamAngle_HeadZ2', 'ParamAngleZ', 'FaceAngleZ', 'MocopiAngleZ']),
+    bodyX: parameterValue(values, ['ParamAngle_BodyX', 'ParamAngle_BodyX2', 'ParamAngle_BodyX3', 'ParamBodyAngleX', 'MocopiBodyAngleX']),
+    bodyY: parameterValue(values, ['ParamAngle_BodyY', 'ParamAngle_BodyY2', 'ParamBodyAngleY', 'MocopiBodyAngleY']),
+    bodyZ: parameterValue(values, ['ParamAngle_BodyZ', 'ParamAngle_BodyZ2', 'ParamAngle_ChestZ', 'ParamBodyAngleZ', 'MocopiBodyAngleZ']),
+    positionX: parameterValue(values, ['FacePositionX', 'PositionX', 'MocopiBodyPositionX']),
+    positionY: parameterValue(values, ['FacePositionY', 'PositionY', 'MocopiBodyPositionY'])
+  };
+}
+
+export function localVtsItemTransform(item, frameState = {}) {
+  const state = Array.isArray(frameState)
+    ? localVtsFrameStateFromParameters(frameState)
+    : { ...localVtsFrameStateFromParameters([]), ...frameState };
+  const follow = item?.follow || {};
+  const offset = item?.offset || { x: 0, y: 0 };
+  const x = normalizeNumber(offset.x, 0) +
+    state.headX * normalizeNumber(follow.headX, 0) +
+    state.bodyX * normalizeNumber(follow.bodyX, 0) +
+    state.positionX * normalizeNumber(follow.positionX, 0);
+  const y = normalizeNumber(offset.y, 0) +
+    state.headY * normalizeNumber(follow.headY, 0) +
+    state.bodyY * normalizeNumber(follow.bodyY, 0) +
+    state.positionY * normalizeNumber(follow.positionY, 0);
+  const rotation = normalizeNumber(item?.rotation, 0) +
+    state.headZ * normalizeNumber(follow.headZ, 0) +
+    state.bodyZ * normalizeNumber(follow.bodyZ, 0);
+  const scale = normalizeNumber(item?.scale, 1);
+  const scaleX = scale * normalizeNumber(item?.scaleX, 1) * (item?.flipX ? -1 : 1);
+  const scaleY = scale * normalizeNumber(item?.scaleY, 1) * (item?.flipY ? -1 : 1);
+
+  return {
+    x: round(x),
+    y: round(y),
+    rotation: round(rotation),
+    scaleX: round(scaleX, 4),
+    scaleY: round(scaleY, 4),
+    cssTransform: [
+      'translate(-50%, -50%)',
+      `translate3d(${round(x)}px, ${round(y)}px, 0)`,
+      `rotate(${round(rotation)}deg)`,
+      `scale(${round(scaleX, 4)}, ${round(scaleY, 4)})`
+    ].join(' ')
+  };
+}
+
+function setOverlayState(patch) {
+  if (typeof window === 'undefined') return;
+  window[OVERLAY_STATE_KEY] = {
+    ...(window[OVERLAY_STATE_KEY] || {}),
+    ...patch,
+    updatedAt: Date.now()
+  };
+}
+
+async function fetchJsonMaybe(url) {
+  try {
+    const response = await fetch(url, { cache: 'no-store' });
+    if (!response.ok) return null;
+    return await response.json();
+  } catch (_) {
+    return null;
+  }
+}
+
+function ensureLayer(container, layer) {
+  const selector = `.live2d-vts-item-layer[data-layer="${layer}"]`;
+  const existing = container.querySelector(selector);
+  if (existing) return existing;
+  const element = document.createElement('div');
+  element.className = 'live2d-vts-item-layer';
+  element.dataset.layer = layer;
+  element.dataset.live2dVtsItemLayer = layer;
+  container.appendChild(element);
+  return element;
+}
+
+function removeOverlayLayers(container) {
+  container?.querySelectorAll('.live2d-vts-item-layer[data-live2d-vts-item-layer]')
+    .forEach((layer) => layer.remove());
+}
+
+function resolveSizeCss(value, reference) {
+  if (!Number.isFinite(Number(value)) || Number(value) <= 0) return '';
+  const numeric = Number(value);
+  if (numeric <= 1) return `${Math.max(1, Math.round(reference * numeric))}px`;
+  return `${Math.round(numeric)}px`;
+}
+
+function applyItemSizing(element, item, container) {
+  const rect = container.getBoundingClientRect();
+  const reference = Math.max(rect.width || 0, 1);
+  const width = item.size?.width || item.size?.size;
+  const height = item.size?.height;
+  element.style.width = resolveSizeCss(width, reference);
+  element.style.height = resolveSizeCss(height, rect.height || reference);
+}
+
+function applyItemStaticStyle(element, item, container) {
+  element.dataset.itemId = item.id;
+  element.dataset.layer = item.layer;
+  element.alt = item.name || item.id;
+  element.draggable = false;
+  element.decoding = 'async';
+  element.loading = 'eager';
+  element.style.left = `${round((item.anchor?.x ?? 0.5) * 100, 4)}%`;
+  element.style.top = `${round((item.anchor?.y ?? 0.5) * 100, 4)}%`;
+  element.style.opacity = String(item.opacity);
+  element.style.zIndex = String(Math.round(item.zIndex || 0));
+  applyItemSizing(element, item, container);
+}
+
+function itemVisible(item, overrides) {
+  return overrides.has(item.id) ? overrides.get(item.id) : item.visible;
+}
+
+export function mountLocalVtsItemOverlay(options = {}) {
+  if (typeof window === 'undefined' || typeof document === 'undefined') return () => {};
+
+  const containerSelector = options.containerSelector || '#live2d-container';
+  const modelBaseUrl = options.modelBaseUrl || DEFAULT_MODEL_BASE_URL;
+  const manifestUrls = options.manifestUrls || DEFAULT_MANIFEST_URLS;
+  const elements = new Map();
+  const visibilityOverrides = new Map();
+  let items = [];
+  let unsupported = [];
+  let frameState = localVtsFrameStateFromParameters([]);
+  let frameId = 0;
+  let destroyed = false;
+  let loadToken = 0;
+
+  function findContainer() {
+    return document.querySelector(containerSelector);
+  }
+
+  function scheduleApply() {
+    if (frameId || destroyed) return;
+    frameId = window.requestAnimationFrame(applyItems);
+  }
+
+  function setVisible(id, visible) {
+    if (!id) {
+      items.forEach((item) => visibilityOverrides.set(item.id, visible));
+    } else {
+      visibilityOverrides.set(String(id), visible);
+    }
+    renderItems();
+    scheduleApply();
+  }
+
+  function toggleVisible(id) {
+    const targetItems = id ? items.filter((item) => item.id === String(id)) : items;
+    targetItems.forEach((item) => visibilityOverrides.set(item.id, !itemVisible(item, visibilityOverrides)));
+    renderItems();
+    scheduleApply();
+  }
+
+  function renderItems() {
+    const container = findContainer();
+    if (!container) return;
+    const frontLayer = ensureLayer(container, FRONT_LAYER);
+    const behindLayer = ensureLayer(container, BEHIND_LAYER);
+    const validIds = new Set(items.map((item) => item.id));
+    for (const [id, element] of elements) {
+      if (!validIds.has(id)) {
+        element.remove();
+        elements.delete(id);
+      }
+    }
+
+    for (const item of items) {
+      const layer = item.layer === BEHIND_LAYER ? behindLayer : frontLayer;
+      let element = elements.get(item.id);
+      if (!element) {
+        element = document.createElement('img');
+        element.className = 'live2d-vts-item';
+        elements.set(item.id, element);
+      }
+      if (element.parentElement !== layer) layer.appendChild(element);
+      applyItemStaticStyle(element, item, container);
+      const visible = itemVisible(item, visibilityOverrides);
+      element.hidden = !visible;
+      if (visible && !element.src) element.src = item.assetUrl;
+    }
+
+    setOverlayState({
+      mounted: true,
+      status: 'ready',
+      itemCount: items.length,
+      visibleItemCount: items.filter((item) => itemVisible(item, visibilityOverrides)).length,
+      unsupportedCount: unsupported.length
+    });
+  }
+
+  function applyItems(now = performance.now()) {
+    frameId = 0;
+    const container = findContainer();
+    if (!container) return;
+    if (elements.size !== items.length) renderItems();
+    for (const item of items) {
+      const element = elements.get(item.id);
+      if (!element || element.hidden) continue;
+      if (item.frames.length > 1) {
+        const frameIndex = Math.floor((now / 1000) * item.fps) % item.frames.length;
+        const frameUrl = item.frames[frameIndex];
+        if (frameUrl && element.src !== new URL(frameUrl, window.location.href).href) element.src = frameUrl;
+      } else if (!element.src && item.assetUrl) {
+        element.src = item.assetUrl;
+      }
+      applyItemSizing(element, item, container);
+      element.style.transform = localVtsItemTransform(item, frameState).cssTransform;
+    }
+  }
+
+  async function reload() {
+    const token = ++loadToken;
+    setOverlayState({ mounted: true, status: 'loading' });
+    const manifests = await Promise.all(manifestUrls.map(async (url) => ({
+      url,
+      manifest: await fetchJsonMaybe(url)
+    })));
+    if (destroyed || token !== loadToken) return;
+    const normalized = manifests
+      .filter((entry) => entry.manifest)
+      .map((entry) => normalizeLocalVtsItemManifest(entry.manifest, {
+        modelBaseUrl,
+        source: entry.url
+      }));
+    items = normalized.flatMap((entry) => entry.items);
+    unsupported = normalized.flatMap((entry) => entry.unsupported);
+    renderItems();
+    scheduleApply();
+  }
+
+  function onFrame(event) {
+    frameState = localVtsFrameStateFromParameters(event.detail?.parameters);
+    scheduleApply();
+  }
+
+  function onFaceFrame(event) {
+    if (event.detail?.source === 'cubism-behavior' || event.detail?.source === 'local-cubism-fallback') {
+      frameState = localVtsFrameStateFromParameters(event.detail?.parameters);
+      scheduleApply();
+    }
+  }
+
+  function onControl(event) {
+    const detail = event.detail || {};
+    const action = normalizeString(detail.action || detail.type || detail.command).toLowerCase();
+    const id = detail.id || detail.itemId || detail.itemID || detail.name;
+    if (action === 'reload') {
+      reload();
+    } else if (action === 'show') {
+      setVisible(id, true);
+    } else if (action === 'hide') {
+      setVisible(id, false);
+    } else if (action === 'toggle') {
+      toggleVisible(id);
+    } else if (action === 'set') {
+      setVisible(id, normalizeBoolean(detail.visible, true));
+    }
+  }
+
+  window.addEventListener(LOCAL_CUBISM_FRAME_EVENT, onFrame);
+  window.addEventListener('tsukuyomi:live2d-face', onFaceFrame);
+  window.addEventListener(LOCAL_VTS_ITEM_CONTROL_EVENT, onControl);
+  window.addEventListener('resize', scheduleApply);
+  window.TSUKUYOMI_LOCAL_VTS_ITEMS = {
+    reload,
+    show: (id) => setVisible(id, true),
+    hide: (id) => setVisible(id, false),
+    toggle: (id) => toggleVisible(id),
+    list: () => items.map((item) => ({
+      id: item.id,
+      name: item.name,
+      visible: itemVisible(item, visibilityOverrides),
+      layer: item.layer,
+      source: item.source
+    }))
+  };
+  reload();
+
+  return () => {
+    destroyed = true;
+    window.removeEventListener(LOCAL_CUBISM_FRAME_EVENT, onFrame);
+    window.removeEventListener('tsukuyomi:live2d-face', onFaceFrame);
+    window.removeEventListener(LOCAL_VTS_ITEM_CONTROL_EVENT, onControl);
+    window.removeEventListener('resize', scheduleApply);
+    if (frameId) window.cancelAnimationFrame(frameId);
+    frameId = 0;
+    const container = findContainer();
+    removeOverlayLayers(container);
+    elements.clear();
+    if (window.TSUKUYOMI_LOCAL_VTS_ITEMS) delete window.TSUKUYOMI_LOCAL_VTS_ITEMS;
+    setOverlayState({ mounted: false, status: 'destroyed', itemCount: 0, visibleItemCount: 0 });
+  };
+}
