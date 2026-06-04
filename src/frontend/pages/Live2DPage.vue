@@ -459,7 +459,17 @@ function createLocalItemFromAsset(asset, anchor) {
     },
     Size: live2DItem ? 220 : 160,
     Scale: 1,
-    Rotation: 0
+    Rotation: 0,
+    Follow: {
+      HeadX: 0,
+      HeadY: 0,
+      HeadZ: 0,
+      BodyX: 0,
+      BodyY: 0,
+      BodyZ: 0,
+      PositionX: 0,
+      PositionY: 0
+    }
   };
 }
 

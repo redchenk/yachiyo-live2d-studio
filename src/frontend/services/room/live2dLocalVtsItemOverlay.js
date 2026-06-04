@@ -21,14 +21,14 @@ const LIVE2D_ITEM_FILE_RE = /\.(?:model3\.json|moc3)$/i;
 
 const DEFAULT_ANCHOR = { x: 0.5, y: 0.5 };
 const DEFAULT_FOLLOW = {
-  headX: 1.15,
-  headY: -0.82,
-  headZ: 0.34,
-  bodyX: 0.32,
-  bodyY: -0.22,
-  bodyZ: 0.16,
-  positionX: 1.15,
-  positionY: -1.15
+  headX: 0,
+  headY: 0,
+  headZ: 0,
+  bodyX: 0,
+  bodyY: 0,
+  bodyZ: 0,
+  positionX: 0,
+  positionY: 0
 };
 
 function isObject(value) {

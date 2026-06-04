@@ -115,14 +115,14 @@ try {
       VTubeFile: 'item.vtube.json',
       Icon: 'Icons.png',
       Follow: {
-        HeadX: 1.15,
-        HeadY: -0.82,
-        HeadZ: 0.34,
-        BodyX: 0.32,
-        BodyY: -0.22,
-        BodyZ: 0.16,
-        PositionX: 1.15,
-        PositionY: -1.15
+        HeadX: 0,
+        HeadY: 0,
+        HeadZ: 0,
+        BodyX: 0,
+        BodyY: 0,
+        BodyZ: 0,
+        PositionX: 0,
+        PositionY: 0
       }
     }
   );
@@ -153,6 +153,20 @@ try {
     transform.cssTransform,
     'translate(-50%, -50%) translate3d(23px, 3px, 0) rotate(7.5deg) scale(1, 1)'
   );
+
+  const pinnedTransform = localVtsItemTransform(live2dItem, {
+    headX: 30,
+    headY: -20,
+    headZ: 18,
+    bodyX: 14,
+    bodyY: -12,
+    bodyZ: 9,
+    positionX: 20,
+    positionY: -18
+  });
+  assert.equal(pinnedTransform.x, 0);
+  assert.equal(pinnedTransform.y, 0);
+  assert.equal(pinnedTransform.rotation, 0);
 } finally {
   await server.close();
 }
