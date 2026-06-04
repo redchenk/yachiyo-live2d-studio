@@ -108,10 +108,32 @@ function matchesFakeSelector(element, selector) {
 function createFakeOverlayDom() {
   const container = new FakeElement('div');
   const frameQueue = [];
+  const images = new Map();
   let nextFrameId = 1;
   const listeners = new Map();
+  class FakeImage {
+    constructor() {
+      this.complete = false;
+      this.naturalWidth = 0;
+      this.onload = null;
+      this.onerror = null;
+      this.decoding = '';
+      this.loading = '';
+      this._src = '';
+    }
+
+    set src(value) {
+      this._src = value;
+      images.set(value, this);
+    }
+
+    get src() {
+      return this._src;
+    }
+  }
   const fakeWindow = {
     location: { href: 'http://127.0.0.1/' },
+    Image: FakeImage,
     requestAnimationFrame(callback) {
       const id = nextFrameId++;
       frameQueue.push({ id, callback });
@@ -143,6 +165,13 @@ function createFakeOverlayDom() {
     document: fakeDocument,
     container,
     queuedFrameCount: () => frameQueue.length,
+    loadImage(url) {
+      const image = images.get(url);
+      assert.ok(image, `expected ${url} to be preloaded`);
+      image.complete = true;
+      image.naturalWidth = 64;
+      image.onload?.();
+    },
     flushNextFrame(now) {
       const frame = frameQueue.shift();
       assert.ok(frame, 'expected a queued animation frame');
@@ -373,11 +402,17 @@ try {
     });
     const image = overlayDom.container.querySelector('img');
     assert.ok(image, 'sequence item should render as an image');
+    const firstFrame = 'http://127.0.0.1/models/tsukimi-yachiyo/items/star-01.png';
+    const secondFrame = 'http://127.0.0.1/models/tsukimi-yachiyo/items/star-02.png';
+    overlayDom.loadImage(firstFrame);
     overlayDom.flushNextFrame(0);
-    assert.equal(image.src, '/models/tsukimi-yachiyo/items/star-01.png');
+    assert.equal(image.src, firstFrame);
     assert.equal(overlayDom.queuedFrameCount(), 1, 'visible sequence item should keep the animation loop alive');
     overlayDom.flushNextFrame(600);
-    assert.equal(image.src, '/models/tsukimi-yachiyo/items/star-02.png');
+    assert.equal(image.src, firstFrame, 'unloaded sequence frames should not replace the visible frame');
+    overlayDom.loadImage(secondFrame);
+    overlayDom.flushNextFrame(600);
+    assert.equal(image.src, secondFrame);
     assert.equal(overlayDom.queuedFrameCount(), 1, 'sequence item should schedule the following frame after advancing');
     destroyOverlay();
     assert.equal(overlayDom.queuedFrameCount(), 0);

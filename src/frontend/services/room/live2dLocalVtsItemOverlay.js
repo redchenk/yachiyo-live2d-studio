@@ -623,6 +623,7 @@ export function mountLocalVtsItemOverlay(options = {}) {
   const manifestUrls = options.manifestUrls || DEFAULT_MANIFEST_URLS;
   const elements = new Map();
   const cubismRenderers = new Map();
+  const sequenceFrameCaches = new Map();
   const visibilityOverrides = new Map();
   let items = [];
   let unsupported = [];
@@ -882,6 +883,67 @@ export function mountLocalVtsItemOverlay(options = {}) {
     cubismRenderers.delete(id);
   }
 
+  function resolveFrameHref(frameUrl) {
+    if (!frameUrl) return '';
+    try {
+      return new URL(frameUrl, window.location.href).href;
+    } catch (_) {
+      return String(frameUrl);
+    }
+  }
+
+  function markSequenceFrameReady(cache, url, failed = false) {
+    cache.pending.delete(url);
+    if (failed) cache.failed.add(url);
+    else cache.loaded.add(url);
+    scheduleApply();
+  }
+
+  function preloadSequenceFrame(cache, url) {
+    if (!url || cache.loaded.has(url) || cache.pending.has(url) || cache.failed.has(url)) return;
+    if (typeof window.Image !== 'function') {
+      cache.loaded.add(url);
+      return;
+    }
+    const image = new window.Image();
+    image.decoding = 'async';
+    image.loading = 'eager';
+    cache.pending.set(url, image);
+    image.onload = () => {
+      const decodePromise = typeof image.decode === 'function' ? image.decode() : null;
+      if (decodePromise?.then) {
+        decodePromise.then(
+          () => markSequenceFrameReady(cache, url),
+          () => markSequenceFrameReady(cache, url)
+        );
+      } else {
+        markSequenceFrameReady(cache, url);
+      }
+    };
+    image.onerror = () => markSequenceFrameReady(cache, url, true);
+    image.src = url;
+    if (image.complete && image.naturalWidth !== 0) markSequenceFrameReady(cache, url);
+  }
+
+  function ensureSequenceFrameCache(item) {
+    const frameUrls = (Array.isArray(item.frames) ? item.frames : [])
+      .map(resolveFrameHref)
+      .filter(Boolean);
+    const signature = frameUrls.join('\n');
+    let cache = sequenceFrameCaches.get(item.id);
+    if (!cache || cache.signature !== signature) {
+      cache = {
+        signature,
+        loaded: new Set(),
+        pending: new Map(),
+        failed: new Set()
+      };
+      sequenceFrameCaches.set(item.id, cache);
+    }
+    frameUrls.forEach((url) => preloadSequenceFrame(cache, url));
+    return cache;
+  }
+
   function elementMatchesItem(element, item) {
     const tag = String(element?.tagName || '').toLowerCase();
     return item.renderType === 'live2d' ? tag === 'canvas' : tag === 'img';
@@ -924,6 +986,7 @@ export function mountLocalVtsItemOverlay(options = {}) {
     for (const [id, element] of elements) {
       if (!validIds.has(id)) {
         destroyCubismRenderer(id);
+        sequenceFrameCaches.delete(id);
         element.remove();
         elements.delete(id);
       }
@@ -946,7 +1009,10 @@ export function mountLocalVtsItemOverlay(options = {}) {
       element.tabIndex = editorEnabled ? 0 : -1;
       const visible = itemVisible(item, visibilityOverrides);
       element.hidden = !visible;
-      if (visible && item.renderType !== 'live2d' && !element.src) element.src = item.assetUrl;
+      if (visible && item.renderType !== 'live2d') {
+        if (item.frames.length > 1) ensureSequenceFrameCache(item);
+        if (!element.src) element.src = item.assetUrl;
+      }
     }
 
     setOverlayState({
@@ -974,9 +1040,10 @@ export function mountLocalVtsItemOverlay(options = {}) {
         if (renderer?.loadPromise) scheduleApply();
       } else if (item.frames.length > 1) {
         needsNextAnimationFrame = true;
+        const cache = ensureSequenceFrameCache(item);
         const frameIndex = Math.floor((now / 1000) * item.fps) % item.frames.length;
-        const frameUrl = item.frames[frameIndex];
-        if (frameUrl && element.src !== new URL(frameUrl, window.location.href).href) element.src = frameUrl;
+        const frameUrl = resolveFrameHref(item.frames[frameIndex]);
+        if (frameUrl && cache.loaded.has(frameUrl) && element.src !== frameUrl) element.src = frameUrl;
       } else if (!element.src && item.assetUrl) {
         element.src = item.assetUrl;
       }
@@ -1091,6 +1158,7 @@ export function mountLocalVtsItemOverlay(options = {}) {
     removeOverlayLayers(container);
     cubismRenderers.forEach((renderer) => renderer.destroy?.());
     cubismRenderers.clear();
+    sequenceFrameCaches.clear();
     elements.clear();
     if (window.TSUKUYOMI_LOCAL_VTS_ITEMS) delete window.TSUKUYOMI_LOCAL_VTS_ITEMS;
     setOverlayState({ mounted: false, status: 'destroyed', itemCount: 0, visibleItemCount: 0 });
