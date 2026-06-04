@@ -14,6 +14,8 @@ export const LOCAL_CUBISM_FRAME_EVENT = 'tsukuyomi:live2d-local-cubism-frame';
 const OVERLAY_STATE_KEY = '__TSUKUYOMI_LOCAL_VTS_ITEM_OVERLAY_STATE__';
 const FRONT_LAYER = 'front';
 const BEHIND_LAYER = 'behind';
+const ITEM_DELETE_HOTSPOT_MIN_X = 0.92;
+const ITEM_DELETE_HOTSPOT_MIN_Y = 0.92;
 const IMAGE_FILE_RE = /\.(?:png|jpe?g|webp|gif|avif|svg)$/i;
 const MODEL3_FILE_RE = /\.model3\.json$/i;
 const MOC3_FILE_RE = /\.moc3$/i;
@@ -775,11 +777,24 @@ export function mountLocalVtsItemOverlay(options = {}) {
     return true;
   }
 
+  function itemInDeleteHotspot(item) {
+    const anchor = item?.anchor || {};
+    return Number(anchor.x) >= ITEM_DELETE_HOTSPOT_MIN_X && Number(anchor.y) >= ITEM_DELETE_HOTSPOT_MIN_Y;
+  }
+
+  function setDeleteHotspotState(container, item = null) {
+    const dragging = Boolean(editDragState);
+    const ready = dragging && itemInDeleteHotspot(item);
+    container?.classList?.toggle?.('live2d-vts-item-dragging', dragging);
+    container?.classList?.toggle?.('live2d-vts-item-delete-ready', ready);
+  }
+
   function setEditorEnabled(enabled) {
     editorEnabled = Boolean(enabled);
     if (!editorEnabled) {
       selectedItemId = '';
       editDragState = null;
+      setDeleteHotspotState(findContainer(), null);
     }
     renderItems();
   }
@@ -826,6 +841,7 @@ export function mountLocalVtsItemOverlay(options = {}) {
     try {
       event.currentTarget.setPointerCapture?.(event.pointerId);
     } catch (_) {}
+    setDeleteHotspotState(container, item);
     renderItems();
     event.stopPropagation();
     event.preventDefault();
@@ -839,6 +855,7 @@ export function mountLocalVtsItemOverlay(options = {}) {
       x: clampAnchorValue(editDragState.originX + (event.clientX - editDragState.startX) / editDragState.width),
       y: clampAnchorValue(editDragState.originY + (event.clientY - editDragState.startY) / editDragState.height)
     };
+    setDeleteHotspotState(findContainer(), item);
     renderItems();
     scheduleApply();
     event.stopPropagation();
@@ -847,13 +864,21 @@ export function mountLocalVtsItemOverlay(options = {}) {
 
   function onItemPointerEnd(event) {
     if (!editDragState || event.pointerId !== editDragState.pointerId) return;
+    const item = items.find((candidate) => candidate.id === editDragState.id);
+    const shouldDelete = event.type === 'pointerup' && itemInDeleteHotspot(item);
     try {
       if (event.currentTarget?.hasPointerCapture?.(event.pointerId)) {
         event.currentTarget.releasePointerCapture(event.pointerId);
       }
     } catch (_) {}
     editDragState = null;
-    emitItemState();
+    setDeleteHotspotState(findContainer(), null);
+    if (shouldDelete) {
+      removeItem(item.id);
+    } else {
+      renderItems();
+      emitItemState();
+    }
     event.stopPropagation();
     event.preventDefault();
   }
@@ -1028,6 +1053,7 @@ export function mountLocalVtsItemOverlay(options = {}) {
       applyItemStaticStyle(element, item, container);
       element.classList.toggle('editing', editorEnabled);
       element.classList.toggle('selected', editorEnabled && item.id === selectedItemId);
+      element.classList.toggle('delete-target', editorEnabled && editDragState?.id === item.id && itemInDeleteHotspot(item));
       element.tabIndex = editorEnabled ? 0 : -1;
       const visible = itemVisible(item, visibilityOverrides);
       element.hidden = !visible;

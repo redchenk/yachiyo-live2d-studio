@@ -335,7 +335,6 @@ function openItemPanel() {
 
 function closeItemPanel() {
   itemPanelOpen.value = false;
-  setLocalItemEditorEnabled(false);
   emit('item-editor-close');
 }
 
@@ -870,8 +869,8 @@ async function init() {
     }
   });
   await live2d.init();
+  setLocalItemEditorEnabled(true);
   if (itemPanelOpen.value) {
-    setLocalItemEditorEnabled(true);
     refreshLocalItemAssets();
   }
 }
@@ -1298,7 +1297,7 @@ function handleLive2DDebugEvent(event) {
 
 watch(() => props.itemEditorOpen, (open) => {
   itemPanelOpen.value = Boolean(open);
-  setLocalItemEditorEnabled(itemPanelOpen.value);
+  setLocalItemEditorEnabled(true);
   if (itemPanelOpen.value) refreshLocalItemAssets();
 });
 
