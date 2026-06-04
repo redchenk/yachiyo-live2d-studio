@@ -274,6 +274,7 @@ const server = await createServer({
 try {
   const {
     mountLocalVtsItemOverlay,
+    inferLocalVtsItemManifestFollow,
     localVtsItemToManifestItem,
     localVtsFrameStateFromParameters,
     localVtsItemTransform,
@@ -460,6 +461,61 @@ try {
   assert.equal(pinnedTransform.x, 0);
   assert.equal(pinnedTransform.y, 0);
   assert.equal(pinnedTransform.rotation, 0);
+
+  const moustacheManifestFollow = inferLocalVtsItemManifestFollow({
+    Name: 'Moustache Black',
+    File: 'moustache_black.png',
+    ItemType: 'image'
+  }, { x: 0.5, y: 0.58 });
+  assert.equal(moustacheManifestFollow.Profile, 'mouth');
+  assert.equal(moustacheManifestFollow.Auto, true);
+  assert.ok(moustacheManifestFollow.HeadX > 1.5, 'mouth profile should follow horizontal head turns');
+  assert.ok(moustacheManifestFollow.PinWeight > 0.5, 'mouth profile should orbit around the face pivot');
+
+  const followInferred = normalizeLocalVtsItemManifest({
+    Version: 1,
+    BasePath: 'items',
+    Items: [
+      {
+        Id: 'moustache-auto',
+        File: 'moustache_black.png',
+        Anchor: { X: 0.5, Y: 0.58 },
+        Size: 160
+      }
+    ]
+  }).items[0];
+  assert.equal(followInferred.follow.profile, 'mouth');
+  const facePinnedTransform = localVtsItemTransform(followInferred, {
+    headX: 18,
+    headY: 6,
+    headZ: 12,
+    bodyX: 0,
+    bodyY: 0,
+    bodyZ: 0,
+    positionX: 0,
+    positionY: 0
+  }, {
+    containerWidth: 1000,
+    containerHeight: 800
+  });
+  assert.ok(facePinnedTransform.x > 10, 'moustache should translate with head turn');
+  assert.ok(facePinnedTransform.rotation > 10, 'moustache should rotate with head tilt');
+  assert.ok(facePinnedTransform.scaleX < 1, 'moustache should receive subtle yaw depth scaling');
+
+  const noKeywordStatic = normalizeLocalVtsItemManifest({
+    Version: 1,
+    BasePath: 'items',
+    Items: [
+      {
+        Id: 'plain-star',
+        File: 'plain-star.png',
+        Anchor: { X: 0.5, Y: 0.5 },
+        Size: 160
+      }
+    ]
+  }).items[0];
+  assert.equal(noKeywordStatic.follow.profile, '');
+  assert.equal(localVtsItemTransform(noKeywordStatic, { headX: 18, headZ: 12 }).x, 0);
 
   const overlayDom = createFakeOverlayDom();
   const originalWindow = globalThis.window;

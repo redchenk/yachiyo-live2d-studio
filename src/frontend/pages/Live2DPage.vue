@@ -34,6 +34,7 @@ import {
   behaviorActionComboPrompt,
   behaviorBodyActionButtons
 } from '../constants/room/behaviorActionRegistry';
+import { inferLocalVtsItemManifestFollow } from '../services/room/live2dLocalVtsItemOverlay';
 
 const props = defineProps({
   itemEditorOpen: { type: Boolean, default: false }
@@ -451,6 +452,13 @@ function createLocalItemFromAsset(asset, anchor) {
   const id = `${slugLocalItemId(asset.file || asset.name)}-${Date.now().toString(36)}`;
   const live2DItem = asset.type === 'live2d' || asset.itemType === 'live2d';
   const sequenceItem = asset.type === 'sequence' || asset.itemType === 'sequence' || Array.isArray(asset.frames);
+  const follow = inferLocalVtsItemManifestFollow({
+    id,
+    name: asset.name || asset.file || id,
+    file: asset.modelFile || asset.file,
+    type: live2DItem ? 'live2d' : sequenceItem ? 'sequence' : 'image',
+    itemType: live2DItem ? 'live2d' : sequenceItem ? 'sequence' : 'image'
+  }, anchor);
   return {
     Id: id,
     Name: asset.name || asset.file || id,
@@ -469,16 +477,7 @@ function createLocalItemFromAsset(asset, anchor) {
     Size: live2DItem ? 220 : 160,
     Scale: 1,
     Rotation: 0,
-    Follow: {
-      HeadX: 0,
-      HeadY: 0,
-      HeadZ: 0,
-      BodyX: 0,
-      BodyY: 0,
-      BodyZ: 0,
-      PositionX: 0,
-      PositionY: 0
-    }
+    Follow: follow
   };
 }
 

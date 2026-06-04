@@ -22,6 +22,8 @@ const MOC3_FILE_RE = /\.moc3$/i;
 const LIVE2D_ITEM_FILE_RE = /\.(?:model3\.json|moc3)$/i;
 
 const DEFAULT_ANCHOR = { x: 0.5, y: 0.5 };
+const DEFAULT_PIN_PIVOT = { x: 0.5, y: 0.45 };
+const FOLLOW_EPSILON = 0.0001;
 const DEFAULT_FOLLOW = {
   headX: 0,
   headY: 0,
@@ -30,8 +32,85 @@ const DEFAULT_FOLLOW = {
   bodyY: 0,
   bodyZ: 0,
   positionX: 0,
-  positionY: 0
+  positionY: 0,
+  pinWeight: 0,
+  depth: 0,
+  pivotX: DEFAULT_PIN_PIVOT.x,
+  pivotY: DEFAULT_PIN_PIVOT.y,
+  profile: '',
+  auto: false
 };
+const FOLLOW_PROFILES = Object.freeze({
+  stage: {
+    ...DEFAULT_FOLLOW,
+    profile: 'stage',
+    auto: true
+  },
+  face: {
+    headX: 1.65,
+    headY: -1.1,
+    headZ: 0.9,
+    bodyX: 0.22,
+    bodyY: -0.12,
+    bodyZ: 0.16,
+    positionX: 48,
+    positionY: -34,
+    pinWeight: 0.85,
+    depth: 0.55,
+    pivotX: 0.5,
+    pivotY: 0.45,
+    profile: 'face',
+    auto: true
+  },
+  mouth: {
+    headX: 1.95,
+    headY: -0.95,
+    headZ: 0.92,
+    bodyX: 0.2,
+    bodyY: -0.1,
+    bodyZ: 0.14,
+    positionX: 54,
+    positionY: -30,
+    pinWeight: 0.95,
+    depth: 0.68,
+    pivotX: 0.5,
+    pivotY: 0.46,
+    profile: 'mouth',
+    auto: true
+  },
+  head: {
+    headX: 1.38,
+    headY: -1.35,
+    headZ: 1,
+    bodyX: 0.18,
+    bodyY: -0.12,
+    bodyZ: 0.18,
+    positionX: 44,
+    positionY: -38,
+    pinWeight: 1,
+    depth: 0.5,
+    pivotX: 0.5,
+    pivotY: 0.36,
+    profile: 'head',
+    auto: true
+  },
+  body: {
+    headX: 0.18,
+    headY: -0.08,
+    headZ: 0.08,
+    bodyX: 0.78,
+    bodyY: -0.48,
+    bodyZ: 0.58,
+    positionX: 34,
+    positionY: -22,
+    pinWeight: 0.55,
+    depth: 0.16,
+    pivotX: 0.5,
+    pivotY: 0.64,
+    profile: 'body',
+    auto: true
+  }
+});
 
 function isObject(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -73,6 +152,90 @@ function normalizeBoolean(value, fallback = false) {
   return fallback;
 }
 
+function zeroFollow(patch = {}) {
+  return {
+    ...DEFAULT_FOLLOW,
+    ...patch
+  };
+}
+
+function normalizeFollowProfileName(value, fallback = '') {
+  const profile = normalizeString(value, fallback).toLowerCase().replace(/[^a-z0-9_-]+/g, '-');
+  if (profile === 'moustache' || profile === 'mustache' || profile === 'mouth') return 'mouth';
+  if (profile === 'hat' || profile === 'hair' || profile === 'head-top' || profile === 'headtop') return 'head';
+  if (profile === 'torso') return 'body';
+  if (profile === 'scene' || profile === 'static' || profile === 'none') return 'stage';
+  return FOLLOW_PROFILES[profile] ? profile : fallback;
+}
+
+function localVtsFollowKeywordProfile(rawItem) {
+  const text = [
+    pickField(rawItem, ['id', 'Id', 'name', 'Name', 'displayName', 'DisplayName']),
+    normalizeFile(rawItem),
+    pickField(rawItem, ['file', 'File', 'path', 'Path', 'modelFile', 'ModelFile'])
+  ].filter(Boolean).join(' ').toLowerCase();
+  if (!text) return '';
+  if (/(?:mousta?che|beard|mouth|pacifier|clown[_ -]?nose|nose|lip|bandaid)/i.test(text)) return 'mouth';
+  if (/(?:sunglasses|glasses|eyepatch|eye[_ -]?patch|mask|monocle)/i.test(text)) return 'face';
+  if (/(?:cat[_ -]?ear|bunny[_ -]?ear|horn|halo|hat|helmet|head[_ -]?band|nightcap|santa)/i.test(text)) return 'head';
+  if (/(?:microphone|mic|boba|beverage|drink|juice|wine|controller|tablet|blanket|tube|pendant|ribbon|bell|charm)/i.test(text)) return 'body';
+  if (/(?:bed|couch|chair|table|tree|present|blanket|background)/i.test(text)) return 'stage';
+  return '';
+}
+
+function localVtsFollowAnchorProfile(anchor) {
+  const x = Number(anchor?.x);
+  const y = Number(anchor?.y);
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return 'stage';
+  if (x < -0.05 || x > 1.05 || y < -0.05 || y > 1.08) return 'stage';
+  if (y < 0.38) return 'head';
+  if (y < 0.64) return 'face';
+  if (y < 0.92) return 'body';
+  return 'stage';
+}
+
+function inferLocalVtsItemFollowProfile(rawItem = {}, anchor = null) {
+  const explicitProfile = normalizeFollowProfileName(pickField(rawItem, [
+    'followProfile',
+    'FollowProfile',
+    'pinProfile',
+    'PinProfile'
+  ]));
+  if (explicitProfile) return { profile: explicitProfile, reason: 'explicit' };
+  const keywordProfile = localVtsFollowKeywordProfile(rawItem);
+  if (keywordProfile) return { profile: keywordProfile, reason: 'asset' };
+  return { profile: localVtsFollowAnchorProfile(anchor || normalizeAnchor(rawItem)), reason: 'anchor' };
+}
+
+export function inferLocalVtsItemFollow(rawItem = {}, anchor = null) {
+  const { profile, reason } = inferLocalVtsItemFollowProfile(rawItem, anchor);
+  return {
+    ...(FOLLOW_PROFILES[profile] || FOLLOW_PROFILES.stage),
+    profile,
+    inferredReason: reason
+  };
+}
+
+function followIsEffectivelyZero(follow) {
+  return Math.abs(normalizeNumber(follow?.headX, 0)) < FOLLOW_EPSILON
+    && Math.abs(normalizeNumber(follow?.headY, 0)) < FOLLOW_EPSILON
+    && Math.abs(normalizeNumber(follow?.headZ, 0)) < FOLLOW_EPSILON
+    && Math.abs(normalizeNumber(follow?.bodyX, 0)) < FOLLOW_EPSILON
+    && Math.abs(normalizeNumber(follow?.bodyY, 0)) < FOLLOW_EPSILON
+    && Math.abs(normalizeNumber(follow?.bodyZ, 0)) < FOLLOW_EPSILON
+    && Math.abs(normalizeNumber(follow?.positionX, 0)) < FOLLOW_EPSILON
+    && Math.abs(normalizeNumber(follow?.positionY, 0)) < FOLLOW_EPSILON
+    && Math.abs(normalizeNumber(follow?.pinWeight, 0)) < FOLLOW_EPSILON;
+}
+
+function shouldInferFollow(rawItem, follow, inferredFollow, followSource) {
+  if (!inferredFollow?.profile || inferredFollow.profile === 'stage') return false;
+  if (followSource === false || normalizeString(followSource).toLowerCase() === 'false') return false;
+  if (follow?.auto) return true;
+  if (followSource === undefined) return inferredFollow.inferredReason === 'asset';
+  return followIsEffectivelyZero(follow) && inferredFollow.inferredReason === 'asset';
+}
+
 function normalizePoint(value, fallback = null) {
   if (Array.isArray(value) && value.length >= 2) {
     const x = Number(value[0]);
@@ -88,6 +251,12 @@ function normalizePoint(value, fallback = null) {
 function round(value, digits = 3) {
   const factor = 10 ** digits;
   return Math.round((Number(value) || 0) * factor) / factor;
+}
+
+function clampNumber(value, min, max, fallback = 0) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return fallback;
+  return Math.min(Math.max(numeric, min), max);
 }
 
 function isAbsoluteAssetUrl(value) {
@@ -186,18 +355,17 @@ function normalizeOffset(rawItem) {
 function normalizeFollow(rawItem) {
   const follow = pickField(rawItem, ['follow', 'Follow', 'tracking', 'Tracking', 'pinFollow', 'PinFollow']);
   if (follow === false || normalizeString(follow).toLowerCase() === 'false') {
-    return {
-      headX: 0,
-      headY: 0,
-      headZ: 0,
-      bodyX: 0,
-      bodyY: 0,
-      bodyZ: 0,
-      positionX: 0,
-      positionY: 0
-    };
+    return zeroFollow({ auto: false, profile: 'stage' });
   }
   if (!isObject(follow)) return { ...DEFAULT_FOLLOW };
+  const profile = normalizeFollowProfileName(pickField(follow, [
+    'profile',
+    'Profile',
+    'preset',
+    'Preset',
+    'mode',
+    'Mode'
+  ]));
   return {
     headX: normalizeNumber(pickField(follow, ['headX', 'HeadX', 'faceAngleX', 'FaceAngleX', 'x', 'X']), 0),
     headY: normalizeNumber(pickField(follow, ['headY', 'HeadY', 'faceAngleY', 'FaceAngleY', 'y', 'Y']), 0),
@@ -206,7 +374,20 @@ function normalizeFollow(rawItem) {
     bodyY: normalizeNumber(pickField(follow, ['bodyY', 'BodyY', 'bodyAngleY', 'BodyAngleY']), 0),
     bodyZ: normalizeNumber(pickField(follow, ['bodyZ', 'BodyZ', 'bodyAngleZ', 'BodyAngleZ']), 0),
     positionX: normalizeNumber(pickField(follow, ['positionX', 'PositionX', 'facePositionX', 'FacePositionX']), 0),
-    positionY: normalizeNumber(pickField(follow, ['positionY', 'PositionY', 'facePositionY', 'FacePositionY']), 0)
+    positionY: normalizeNumber(pickField(follow, ['positionY', 'PositionY', 'facePositionY', 'FacePositionY']), 0),
+    pinWeight: normalizeNumber(pickField(follow, [
+      'pinWeight',
+      'PinWeight',
+      'meshWeight',
+      'MeshWeight',
+      'orbit',
+      'Orbit'
+    ]), 0),
+    depth: normalizeNumber(pickField(follow, ['depth', 'Depth', 'perspective', 'Perspective']), 0),
+    pivotX: normalizeNumber(pickField(follow, ['pivotX', 'PivotX', 'pinPivotX', 'PinPivotX']), DEFAULT_PIN_PIVOT.x),
+    pivotY: normalizeNumber(pickField(follow, ['pivotY', 'PivotY', 'pinPivotY', 'PinPivotY']), DEFAULT_PIN_PIVOT.y),
+    profile,
+    auto: normalizeBoolean(pickField(follow, ['auto', 'Auto', 'autoPin', 'AutoPin']), false)
   };
 }
 
@@ -374,6 +555,19 @@ export function normalizeLocalVtsItemManifest(manifest, options = {}) {
       'DrawOrder'
     ]), index);
     const supported = isSupportedItemFile(assetUrl, frames, renderType);
+    const anchor = normalizeAnchor(rawItem);
+    const followSource = pickField(rawItem, ['follow', 'Follow', 'tracking', 'Tracking', 'pinFollow', 'PinFollow']);
+    const normalizedFollow = normalizeFollow(rawItem);
+    const inferredFollow = inferLocalVtsItemFollow({
+      ...rawItem,
+      id: baseId,
+      name: normalizeString(pickField(rawItem, ['name', 'Name', 'displayName', 'DisplayName']), baseId),
+      file,
+      renderType
+    }, anchor);
+    const follow = shouldInferFollow(rawItem, normalizedFollow, inferredFollow, followSource)
+      ? inferredFollow
+      : normalizedFollow;
     const item = {
       id,
       name: normalizeString(pickField(rawItem, ['name', 'Name', 'displayName', 'DisplayName']), id),
@@ -399,7 +593,7 @@ export function normalizeLocalVtsItemManifest(manifest, options = {}) {
       ]), true),
       layer,
       zIndex,
-      anchor: normalizeAnchor(rawItem),
+      anchor,
       offset: normalizeOffset(rawItem),
       size,
       scale: normalizeNumber(pickField(rawItem, ['scale', 'Scale']), 1),
@@ -409,7 +603,7 @@ export function normalizeLocalVtsItemManifest(manifest, options = {}) {
       flipY: normalizeBoolean(pickField(rawItem, ['flipY', 'FlipY', 'mirrorY', 'MirrorY']), false),
       rotation: normalizeNumber(pickField(rawItem, ['rotation', 'Rotation', 'angle', 'Angle', 'itemRotation', 'ItemRotation']), 0),
       opacity: Math.min(Math.max(normalizeNumber(pickField(rawItem, ['opacity', 'Opacity', 'alpha', 'Alpha']), 1), 0), 1),
-      follow: normalizeFollow(rawItem),
+      follow,
       supported,
       source: options.source || ''
     };
@@ -423,6 +617,39 @@ export function normalizeLocalVtsItemManifest(manifest, options = {}) {
     items,
     unsupported
   };
+}
+
+function localVtsFollowToManifestFollow(follow = {}) {
+  const manifestFollow = {
+    HeadX: round(follow.headX ?? 0, 4),
+    HeadY: round(follow.headY ?? 0, 4),
+    HeadZ: round(follow.headZ ?? 0, 4),
+    BodyX: round(follow.bodyX ?? 0, 4),
+    BodyY: round(follow.bodyY ?? 0, 4),
+    BodyZ: round(follow.bodyZ ?? 0, 4),
+    PositionX: round(follow.positionX ?? 0, 4),
+    PositionY: round(follow.positionY ?? 0, 4)
+  };
+  const profile = normalizeFollowProfileName(follow.profile);
+  if (profile) manifestFollow.Profile = profile;
+  if (follow.auto === true) manifestFollow.Auto = true;
+  if (Math.abs(normalizeNumber(follow.pinWeight, 0)) >= FOLLOW_EPSILON) {
+    manifestFollow.PinWeight = round(follow.pinWeight, 4);
+  }
+  if (Math.abs(normalizeNumber(follow.depth, 0)) >= FOLLOW_EPSILON) {
+    manifestFollow.Depth = round(follow.depth, 4);
+  }
+  if (Math.abs(normalizeNumber(follow.pivotX, DEFAULT_PIN_PIVOT.x) - DEFAULT_PIN_PIVOT.x) >= FOLLOW_EPSILON) {
+    manifestFollow.PivotX = round(follow.pivotX, 4);
+  }
+  if (Math.abs(normalizeNumber(follow.pivotY, DEFAULT_PIN_PIVOT.y) - DEFAULT_PIN_PIVOT.y) >= FOLLOW_EPSILON) {
+    manifestFollow.PivotY = round(follow.pivotY, 4);
+  }
+  return manifestFollow;
+}
+
+export function inferLocalVtsItemManifestFollow(rawItem = {}, anchor = null) {
+  return localVtsFollowToManifestFollow(inferLocalVtsItemFollow(rawItem, anchor));
 }
 
 export function localVtsItemToManifestItem(item, options = {}) {
@@ -460,16 +687,7 @@ export function localVtsItemToManifestItem(item, options = {}) {
   if (item.vtubeFile) manifestItem.VTubeFile = item.vtubeFile;
   if (item.iconFile) manifestItem.Icon = item.iconFile;
   if (includeFollow) {
-    manifestItem.Follow = {
-      HeadX: round(item.follow?.headX ?? 0, 4),
-      HeadY: round(item.follow?.headY ?? 0, 4),
-      HeadZ: round(item.follow?.headZ ?? 0, 4),
-      BodyX: round(item.follow?.bodyX ?? 0, 4),
-      BodyY: round(item.follow?.bodyY ?? 0, 4),
-      BodyZ: round(item.follow?.bodyZ ?? 0, 4),
-      PositionX: round(item.follow?.positionX ?? 0, 4),
-      PositionY: round(item.follow?.positionY ?? 0, 4)
-    };
+    manifestItem.Follow = localVtsFollowToManifestFollow(item.follow);
   }
   return manifestItem;
 }
@@ -505,26 +723,61 @@ export function localVtsFrameStateFromParameters(parameters) {
   };
 }
 
-export function localVtsItemTransform(item, frameState = {}) {
+function localVtsTransformViewport(frameState, options = {}) {
+  return {
+    width: Math.max(1, normalizeNumber(
+      options.containerWidth ?? options.width ?? frameState.containerWidth ?? frameState.width,
+      1000
+    )),
+    height: Math.max(1, normalizeNumber(
+      options.containerHeight ?? options.height ?? frameState.containerHeight ?? frameState.height,
+      800
+    ))
+  };
+}
+
+export function localVtsItemTransform(item, frameState = {}, options = {}) {
   const state = Array.isArray(frameState)
     ? localVtsFrameStateFromParameters(frameState)
     : { ...localVtsFrameStateFromParameters([]), ...frameState };
   const follow = item?.follow || {};
   const offset = item?.offset || { x: 0, y: 0 };
-  const x = normalizeNumber(offset.x, 0) +
+  let x = normalizeNumber(offset.x, 0) +
     state.headX * normalizeNumber(follow.headX, 0) +
     state.bodyX * normalizeNumber(follow.bodyX, 0) +
     state.positionX * normalizeNumber(follow.positionX, 0);
-  const y = normalizeNumber(offset.y, 0) +
+  let y = normalizeNumber(offset.y, 0) +
     state.headY * normalizeNumber(follow.headY, 0) +
     state.bodyY * normalizeNumber(follow.bodyY, 0) +
     state.positionY * normalizeNumber(follow.positionY, 0);
-  const rotation = normalizeNumber(item?.rotation, 0) +
+  const followRotation =
     state.headZ * normalizeNumber(follow.headZ, 0) +
     state.bodyZ * normalizeNumber(follow.bodyZ, 0);
+  const rotation = normalizeNumber(item?.rotation, 0) + followRotation;
+  const pinWeight = normalizeNumber(follow.pinWeight, 0);
+  if (Math.abs(pinWeight) >= FOLLOW_EPSILON) {
+    const anchor = item?.anchor || DEFAULT_ANCHOR;
+    const pivotX = clampNumber(follow.pivotX, -0.5, 1.5, DEFAULT_PIN_PIVOT.x);
+    const pivotY = clampNumber(follow.pivotY, -0.5, 1.5, DEFAULT_PIN_PIVOT.y);
+    const { width, height } = localVtsTransformViewport(state, options);
+    const radiusX = (normalizeNumber(anchor.x, DEFAULT_ANCHOR.x) - pivotX) * width;
+    const radiusY = (normalizeNumber(anchor.y, DEFAULT_ANCHOR.y) - pivotY) * height;
+    const radians = followRotation * Math.PI / 180;
+    const rotatedX = radiusX * Math.cos(radians) - radiusY * Math.sin(radians);
+    const rotatedY = radiusX * Math.sin(radians) + radiusY * Math.cos(radians);
+    x += (rotatedX - radiusX) * pinWeight;
+    y += (rotatedY - radiusY) * pinWeight;
+  }
   const scale = normalizeNumber(item?.scale, 1);
-  const scaleX = scale * normalizeNumber(item?.scaleX, 1) * (item?.flipX ? -1 : 1);
-  const scaleY = scale * normalizeNumber(item?.scaleY, 1) * (item?.flipY ? -1 : 1);
+  let scaleX = scale * normalizeNumber(item?.scaleX, 1) * (item?.flipX ? -1 : 1);
+  let scaleY = scale * normalizeNumber(item?.scaleY, 1) * (item?.flipY ? -1 : 1);
+  const depth = clampNumber(follow.depth, 0, 2, 0);
+  if (depth >= FOLLOW_EPSILON) {
+    const yaw = Math.min(Math.abs(normalizeNumber(state.headX, 0)) / 30, 1);
+    const pitch = Math.min(Math.abs(normalizeNumber(state.headY, 0)) / 30, 1);
+    scaleX *= 1 - yaw * depth * 0.08;
+    scaleY *= 1 - pitch * depth * 0.04;
+  }
 
   return {
     x: round(x),
@@ -709,6 +962,7 @@ export function mountLocalVtsItemOverlay(options = {}) {
       scale: item.scale,
       rotation: item.rotation,
       opacity: item.opacity,
+      follow: { ...(item.follow || DEFAULT_FOLLOW) },
       selected: item.id === selectedItemId,
       source: item.source
     }));
@@ -767,6 +1021,11 @@ export function mountLocalVtsItemOverlay(options = {}) {
     return next;
   }
 
+  function refreshAutoFollow(item) {
+    if (!item?.follow?.auto) return;
+    item.follow = inferLocalVtsItemFollow(item, item.anchor);
+  }
+
   function updateItem(id, patch = {}) {
     const item = items.find((candidate) => candidate.id === String(id || selectedItemId));
     if (!item) return null;
@@ -778,6 +1037,7 @@ export function mountLocalVtsItemOverlay(options = {}) {
     const anchor = pickField(patch, ['anchor', 'Anchor']);
     const offset = pickField(patch, ['offset', 'Offset']);
     const size = pickField(patch, ['size', 'Size', 'itemSize', 'ItemSize']);
+    const follow = pickField(patch, ['follow', 'Follow', 'tracking', 'Tracking', 'pinFollow', 'PinFollow']);
 
     if (layer !== undefined) item.layer = normalizeLayer({ Layer: layer }, 0);
     if (visible !== undefined) {
@@ -789,12 +1049,14 @@ export function mountLocalVtsItemOverlay(options = {}) {
     if (opacity !== undefined) item.opacity = Math.min(Math.max(normalizeNumber(opacity, item.opacity), 0), 1);
     if (anchor !== undefined) item.anchor = mergePointPatch(item.anchor, anchor);
     if (offset !== undefined) item.offset = mergePointPatch(item.offset, offset);
+    if (follow !== undefined) item.follow = normalizeFollow({ Follow: follow });
     if (size !== undefined) {
       item.size = {
         ...item.size,
         size: Math.min(Math.max(normalizeNumber(size, item.size?.size || 160), 1), 2000)
       };
     }
+    if (anchor !== undefined && follow === undefined) refreshAutoFollow(item);
     markSelectedItemAdjusted(item.id);
     renderItems();
     scheduleApply();
@@ -938,6 +1200,7 @@ export function mountLocalVtsItemOverlay(options = {}) {
       x: clampAnchorValue(editDragState.originX + (event.clientX - editDragState.startX) / editDragState.width),
       y: clampAnchorValue(editDragState.originY + (event.clientY - editDragState.startY) / editDragState.height)
     };
+    refreshAutoFollow(item);
     markSelectedItemAdjusted(item.id);
     setDeleteHotspotState(event);
     renderItems();
@@ -1164,6 +1427,11 @@ export function mountLocalVtsItemOverlay(options = {}) {
     const container = findContainer();
     if (!container) return;
     if (elements.size !== items.length) renderItems();
+    const containerRect = container.getBoundingClientRect();
+    const transformOptions = {
+      containerWidth: containerRect.width,
+      containerHeight: containerRect.height
+    };
     let needsNextAnimationFrame = false;
     for (const item of items) {
       const element = elements.get(item.id);
@@ -1182,7 +1450,7 @@ export function mountLocalVtsItemOverlay(options = {}) {
         element.src = item.assetUrl;
       }
       applyItemSizing(element, item, container);
-      element.style.transform = localVtsItemTransform(item, frameState).cssTransform;
+      element.style.transform = localVtsItemTransform(item, frameState, transformOptions).cssTransform;
     }
     if (needsNextAnimationFrame) scheduleApply();
   }
