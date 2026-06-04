@@ -964,6 +964,7 @@ export function mountLocalVtsItemOverlay(options = {}) {
     const container = findContainer();
     if (!container) return;
     if (elements.size !== items.length) renderItems();
+    let needsNextAnimationFrame = false;
     for (const item of items) {
       const element = elements.get(item.id);
       if (!element || element.hidden) continue;
@@ -972,6 +973,7 @@ export function mountLocalVtsItemOverlay(options = {}) {
         renderer?.render?.(item, frameState);
         if (renderer?.loadPromise) scheduleApply();
       } else if (item.frames.length > 1) {
+        needsNextAnimationFrame = true;
         const frameIndex = Math.floor((now / 1000) * item.fps) % item.frames.length;
         const frameUrl = item.frames[frameIndex];
         if (frameUrl && element.src !== new URL(frameUrl, window.location.href).href) element.src = frameUrl;
@@ -981,6 +983,7 @@ export function mountLocalVtsItemOverlay(options = {}) {
       applyItemSizing(element, item, container);
       element.style.transform = localVtsItemTransform(item, frameState).cssTransform;
     }
+    if (needsNextAnimationFrame) scheduleApply();
   }
 
   async function reload() {

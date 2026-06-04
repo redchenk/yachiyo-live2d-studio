@@ -413,7 +413,14 @@ async function importLocalItemFiles(event) {
 function localItemDragData(asset) {
   return JSON.stringify({
     file: asset.file,
-    name: asset.name || asset.file
+    name: asset.name || asset.file,
+    type: asset.type,
+    itemType: asset.itemType,
+    frames: Array.isArray(asset.frames) ? asset.frames : undefined,
+    fps: asset.fps,
+    modelFile: asset.modelFile,
+    vtubeFile: asset.vtubeFile,
+    iconFile: asset.iconFile
   });
 }
 

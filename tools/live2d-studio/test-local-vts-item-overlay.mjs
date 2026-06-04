@@ -1,6 +1,162 @@
 import assert from 'node:assert/strict';
 import { createServer } from 'vite';
 
+class FakeCustomEvent {
+  constructor(type, init = {}) {
+    this.type = type;
+    this.detail = init.detail;
+  }
+}
+
+class FakeStyle {
+  constructor() {
+    this.values = new Map();
+  }
+
+  setProperty(name, value) {
+    this.values.set(name, value);
+  }
+}
+
+class FakeClassList {
+  constructor(element) {
+    this.element = element;
+    this.classes = new Set();
+  }
+
+  toggle(name, force) {
+    const enabled = force === undefined ? !this.classes.has(name) : Boolean(force);
+    if (enabled) this.classes.add(name);
+    else this.classes.delete(name);
+    const base = String(this.element.className || '')
+      .split(/\s+/)
+      .filter((part) => part && part !== name);
+    if (enabled) base.push(name);
+    this.element.className = [...new Set(base)].join(' ');
+  }
+}
+
+class FakeElement {
+  constructor(tagName) {
+    this.tagName = String(tagName || '').toUpperCase();
+    this.children = [];
+    this.parentElement = null;
+    this.dataset = {};
+    this.style = new FakeStyle();
+    this.classList = new FakeClassList(this);
+    this.className = '';
+    this.hidden = false;
+    this.src = '';
+    this.alt = '';
+    this.eventListeners = new Map();
+  }
+
+  appendChild(child) {
+    if (child.parentElement) child.remove();
+    this.children.push(child);
+    child.parentElement = this;
+    return child;
+  }
+
+  remove() {
+    if (!this.parentElement) return;
+    this.parentElement.children = this.parentElement.children.filter((child) => child !== this);
+    this.parentElement = null;
+  }
+
+  addEventListener(type, handler) {
+    const listeners = this.eventListeners.get(type) || [];
+    listeners.push(handler);
+    this.eventListeners.set(type, listeners);
+  }
+
+  querySelector(selector) {
+    return this.querySelectorAll(selector)[0] || null;
+  }
+
+  querySelectorAll(selector) {
+    return collectDescendants(this).filter((element) => matchesFakeSelector(element, selector));
+  }
+
+  getBoundingClientRect() {
+    return { left: 0, top: 0, width: 1000, height: 800 };
+  }
+}
+
+function collectDescendants(root) {
+  const result = [];
+  for (const child of root.children || []) {
+    result.push(child, ...collectDescendants(child));
+  }
+  return result;
+}
+
+function matchesFakeSelector(element, selector) {
+  if (selector === 'img') return element.tagName === 'IMG';
+  if (selector === '.live2d-vts-item-layer[data-live2d-vts-item-layer]') {
+    return String(element.className || '').split(/\s+/).includes('live2d-vts-item-layer')
+      && Boolean(element.dataset.live2dVtsItemLayer);
+  }
+  const layerMatch = String(selector).match(/^\.live2d-vts-item-layer\[data-layer="([^"]+)"\]$/);
+  if (layerMatch) {
+    return String(element.className || '').split(/\s+/).includes('live2d-vts-item-layer')
+      && element.dataset.layer === layerMatch[1];
+  }
+  return false;
+}
+
+function createFakeOverlayDom() {
+  const container = new FakeElement('div');
+  const frameQueue = [];
+  let nextFrameId = 1;
+  const listeners = new Map();
+  const fakeWindow = {
+    location: { href: 'http://127.0.0.1/' },
+    requestAnimationFrame(callback) {
+      const id = nextFrameId++;
+      frameQueue.push({ id, callback });
+      return id;
+    },
+    cancelAnimationFrame(id) {
+      const index = frameQueue.findIndex((frame) => frame.id === id);
+      if (index >= 0) frameQueue.splice(index, 1);
+    },
+    addEventListener(type, handler) {
+      const handlers = listeners.get(type) || [];
+      handlers.push(handler);
+      listeners.set(type, handlers);
+    },
+    removeEventListener(type, handler) {
+      const handlers = listeners.get(type) || [];
+      listeners.set(type, handlers.filter((candidate) => candidate !== handler));
+    },
+    dispatchEvent(event) {
+      for (const handler of listeners.get(event.type) || []) handler(event);
+    }
+  };
+  const fakeDocument = {
+    createElement: (tagName) => new FakeElement(tagName),
+    querySelector: (selector) => (selector === '#live2d-container' ? container : null)
+  };
+  return {
+    window: fakeWindow,
+    document: fakeDocument,
+    container,
+    queuedFrameCount: () => frameQueue.length,
+    flushNextFrame(now) {
+      const frame = frameQueue.shift();
+      assert.ok(frame, 'expected a queued animation frame');
+      frame.callback(now);
+    },
+    flushAllFrames(now) {
+      while (frameQueue.length) {
+        const frame = frameQueue.shift();
+        frame.callback(now);
+      }
+    }
+  };
+}
+
 const server = await createServer({
   configFile: false,
   server: { middlewareMode: true, hmr: false },
@@ -9,6 +165,7 @@ const server = await createServer({
 
 try {
   const {
+    mountLocalVtsItemOverlay,
     localVtsItemToManifestItem,
     localVtsFrameStateFromParameters,
     localVtsItemTransform,
@@ -195,6 +352,40 @@ try {
   assert.equal(pinnedTransform.x, 0);
   assert.equal(pinnedTransform.y, 0);
   assert.equal(pinnedTransform.rotation, 0);
+
+  const overlayDom = createFakeOverlayDom();
+  const originalWindow = globalThis.window;
+  const originalDocument = globalThis.document;
+  const originalCustomEvent = globalThis.CustomEvent;
+  globalThis.window = overlayDom.window;
+  globalThis.document = overlayDom.document;
+  globalThis.CustomEvent = FakeCustomEvent;
+  try {
+    const destroyOverlay = mountLocalVtsItemOverlay({ manifestUrls: [] });
+    await Promise.resolve();
+    overlayDom.flushAllFrames(0);
+    overlayDom.window.TSUKUYOMI_LOCAL_VTS_ITEMS.upsert({
+      Id: 'animated-star-overlay',
+      Frames: ['star-01.png', 'star-02.png'],
+      FPS: 2,
+      Visible: true,
+      Size: 120
+    });
+    const image = overlayDom.container.querySelector('img');
+    assert.ok(image, 'sequence item should render as an image');
+    overlayDom.flushNextFrame(0);
+    assert.equal(image.src, '/models/tsukimi-yachiyo/items/star-01.png');
+    assert.equal(overlayDom.queuedFrameCount(), 1, 'visible sequence item should keep the animation loop alive');
+    overlayDom.flushNextFrame(600);
+    assert.equal(image.src, '/models/tsukimi-yachiyo/items/star-02.png');
+    assert.equal(overlayDom.queuedFrameCount(), 1, 'sequence item should schedule the following frame after advancing');
+    destroyOverlay();
+    assert.equal(overlayDom.queuedFrameCount(), 0);
+  } finally {
+    globalThis.window = originalWindow;
+    globalThis.document = originalDocument;
+    globalThis.CustomEvent = originalCustomEvent;
+  }
 } finally {
   await server.close();
 }
