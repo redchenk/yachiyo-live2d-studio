@@ -21,6 +21,7 @@ import {
 import { createLive2DAsrRecorder } from '../services/room/live2dAsr';
 import {
   executeLive2DMusicCommand,
+  inferLive2DMusicCommandFromText,
   warmupLive2DMusicPlayback
 } from '../services/room/live2dMusic';
 import {
@@ -436,10 +437,11 @@ function pushLog(role, text, meta = {}) {
   ].slice(-10);
 }
 
-async function executeMusicFromLLMResult(result, source = 'manual') {
-  if (!result?.music) return null;
+async function executeMusicFromLLMResult(result, source = 'manual', fallbackText = '') {
+  const musicCommand = result?.music || inferLive2DMusicCommandFromText(fallbackText);
+  if (!musicCommand) return null;
   try {
-    const musicResult = await executeLive2DMusicCommand(result.music, undefined, {
+    const musicResult = await executeLive2DMusicCommand(musicCommand, undefined, {
       playRequestsImmediately: true
     });
     musicQueueState.value = readLive2DMusicQueueState();
@@ -735,7 +737,7 @@ async function performLLMAct(message, source = 'manual', options = {}) {
         arousal: 0.62
       });
     }
-    await executeMusicFromLLMResult(result, source);
+    await executeMusicFromLLMResult(result, source, value);
     return { ...result, reply: visibleReply };
   } catch (error) {
     llmState.value = {
@@ -882,7 +884,7 @@ async function performStreamingLiveTurn(message) {
       live2d: finalResult.live2d
     };
     liveDirector.turn += 1;
-    await executeMusicFromLLMResult(finalResult, 'live');
+    await executeMusicFromLLMResult(finalResult, 'live', value);
     await Promise.allSettled(playbackPromises);
     if (queuedSpeechCount > 0 && finalResult.live2d && queuedLive2DCount > 0 && dispatchedStreamLive2DCount < 1) {
       dispatchRoomLive2D(alignLive2DToSpeech(finalResult.live2d, Number(finalResult.live2d.durationMs) || 0));

@@ -10,6 +10,7 @@ const server = await createServer({
 try {
   const {
     executeLive2DMusicCommand,
+    inferLive2DMusicCommandFromText,
     normalizeLive2DMusicCommand
   } = await server.ssrLoadModule('/src/frontend/services/room/live2dMusic.js');
   const {
@@ -45,6 +46,19 @@ try {
     provider: 'netease-cloud',
     query: '晴天 周杰伦'
   });
+  const eason = '\u9648\u5955\u8fc5';
+  const loveLikeTide = '\u7231\u5982\u6f6e\u6c34';
+  assert.deepEqual(inferLive2DMusicCommandFromText(`\u6211\u8981\u542c${eason}\u7684\u6b4c`), {
+    action: 'play_now',
+    provider: 'netease-cloud',
+    query: eason
+  });
+  assert.deepEqual(inferLive2DMusicCommandFromText(`\u6211\u8981\u542c${loveLikeTide}`), {
+    action: 'play_now',
+    provider: 'netease-cloud',
+    query: loveLikeTide
+  });
+  assert.equal(inferLive2DMusicCommandFromText(`\u6211\u542c\u8bf4${eason}\u7684\u6b4c\u5f88\u597d`), null);
 
   const parsed = parseLive2DControlPayload(`CONTROL: ${JSON.stringify({
     reply: 'すぐ流すね。',
@@ -67,6 +81,7 @@ try {
   assert.equal(parsed.memoryWrites.length, 0);
   assert.ok(live2DControlSystemPrompt().includes('"music":null'));
   assert.ok(live2DControlSystemPrompt().includes('music JSON'));
+  assert.ok(live2DControlSystemPrompt().includes('\u6211\u8981\u542c'));
 
   const parsedMusicRequest = parseLive2DControlPayload(JSON.stringify({
     reply: '好，我来点这首。',

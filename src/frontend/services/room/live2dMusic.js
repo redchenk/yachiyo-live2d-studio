@@ -124,6 +124,49 @@ function normalizeMusicProvider(value, fallback = '') {
   return MUSIC_PROVIDERS.has(provider) ? provider : fallback;
 }
 
+function compactMusicIntentText(value) {
+  return asText(value).replace(/\s+/g, '');
+}
+
+function cleanInferredMusicQuery(value) {
+  let query = compactMusicIntentText(value)
+    .replace(/[\uff0c,.\u3002\uff01!\uff1f?\uff1b;\uff1a:].*$/u, '')
+    .replace(/[\u5427\u5566\u554a\u5440\u5462\u54e6\u561b\u5457]+$/u, '')
+    .replace(/^[\u300a\u300c\u300e"'\u201c\u2018]+/u, '')
+    .replace(/[\u300b\u300d\u300f"'\u201d\u2019]+$/u, '')
+    .replace(/^(?:\u4e00\u9996|\u9996|\u4e00\u4e0b|\u70b9|\u70b9\u513f|\u70b9\u4e00\u4e0b|\u6765\u70b9)/u, '')
+    .replace(/(?:\u7684)?(?:\u8fd9\u9996|\u4e00\u9996)?(?:\u6b4c|\u6b4c\u66f2|\u97f3\u4e50|\u6b4c\u513f|\u66f2\u5b50)$/u, '')
+    .replace(/\u7684$/u, '');
+  query = asText(query);
+  if (!query || /^(?:\u6b4c|\u6b4c\u66f2|\u97f3\u4e50|\u66f2\u5b50)$/u.test(query)) return '';
+  if (/^(?:\u4f60|\u59b3)?(?:\u8bf4|\u8bb2|\u804a|\u89e3\u91ca|\u4ecb\u7ecd|\u544a\u8bc9|\u56de\u7b54|\u8bc4\u4ef7|\u5ff5)/u.test(query)) return '';
+  return query;
+}
+
+export function inferLive2DMusicCommandFromText(rawText = '') {
+  const text = compactMusicIntentText(rawText);
+  if (!text) return null;
+
+  const patterns = [
+    /(?:\u6211\u8981|\u6211\u60f3|\u60f3\u8981|\u60f3|\u8981|\u7ed9\u6211|\u5e2e\u6211|\u8bf7\u4f60?|\u9ebb\u70e6\u4f60?|\u6765)(?:\u542c\u542c|\u542c\u4e00\u4e0b|\u542c\u4e00\u9996|\u542c\u9996|\u542c|\u64ad\u653e|\u653e\u4e00\u4e0b|\u653e\u4e00\u9996|\u653e\u9996|\u653e|\u70b9\u6b4c|\u70b9\u4e00\u9996|\u6765\u4e00\u9996)(.+)$/u,
+    /^(?:\u968f\u4fbf)?(?:\u542c\u542c|\u542c\u4e00\u4e0b|\u542c\u4e00\u9996|\u542c\u9996|\u542c|\u64ad\u653e|\u653e\u4e00\u4e0b|\u653e\u4e00\u9996|\u653e\u9996|\u653e|\u70b9\u6b4c|\u70b9\u4e00\u9996|\u6765\u4e00\u9996)(.+)$/u,
+    /^(?:\u6765\u70b9|\u6765\u4e9b)(.+)$/u
+  ];
+
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    const query = cleanInferredMusicQuery(match?.[1] || '');
+    if (query) {
+      return {
+        action: 'play_now',
+        provider: NETEASE_MUSIC_PROVIDER,
+        query
+      };
+    }
+  }
+  return null;
+}
+
 function musicQueryFromParts(source = {}, nested = {}) {
   const directQuery = firstText(
     source.query,
