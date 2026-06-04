@@ -435,7 +435,7 @@ try {
   globalThis.document = overlayDom.document;
   globalThis.CustomEvent = FakeCustomEvent;
   try {
-    const destroyOverlay = mountLocalVtsItemOverlay({ manifestUrls: [] });
+    const destroyOverlay = mountLocalVtsItemOverlay({ manifestUrls: [], selectionHighlightMs: 1 });
     await Promise.resolve();
     overlayDom.flushAllFrames(0);
     overlayDom.window.TSUKUYOMI_LOCAL_VTS_ITEMS.upsert({
@@ -462,6 +462,7 @@ try {
     assert.equal(canvas.dataset.frameUrl, secondFrame);
     assert.deepEqual(canvas.drawnFrames, [firstFrame, secondFrame]);
     assert.equal(overlayDom.queuedFrameCount(), 1, 'sequence item should schedule the following frame after advancing');
+    overlayDom.window.TSUKUYOMI_LOCAL_VTS_ITEMS.setEditorEnabled(true);
     overlayDom.window.TSUKUYOMI_LOCAL_VTS_ITEMS.upsert({
       Id: 'delete-me',
       File: 'delete-me.png',
@@ -469,9 +470,11 @@ try {
       Size: 120,
       Anchor: { X: 0.5, Y: 0.5 }
     });
-    overlayDom.window.TSUKUYOMI_LOCAL_VTS_ITEMS.setEditorEnabled(true);
     const image = overlayDom.container.querySelector('img');
     assert.ok(image, 'static item should render as an image');
+    assert.match(image.className, /\bselected\b/);
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    assert.doesNotMatch(image.className, /\bselected\b/);
     image.dispatch('pointerdown', { pointerId: 9, clientX: 500, clientY: 400 });
     image.dispatch('pointermove', { pointerId: 9, clientX: 980, clientY: 780 });
     assert.match(image.className, /\bdelete-target\b/);

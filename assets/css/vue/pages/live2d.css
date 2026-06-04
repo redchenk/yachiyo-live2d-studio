@@ -142,7 +142,7 @@ body.vue-live2d-route {
 }
 
 .live2d-model.live2d-vts-item-dragging::after {
-    content: "×";
+    content: "";
     position: absolute;
     right: 0.35rem;
     bottom: 0.35rem;
@@ -153,11 +153,11 @@ body.vue-live2d-route {
     place-items: center;
     border: 1px solid rgba(255, 128, 165, 0.44);
     border-radius: 8px;
-    color: rgba(255, 215, 226, 0.92);
-    font-size: clamp(1.55rem, 3vw, 2.7rem);
-    font-weight: 900;
-    line-height: 1;
-    background: rgba(60, 18, 34, 0.5);
+    background-color: rgba(60, 18, 34, 0.5);
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='48' height='48' viewBox='0 0 24 24' fill='none' stroke='%23ffd7e2' stroke-width='2.3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3 6h18'/%3E%3Cpath d='M8 6V4h8v2'/%3E%3Cpath d='M19 6l-1 14H6L5 6'/%3E%3Cpath d='M10 11v5'/%3E%3Cpath d='M14 11v5'/%3E%3C/svg%3E");
+    background-position: center;
+    background-repeat: no-repeat;
+    background-size: 48% 48%;
     box-shadow: 0 14px 34px rgba(0, 0, 0, 0.32), inset 0 0 22px rgba(255, 100, 130, 0.14);
     pointer-events: none;
     transition: transform 0.14s ease, border-color 0.14s ease, background 0.14s ease;
@@ -166,7 +166,7 @@ body.vue-live2d-route {
 .live2d-model.live2d-vts-item-delete-ready::after {
     transform: scale(1.08);
     border-color: rgba(255, 112, 145, 0.95);
-    background: rgba(100, 20, 45, 0.72);
+    background-color: rgba(100, 20, 45, 0.72);
     box-shadow: 0 18px 42px rgba(0, 0, 0, 0.38), 0 0 24px rgba(255, 100, 130, 0.4);
 }
 

@@ -623,6 +623,7 @@ export function mountLocalVtsItemOverlay(options = {}) {
   const containerSelector = options.containerSelector || '#live2d-container';
   const modelBaseUrl = options.modelBaseUrl || DEFAULT_MODEL_BASE_URL;
   const manifestUrls = options.manifestUrls || DEFAULT_MANIFEST_URLS;
+  const selectionHighlightMs = Math.max(0, Number(options.selectionHighlightMs ?? 5000));
   const elements = new Map();
   const cubismRenderers = new Map();
   const sequenceFrameCaches = new Map();
@@ -634,6 +635,8 @@ export function mountLocalVtsItemOverlay(options = {}) {
   let destroyed = false;
   let loadToken = 0;
   let selectedItemId = '';
+  let selectedHighlightUntil = 0;
+  let selectedHighlightTimer = 0;
   let editorEnabled = false;
   let editDragState = null;
 
@@ -644,6 +647,37 @@ export function mountLocalVtsItemOverlay(options = {}) {
   function scheduleApply() {
     if (frameId || destroyed) return;
     frameId = window.requestAnimationFrame(applyItems);
+  }
+
+  function clearSelectedHighlightTimer() {
+    if (!selectedHighlightTimer) return;
+    const clearTimer = typeof window.clearTimeout === 'function' ? window.clearTimeout.bind(window) : clearTimeout;
+    clearTimer(selectedHighlightTimer);
+    selectedHighlightTimer = 0;
+  }
+
+  function scheduleSelectedHighlightExpiry() {
+    clearSelectedHighlightTimer();
+    if (!selectionHighlightMs || !selectedItemId || destroyed) return;
+    const delay = Math.max(0, selectedHighlightUntil - performance.now() + 16);
+    const setTimer = typeof window.setTimeout === 'function' ? window.setTimeout.bind(window) : setTimeout;
+    selectedHighlightTimer = setTimer(() => {
+      selectedHighlightTimer = 0;
+      renderItems();
+    }, delay);
+  }
+
+  function markSelectedItemAdjusted(id = selectedItemId) {
+    if (!id) return;
+    selectedItemId = String(id);
+    selectedHighlightUntil = performance.now() + selectionHighlightMs;
+    scheduleSelectedHighlightExpiry();
+  }
+
+  function selectedHighlightActive(item) {
+    return editorEnabled
+      && item?.id === selectedItemId
+      && (!selectionHighlightMs || performance.now() <= selectedHighlightUntil);
   }
 
   function visibleItems() {
@@ -694,6 +728,7 @@ export function mountLocalVtsItemOverlay(options = {}) {
 
   function selectItem(id) {
     selectedItemId = id && items.some((item) => item.id === String(id)) ? String(id) : '';
+    if (selectedItemId) markSelectedItemAdjusted(selectedItemId);
     renderItems();
   }
 
@@ -714,7 +749,7 @@ export function mountLocalVtsItemOverlay(options = {}) {
     const existingIndex = items.findIndex((current) => current.id === item.id);
     if (existingIndex >= 0) items.splice(existingIndex, 1, item);
     else items.push(item);
-    if (options.select !== false) selectedItemId = item.id;
+    if (options.select !== false) markSelectedItemAdjusted(item.id);
     renderItems();
     scheduleApply();
     return item;
@@ -759,6 +794,7 @@ export function mountLocalVtsItemOverlay(options = {}) {
         size: Math.min(Math.max(normalizeNumber(size, item.size?.size || 160), 1), 2000)
       };
     }
+    markSelectedItemAdjusted(item.id);
     renderItems();
     scheduleApply();
     return item;
@@ -771,7 +807,11 @@ export function mountLocalVtsItemOverlay(options = {}) {
     if (nextItems.length === items.length) return false;
     items = nextItems;
     visibilityOverrides.delete(itemId);
-    if (selectedItemId === itemId) selectedItemId = '';
+    if (selectedItemId === itemId) {
+      selectedItemId = '';
+      selectedHighlightUntil = 0;
+      clearSelectedHighlightTimer();
+    }
     renderItems();
     scheduleApply();
     return true;
@@ -793,6 +833,8 @@ export function mountLocalVtsItemOverlay(options = {}) {
     editorEnabled = Boolean(enabled);
     if (!editorEnabled) {
       selectedItemId = '';
+      selectedHighlightUntil = 0;
+      clearSelectedHighlightTimer();
       editDragState = null;
       setDeleteHotspotState(findContainer(), null);
     }
@@ -828,6 +870,7 @@ export function mountLocalVtsItemOverlay(options = {}) {
     if (!item || !container) return;
     const rect = container.getBoundingClientRect();
     selectedItemId = item.id;
+    markSelectedItemAdjusted(item.id);
     editDragState = {
       id: item.id,
       pointerId: event.pointerId,
@@ -855,6 +898,7 @@ export function mountLocalVtsItemOverlay(options = {}) {
       x: clampAnchorValue(editDragState.originX + (event.clientX - editDragState.startX) / editDragState.width),
       y: clampAnchorValue(editDragState.originY + (event.clientY - editDragState.startY) / editDragState.height)
     };
+    markSelectedItemAdjusted(item.id);
     setDeleteHotspotState(findContainer(), item);
     renderItems();
     scheduleApply();
@@ -895,6 +939,7 @@ export function mountLocalVtsItemOverlay(options = {}) {
       const rate = event.ctrlKey ? 0.00055 : 0.00145;
       item.scale = Math.min(Math.max(normalizeNumber(item.scale, 1) * Math.exp(-Number(event.deltaY || 0) * rate), 0.05), 6);
     }
+    markSelectedItemAdjusted(item.id);
     renderItems();
     scheduleApply();
     event.stopPropagation();
@@ -1052,7 +1097,7 @@ export function mountLocalVtsItemOverlay(options = {}) {
       if (element.parentElement !== layer) layer.appendChild(element);
       applyItemStaticStyle(element, item, container);
       element.classList.toggle('editing', editorEnabled);
-      element.classList.toggle('selected', editorEnabled && item.id === selectedItemId);
+      element.classList.toggle('selected', selectedHighlightActive(item));
       element.classList.toggle('delete-target', editorEnabled && editDragState?.id === item.id && itemInDeleteHotspot(item));
       element.tabIndex = editorEnabled ? 0 : -1;
       const visible = itemVisible(item, visibilityOverrides);
@@ -1202,6 +1247,7 @@ export function mountLocalVtsItemOverlay(options = {}) {
     window.removeEventListener('resize', scheduleApply);
     if (frameId) window.cancelAnimationFrame(frameId);
     frameId = 0;
+    clearSelectedHighlightTimer();
     const container = findContainer();
     removeOverlayLayers(container);
     cubismRenderers.forEach((renderer) => renderer.destroy?.());
