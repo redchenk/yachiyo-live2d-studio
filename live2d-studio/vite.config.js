@@ -77,6 +77,88 @@ function itemNameFromFile(fileName) {
   return path.basename(fileName).replace(/\.(?:model3|vtube)\.json$/i, '').replace(/\.[^.]+$/i, '');
 }
 
+function imageSequenceKey(fileName) {
+  const extension = path.extname(fileName).toLowerCase();
+  if (!itemAssetExtensions.has(extension)) return null;
+  const name = path.basename(fileName, extension);
+  const match = name.match(/^(.*?)(\d+)$/);
+  if (!match) return null;
+  return `${match[1]}|${extension}`;
+}
+
+function imageSequenceNumber(fileName) {
+  const name = path.basename(fileName, path.extname(fileName));
+  const match = name.match(/(\d+)$/);
+  return match ? Number(match[1]) : 0;
+}
+
+function describeImageAsset(absolutePath, relativePath) {
+  const fileStat = statSync(absolutePath);
+  return {
+    type: 'image',
+    itemType: 'image',
+    file: relativePath,
+    name: path.basename(absolutePath, path.extname(absolutePath)),
+    url: live2DItemUrl(relativePath),
+    previewUrl: live2DItemUrl(relativePath),
+    sizeBytes: fileStat.size,
+    updatedAt: fileStat.mtimeMs
+  };
+}
+
+function describeImageSequenceAsset(directory, relativeRoot, entries) {
+  const first = entries[0];
+  const frameFiles = entries.map((entry) => path.join(relativeRoot, entry.name).replace(/\\/g, '/'));
+  const firstFrame = frameFiles[0];
+  const updatedAt = Math.max(...entries.map((entry) => statSync(path.join(directory, entry.name)).mtimeMs));
+  const sizeBytes = entries.reduce((sum, entry) => sum + statSync(path.join(directory, entry.name)).size, 0);
+  return {
+    type: 'sequence',
+    itemType: 'sequence',
+    file: firstFrame,
+    frames: frameFiles,
+    fps: 12,
+    name: path.basename(directory) || itemNameFromFile(first.name),
+    url: live2DItemUrl(firstFrame),
+    previewUrl: live2DItemUrl(firstFrame),
+    frameCount: frameFiles.length,
+    sizeBytes,
+    updatedAt
+  };
+}
+
+function groupImageSequences(directory, relativeRoot, imageEntries) {
+  const grouped = new Map();
+  const singles = [];
+  for (const entry of imageEntries) {
+    const key = imageSequenceKey(entry.name);
+    if (!key) {
+      singles.push(entry);
+      continue;
+    }
+    const group = grouped.get(key) || [];
+    group.push(entry);
+    grouped.set(key, group);
+  }
+
+  const assets = [];
+  const groupedNames = new Set();
+  for (const group of grouped.values()) {
+    if (group.length < 2) {
+      singles.push(...group);
+      continue;
+    }
+    group.sort((left, right) => imageSequenceNumber(left.name) - imageSequenceNumber(right.name) || left.name.localeCompare(right.name));
+    group.forEach((entry) => groupedNames.add(entry.name));
+    assets.push(describeImageSequenceAsset(directory, relativeRoot, group));
+  }
+
+  return {
+    assets,
+    singles: [...singles, ...imageEntries.filter((entry) => !groupedNames.has(entry.name) && !singles.includes(entry))]
+  };
+}
+
 function readJsonFileMaybe(filePath) {
   try {
     return JSON.parse(readFileSync(filePath, 'utf8'));
@@ -150,17 +232,14 @@ function listLive2DItemFiles(directory = live2DItemRoot, relativeRoot = '') {
       continue;
     }
     if (!entry.isFile() || !itemAssetExtensions.has(path.extname(entry.name).toLowerCase())) continue;
-    const fileStat = statSync(absolutePath);
-    files.push({
-      type: 'image',
-      itemType: 'image',
-      file: relativePath,
-      name: path.basename(entry.name, path.extname(entry.name)),
-      url: live2DItemUrl(relativePath),
-      previewUrl: live2DItemUrl(relativePath),
-      sizeBytes: fileStat.size,
-      updatedAt: fileStat.mtimeMs
-    });
+  }
+  const imageEntries = entries.filter((entry) => entry.isFile() && itemAssetExtensions.has(path.extname(entry.name).toLowerCase()));
+  const { assets: sequenceAssets, singles } = groupImageSequences(directory, relativeRoot, imageEntries);
+  files.push(...sequenceAssets);
+  for (const entry of singles) {
+    const absolutePath = path.join(directory, entry.name);
+    const relativePath = path.join(relativeRoot, entry.name).replace(/\\/g, '/');
+    files.push(describeImageAsset(absolutePath, relativePath));
   }
   return files.sort((left, right) => left.file.localeCompare(right.file));
 }

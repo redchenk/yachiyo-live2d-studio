@@ -90,6 +90,34 @@ try {
     '/models/tsukimi-yachiyo/items/star-02.png'
   ]);
   assert.equal(animatedStar.fps, 8);
+  assert.deepEqual(
+    localVtsItemToManifestItem(animatedStar),
+    {
+      Id: 'animated-star',
+      Name: 'animated-star',
+      File: '',
+      ItemType: 'sequence',
+      Visible: true,
+      Layer: 'front',
+      Anchor: { X: 0.5, Y: 0.5 },
+      Offset: { X: 0, Y: 0 },
+      Scale: 1,
+      Rotation: 0,
+      Opacity: 1,
+      Frames: ['star-01.png', 'star-02.png'],
+      FPS: 8,
+      Follow: {
+        HeadX: 0,
+        HeadY: 0,
+        HeadZ: 0,
+        BodyX: 0,
+        BodyY: 0,
+        BodyZ: 0,
+        PositionX: 0,
+        PositionY: 0
+      }
+    }
+  );
 
   const live2dItem = normalized.items.find((item) => item.id === 'live2d-item-model');
   assert.equal(live2dItem.renderType, 'live2d');

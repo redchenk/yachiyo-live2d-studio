@@ -446,6 +446,15 @@ export function localVtsItemToManifestItem(item, options = {}) {
     Opacity: round(item.opacity ?? 1, 4)
   };
   if (!manifestItem.Size) delete manifestItem.Size;
+  if (Array.isArray(item.frames) && item.frames.length > 0) {
+    manifestItem.ItemType = 'sequence';
+    manifestItem.Frames = item.frames.map((frame) => {
+      const text = String(frame || '');
+      const prefix = `${DEFAULT_MODEL_BASE_URL}${DEFAULT_ITEM_BASE_PATH}/`;
+      return text.startsWith(prefix) ? text.slice(prefix.length) : text;
+    });
+    manifestItem.FPS = round(item.fps ?? 12, 3);
+  }
   if (item.vtubeFile) manifestItem.VTubeFile = item.vtubeFile;
   if (item.iconFile) manifestItem.Icon = item.iconFile;
   if (includeFollow) {

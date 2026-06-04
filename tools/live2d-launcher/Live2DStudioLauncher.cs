@@ -1204,8 +1204,8 @@ internal static class DesktopApiProxy
         {
             if (Path.GetFileName(file).StartsWith(".")) continue;
             if (!IsLive2DImageItemFile(file)) continue;
-            result.Add(DescribeLive2DImageItemFile(file));
         }
+        AddLive2DImageAssets(result, directory);
         return result;
     }
 
@@ -1257,6 +1257,102 @@ internal static class DesktopApiProxy
             { "previewUrl", "/models/tsukimi-yachiyo/items/" + relative },
             { "sizeBytes", info.Length },
             { "updatedAt", new DateTimeOffset(info.LastWriteTimeUtc).ToUnixTimeMilliseconds() }
+        };
+    }
+
+    private static void AddLive2DImageAssets(List<Dictionary<string, object>> result, string directory)
+    {
+        var imageFiles = new List<string>();
+        foreach (var file in Directory.GetFiles(directory))
+        {
+            if (Path.GetFileName(file).StartsWith(".")) continue;
+            if (IsLive2DImageItemFile(file)) imageFiles.Add(file);
+        }
+
+        var grouped = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+        var singles = new List<string>();
+        foreach (var file in imageFiles)
+        {
+            var key = ImageSequenceKey(file);
+            if (string.IsNullOrWhiteSpace(key))
+            {
+                singles.Add(file);
+                continue;
+            }
+            List<string> group;
+            if (!grouped.TryGetValue(key, out group))
+            {
+                group = new List<string>();
+                grouped[key] = group;
+            }
+            group.Add(file);
+        }
+
+        foreach (var pair in grouped)
+        {
+            var group = pair.Value;
+            if (group.Count < 2)
+            {
+                singles.AddRange(group);
+                continue;
+            }
+            group.Sort((left, right) =>
+            {
+                var numeric = ImageSequenceNumber(left).CompareTo(ImageSequenceNumber(right));
+                return numeric != 0 ? numeric : string.Compare(Path.GetFileName(left), Path.GetFileName(right), StringComparison.OrdinalIgnoreCase);
+            });
+            result.Add(DescribeLive2DImageSequence(directory, group));
+        }
+
+        foreach (var file in singles)
+        {
+            result.Add(DescribeLive2DImageItemFile(file));
+        }
+    }
+
+    private static string ImageSequenceKey(string file)
+    {
+        var fileName = Path.GetFileNameWithoutExtension(file) ?? string.Empty;
+        var match = System.Text.RegularExpressions.Regex.Match(fileName, @"^(.*?)(\d+)$", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        if (!match.Success) return string.Empty;
+        return match.Groups[1].Value + "|" + Path.GetExtension(file).ToLowerInvariant();
+    }
+
+    private static int ImageSequenceNumber(string file)
+    {
+        var fileName = Path.GetFileNameWithoutExtension(file) ?? string.Empty;
+        var match = System.Text.RegularExpressions.Regex.Match(fileName, @"(\d+)$", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        int value;
+        return match.Success && int.TryParse(match.Groups[1].Value, out value) ? value : 0;
+    }
+
+    private static Dictionary<string, object> DescribeLive2DImageSequence(string directory, List<string> files)
+    {
+        var first = files[0];
+        var frames = new List<string>();
+        long sizeBytes = 0;
+        long updatedAt = 0;
+        foreach (var file in files)
+        {
+            var info = new FileInfo(file);
+            sizeBytes += info.Length;
+            updatedAt = Math.Max(updatedAt, new DateTimeOffset(info.LastWriteTimeUtc).ToUnixTimeMilliseconds());
+            frames.Add(Live2DItemRelativePath(file));
+        }
+        var firstFrame = frames.Count > 0 ? frames[0] : Live2DItemRelativePath(first);
+        return new Dictionary<string, object>
+        {
+            { "type", "sequence" },
+            { "itemType", "sequence" },
+            { "file", firstFrame },
+            { "frames", frames.ToArray() },
+            { "fps", 12 },
+            { "name", FirstNonEmpty(Path.GetFileName(directory), Path.GetFileNameWithoutExtension(first)) },
+            { "url", "/models/tsukimi-yachiyo/items/" + firstFrame },
+            { "previewUrl", "/models/tsukimi-yachiyo/items/" + firstFrame },
+            { "frameCount", frames.Count },
+            { "sizeBytes", sizeBytes },
+            { "updatedAt", updatedAt }
         };
     }
 

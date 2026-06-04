@@ -444,11 +444,14 @@ function slugLocalItemId(value) {
 function createLocalItemFromAsset(asset, anchor) {
   const id = `${slugLocalItemId(asset.file || asset.name)}-${Date.now().toString(36)}`;
   const live2DItem = asset.type === 'live2d' || asset.itemType === 'live2d';
+  const sequenceItem = asset.type === 'sequence' || asset.itemType === 'sequence' || Array.isArray(asset.frames);
   return {
     Id: id,
     Name: asset.name || asset.file || id,
     File: asset.modelFile || asset.file,
-    ItemType: live2DItem ? 'live2d' : 'image',
+    ItemType: live2DItem ? 'live2d' : sequenceItem ? 'sequence' : 'image',
+    Frames: sequenceItem ? asset.frames || [] : undefined,
+    FPS: sequenceItem ? Number(asset.fps) || 12 : undefined,
     VTubeFile: asset.vtubeFile || '',
     Icon: asset.iconFile || '',
     Visible: true,
