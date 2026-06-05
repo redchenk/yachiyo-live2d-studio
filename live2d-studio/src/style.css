@@ -988,6 +988,215 @@
   white-space: pre-wrap;
 }
 
+.studio-danmaku-toolbar {
+  display: grid;
+  grid-template-columns: minmax(10rem, 1fr) auto auto;
+}
+
+.studio-danmaku-status {
+  min-width: 10rem;
+  min-height: 2.45rem;
+  display: inline-grid;
+  grid-template-columns: auto minmax(0, auto);
+  column-gap: 0.46rem;
+  row-gap: 0.04rem;
+  align-items: center;
+  border: 1px solid rgba(235, 242, 255, 0.13);
+  border-radius: 8px;
+  padding: 0.42rem 0.64rem;
+  background: rgba(3, 7, 18, 0.28);
+}
+
+.studio-danmaku-status span {
+  grid-row: 1 / span 2;
+  width: 0.58rem;
+  height: 0.58rem;
+  border-radius: 999px;
+  background: rgba(235, 242, 255, 0.28);
+  box-shadow: 0 0 0 0.2rem rgba(235, 242, 255, 0.04);
+}
+
+.studio-danmaku-status.ok span {
+  background: rgba(118, 233, 164, 0.95);
+  box-shadow: 0 0 0 0.2rem rgba(118, 233, 164, 0.1);
+}
+
+.studio-danmaku-status.warn span {
+  background: rgba(255, 211, 118, 0.95);
+  box-shadow: 0 0 0 0.2rem rgba(255, 211, 118, 0.1);
+}
+
+.studio-danmaku-status.error span {
+  background: rgba(255, 122, 122, 0.95);
+  box-shadow: 0 0 0 0.2rem rgba(255, 122, 122, 0.1);
+}
+
+.studio-danmaku-status strong,
+.studio-danmaku-status small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.studio-danmaku-status strong {
+  color: rgba(248, 251, 255, 0.92);
+  font-size: 0.78rem;
+  font-weight: 950;
+}
+
+.studio-danmaku-status small {
+  color: rgba(235, 242, 255, 0.52);
+  font-size: 0.68rem;
+  font-weight: 850;
+}
+
+.studio-danmaku-grid {
+  grid-template-columns: minmax(19rem, 0.86fr) minmax(23rem, 1.14fr);
+}
+
+.studio-danmaku-settings {
+  grid-row: span 2;
+}
+
+.studio-danmaku-card textarea {
+  width: 100%;
+  min-height: 5.8rem;
+  border: 1px solid rgba(235, 242, 255, 0.18);
+  border-radius: 7px;
+  padding: 0.64rem 0.7rem;
+  outline: none;
+  color: rgba(248, 251, 255, 0.94);
+  background: rgba(3, 7, 18, 0.42);
+  font: inherit;
+  font-size: 0.82rem;
+  line-height: 1.45;
+  resize: vertical;
+}
+
+.studio-danmaku-card textarea:focus {
+  border-color: rgba(158, 232, 255, 0.54);
+  box-shadow: 0 0 0 3px rgba(158, 232, 255, 0.1);
+}
+
+.studio-danmaku-switches {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.5rem;
+}
+
+.studio-danmaku-switches .studio-check-row {
+  min-width: 0;
+}
+
+.studio-danmaku-error {
+  margin: 0;
+  border: 1px solid rgba(255, 122, 122, 0.32);
+  border-radius: 8px;
+  padding: 0.62rem 0.7rem;
+  color: rgba(255, 190, 190, 0.92);
+  background: rgba(255, 122, 122, 0.08);
+  font-size: 0.78rem;
+  font-weight: 850;
+}
+
+.studio-danmaku-log-card header {
+  justify-content: space-between;
+}
+
+.studio-danmaku-clear {
+  min-height: 2rem;
+  margin-left: auto;
+  padding: 0 0.58rem;
+}
+
+.studio-danmaku-log {
+  max-height: calc(100vh - 14rem);
+  min-height: 18rem;
+  display: grid;
+  align-content: start;
+  gap: 0.48rem;
+  overflow: auto;
+  padding-right: 0.18rem;
+}
+
+.studio-danmaku-message {
+  min-width: 0;
+  display: grid;
+  gap: 0.32rem;
+  border: 1px solid rgba(235, 242, 255, 0.12);
+  border-radius: 8px;
+  padding: 0.62rem 0.7rem;
+  background: rgba(3, 7, 18, 0.24);
+}
+
+.studio-danmaku-message.superchat {
+  border-color: rgba(255, 211, 118, 0.34);
+  background: rgba(255, 211, 118, 0.08);
+}
+
+.studio-danmaku-message.gift,
+.studio-danmaku-message.guard {
+  border-color: rgba(255, 128, 197, 0.28);
+  background: rgba(255, 128, 197, 0.07);
+}
+
+.studio-danmaku-message header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 0.46rem;
+  align-items: center;
+}
+
+.studio-danmaku-message strong,
+.studio-danmaku-message span,
+.studio-danmaku-message time,
+.studio-danmaku-message small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.studio-danmaku-message strong {
+  color: rgba(248, 251, 255, 0.94);
+  font-size: 0.82rem;
+}
+
+.studio-danmaku-message span {
+  border: 1px solid rgba(158, 232, 255, 0.2);
+  border-radius: 999px;
+  padding: 0.2rem 0.42rem;
+  color: rgba(158, 232, 255, 0.78);
+  background: rgba(158, 232, 255, 0.08);
+  font-size: 0.64rem;
+  font-weight: 900;
+}
+
+.studio-danmaku-message time,
+.studio-danmaku-message small {
+  color: rgba(235, 242, 255, 0.5);
+  font-size: 0.68rem;
+  font-weight: 850;
+}
+
+.studio-danmaku-message p,
+.studio-danmaku-empty {
+  margin: 0;
+  color: rgba(235, 242, 255, 0.72);
+  font-size: 0.78rem;
+  line-height: 1.48;
+}
+
+.studio-danmaku-empty {
+  display: grid;
+  min-height: 8rem;
+  place-items: center;
+  border: 1px dashed rgba(235, 242, 255, 0.14);
+  border-radius: 8px;
+  font-weight: 850;
+}
+
 .studio-scrim-enter-active,
 .studio-scrim-leave-active,
 .studio-settings-drawer-enter-active,
@@ -1017,14 +1226,21 @@
 
   .studio-music-toolbar,
   .studio-music-search-form,
-  .studio-music-settings-row {
+  .studio-music-settings-row,
+  .studio-danmaku-toolbar {
     align-items: stretch;
     flex-direction: column;
   }
 
   .studio-music-grid,
-  .studio-music-status-grid {
+  .studio-music-status-grid,
+  .studio-danmaku-grid,
+  .studio-danmaku-switches {
     grid-template-columns: 1fr;
+  }
+
+  .studio-danmaku-toolbar {
+    display: flex;
   }
 
   .studio-settings-panel {

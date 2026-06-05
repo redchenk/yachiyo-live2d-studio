@@ -5,6 +5,7 @@ import TsIcon from '../../src/frontend/components/TsIcon.vue';
 import { readRoomLLMSettings, readRoomTTSSettings } from '../../src/frontend/services/room/roomSettings';
 import StudioSettingsPanel from './components/StudioSettingsPanel.vue';
 import MusicTestPage from './components/MusicTestPage.vue';
+import BilibiliDanmakuPage from './components/BilibiliDanmakuPage.vue';
 
 function shouldOpenSettingsOnBoot() {
   const llm = readRoomLLMSettings();
@@ -17,6 +18,7 @@ const activeView = ref('live');
 const railItems = [
   { id: 'live', label: '直播', icon: 'home' },
   { id: 'items', label: 'Items', icon: 'package' },
+  { id: 'danmaku', label: 'Danmaku', icon: 'message' },
   { id: 'music', label: '音乐', icon: 'music' }
 ];
 
@@ -36,6 +38,7 @@ onUnmounted(() => {
       :item-editor-open="activeView === 'items'"
       @item-editor-close="activeView = 'live'"
     />
+    <BilibiliDanmakuPage v-else-if="activeView === 'danmaku'" />
     <MusicTestPage v-else-if="activeView === 'music'" />
     <aside class="studio-left-rail" aria-label="Studio navigation">
       <div class="studio-rail-brand">

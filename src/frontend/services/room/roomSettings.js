@@ -7,6 +7,7 @@ export const ROOM_VTS_SETTINGS_KEY = 'roomVTubeStudioSettings';
 export const ROOM_MEMORY_SETTINGS_KEY = 'roomMemorySettings';
 export const ROOM_ASR_SETTINGS_KEY = 'roomASRSettings';
 export const ROOM_MUSIC_SETTINGS_KEY = 'roomMusicSettings';
+export const ROOM_BILIBILI_DANMAKU_SETTINGS_KEY = 'roomBilibiliDanmakuSettings';
 export const ROOM_VISION_SETTINGS_KEY = 'roomVisionSettings';
 const ROOM_MODEL_STAGE_DEFAULTS_MIGRATION_KEY = 'roomModelStageDefaultsMigratedV2';
 const ROOM_MODEL_RENDER_DEFAULTS_MIGRATION_KEY = 'roomModelRenderDefaultsMigratedV2';
@@ -191,6 +192,19 @@ export const DEFAULT_ROOM_MUSIC_SETTINGS = {
   minDurationMs: 60000,
   historyLimit: 50,
   blacklist: ''
+};
+
+export const DEFAULT_ROOM_BILIBILI_DANMAKU_SETTINGS = {
+  enabled: false,
+  roomId: '',
+  autoConnect: false,
+  autoForward: false,
+  maxForwardPerMinute: 20,
+  platform: 'web',
+  uid: 0,
+  key: '',
+  buvid: '',
+  cookie: ''
 };
 
 export const DEFAULT_ROOM_VISION_SETTINGS = {
@@ -533,6 +547,28 @@ export function normalizeRoomMusicSettings(settings = {}) {
   };
 }
 
+export function normalizeRoomBilibiliDanmakuSettings(settings = {}) {
+  const merged = { ...DEFAULT_ROOM_BILIBILI_DANMAKU_SETTINGS, ...(settings || {}) };
+  const platform = asText(merged.platform).toLowerCase() || DEFAULT_ROOM_BILIBILI_DANMAKU_SETTINGS.platform;
+  return {
+    enabled: asBoolean(merged.enabled),
+    roomId: asText(merged.roomId).replace(/[^\d]/g, ''),
+    autoConnect: asBoolean(merged.autoConnect),
+    autoForward: asBoolean(merged.autoForward),
+    maxForwardPerMinute: Math.round(asNumber(
+      merged.maxForwardPerMinute,
+      DEFAULT_ROOM_BILIBILI_DANMAKU_SETTINGS.maxForwardPerMinute,
+      0,
+      120
+    )),
+    platform,
+    uid: Math.round(asNumber(merged.uid, DEFAULT_ROOM_BILIBILI_DANMAKU_SETTINGS.uid, 0, Number.MAX_SAFE_INTEGER)),
+    key: String(merged.key || '').trim(),
+    buvid: String(merged.buvid || '').trim(),
+    cookie: String(merged.cookie || '').trim()
+  };
+}
+
 function upgradeLegacyRoomMusicDefaults(settings, rawSettings = {}) {
   if (typeof localStorage === 'undefined') return settings;
   try {
@@ -682,6 +718,12 @@ export function readRoomMusicSettings() {
   );
 }
 
+export function readRoomBilibiliDanmakuSettings() {
+  return normalizeRoomBilibiliDanmakuSettings(
+    readJson(ROOM_BILIBILI_DANMAKU_SETTINGS_KEY, clone(DEFAULT_ROOM_BILIBILI_DANMAKU_SETTINGS))
+  );
+}
+
 export function readRoomVisionSettings() {
   return normalizeRoomVisionSettings(readJson(ROOM_VISION_SETTINGS_KEY, clone(DEFAULT_ROOM_VISION_SETTINGS)));
 }
@@ -728,6 +770,12 @@ export function writeRoomMusicSettings(settings) {
   return normalized;
 }
 
+export function writeRoomBilibiliDanmakuSettings(settings) {
+  const normalized = normalizeRoomBilibiliDanmakuSettings(settings);
+  writeJson(ROOM_BILIBILI_DANMAKU_SETTINGS_KEY, normalized);
+  return normalized;
+}
+
 export function writeRoomVisionSettings(settings) {
   const normalized = normalizeRoomVisionSettings(settings);
   writeJson(ROOM_VISION_SETTINGS_KEY, normalized);
@@ -743,6 +791,7 @@ export function readRoomStudioSettings() {
     vts: readRoomVTubeStudioSettings(),
     memory: readRoomMemorySettings(),
     music: readRoomMusicSettings(),
+    bilibiliDanmaku: readRoomBilibiliDanmakuSettings(),
     vision: readRoomVisionSettings()
   };
 }

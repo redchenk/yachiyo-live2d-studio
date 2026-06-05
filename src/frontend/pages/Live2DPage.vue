@@ -28,6 +28,11 @@ import {
   LIVE2D_MUSIC_QUEUE_EVENT,
   readLive2DMusicQueueState
 } from '../services/room/live2dMusicQueue';
+import { readRoomBilibiliDanmakuSettings } from '../services/room/roomSettings';
+import {
+  BILIBILI_DANMAKU_EVENT,
+  syncBilibiliDanmakuListener
+} from '../services/room/live2dBilibiliDanmaku';
 import { createLive2DSpeechPlayer } from '../services/room/live2dSpeech';
 import { cleanLive2DReply } from '../services/room/live2dText';
 import {
@@ -115,6 +120,8 @@ let speechPlayer = null;
 let streamingSpeechSession = null;
 let asrRecorder = null;
 let modelDragState = null;
+let bilibiliForwardWindowStartedAt = 0;
+let bilibiliForwardCount = 0;
 const CHARACTER_STATE_EVENT = 'tsukuyomi:live2d-character-state';
 const SETTINGS_SAVED_EVENT = 'tsukuyomi:studio-settings-saved';
 const LOCAL_VTS_ITEM_CONTROL_EVENT = 'tsukuyomi:live2d-local-vts-item';
@@ -1288,10 +1295,57 @@ async function toggleAudienceAsr() {
 function handleStudioSettingsSaved() {
   speechPlayer?.warmup?.();
   warmupLive2DMusicPlayback().catch(() => {});
+  syncBilibiliDanmakuFromSettings();
 }
 
 function handleLive2DDebugEvent(event) {
   live2dDebug.value = event.detail || readRoomLive2DDebugState();
+}
+
+function syncBilibiliDanmakuFromSettings() {
+  try {
+    syncBilibiliDanmakuListener(readRoomBilibiliDanmakuSettings());
+  } catch (error) {
+    pushLog('system', `Bilibili: ${error?.message || 'Danmaku connection failed'}`, { source: 'bilibili' });
+  }
+}
+
+function canForwardBilibiliDanmaku(settings) {
+  const limit = Math.round(Number(settings.maxForwardPerMinute || 0));
+  if (!Number.isFinite(limit) || limit <= 0) return false;
+  const now = Date.now();
+  if (!bilibiliForwardWindowStartedAt || now - bilibiliForwardWindowStartedAt >= 60000) {
+    bilibiliForwardWindowStartedAt = now;
+    bilibiliForwardCount = 0;
+  }
+  if (bilibiliForwardCount >= limit) return false;
+  bilibiliForwardCount += 1;
+  return true;
+}
+
+function handleBilibiliDanmakuEvent(event) {
+  const message = event.detail || {};
+  if (!['danmu', 'superchat'].includes(message.type)) return;
+  const settings = readRoomBilibiliDanmakuSettings();
+  if (!settings.enabled || !settings.autoForward || !canForwardBilibiliDanmaku(settings)) return;
+  const userName = String(message.userName || 'Bilibili').trim();
+  const text = String(message.text || '').trim();
+  if (!text) return;
+  const prefix = message.type === 'superchat' ? '[SC] ' : '';
+  submitAudienceLine(`${prefix}${userName}: ${text}`, {
+    source: 'bilibili',
+    keepInput: true,
+    bilibili: {
+      id: message.id,
+      type: message.type,
+      roomId: message.roomId,
+      actualRoomId: message.actualRoomId,
+      userId: message.userId,
+      userName,
+      price: message.price || 0,
+      timestamp: message.timestamp
+    }
+  });
 }
 
 watch(() => props.itemEditorOpen, (open) => {
@@ -1304,10 +1358,12 @@ onMounted(() => {
   window.addEventListener(SETTINGS_SAVED_EVENT, handleStudioSettingsSaved);
   window.addEventListener(ROOM_LIVE2D_DEBUG_EVENT, handleLive2DDebugEvent);
   window.addEventListener(LIVE2D_MUSIC_QUEUE_EVENT, handleLive2DMusicQueueEvent);
+  window.addEventListener(BILIBILI_DANMAKU_EVENT, handleBilibiliDanmakuEvent);
   window.addEventListener(LOCAL_VTS_ITEM_STATE_EVENT, onLocalItemState);
   loadModelViewport();
   live2dDebug.value = readRoomLive2DDebugState();
   musicQueueState.value = readLive2DMusicQueueState();
+  syncBilibiliDanmakuFromSettings();
   if (itemPanelOpen.value) refreshLocalItemAssets();
   init();
 });
@@ -1316,6 +1372,7 @@ onUnmounted(() => {
   window.removeEventListener(SETTINGS_SAVED_EVENT, handleStudioSettingsSaved);
   window.removeEventListener(ROOM_LIVE2D_DEBUG_EVENT, handleLive2DDebugEvent);
   window.removeEventListener(LIVE2D_MUSIC_QUEUE_EVENT, handleLive2DMusicQueueEvent);
+  window.removeEventListener(BILIBILI_DANMAKU_EVENT, handleBilibiliDanmakuEvent);
   window.removeEventListener(LOCAL_VTS_ITEM_STATE_EVENT, onLocalItemState);
   setLocalItemEditorEnabled(false);
   modelDragState = null;
