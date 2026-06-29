@@ -563,10 +563,10 @@ const latestCaption = computed(() => {
 });
 
 const testActions = [
-  { label: '中性', expression: 'neutral', icon: 'meh' },
-  { label: '微笑', expression: 'smile', icon: 'smile' },
-  { label: '害羞', expression: 'bsmile', icon: 'smilePlus' },
-  { label: '哭泣', expression: 'tears', icon: 'frown' }
+  { label: '中性', expression: 'neutral', emotion: 'neutral', intensity: 0.58, icon: 'meh' },
+  { label: '微笑', expression: 'smile', emotion: 'happy', intensity: 0.86, icon: 'smile' },
+  { label: '害羞', expression: 'bsmile', emotion: 'shy', intensity: 0.76, icon: 'smilePlus' },
+  { label: '哭泣', expression: 'tears', emotion: 'crying', intensity: 0.78, icon: 'frown' }
 ];
 
 const bodyActions = behaviorBodyActionButtons();
@@ -881,9 +881,13 @@ async function init() {
   }
 }
 
-function runExpression(expression) {
+function runExpression(action) {
+  const expression = typeof action === 'string' ? action : action?.expression;
+  if (!expression) return;
   dispatchRoomLive2D({
     expression,
+    emotion: typeof action === 'object' ? action.emotion : undefined,
+    intensity: typeof action === 'object' ? action.intensity : undefined,
     expressionMix: [{ expression, weight: 1 }],
     durationMs: 4200
   });
@@ -1780,7 +1784,7 @@ onUnmounted(() => {
             class="live2d-action-btn live2d-tile-btn"
             type="button"
             :disabled="!live2d.ready.value"
-            @click="runExpression(action.expression)"
+            @click="runExpression(action)"
           >
             <TsIcon :name="action.icon" :size="28" />
             <span>{{ action.label }}</span>

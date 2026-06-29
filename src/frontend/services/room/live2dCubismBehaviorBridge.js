@@ -18,20 +18,11 @@ const CHARACTER_STATE_EVENT = 'tsukuyomi:live2d-character-state';
 const LOCAL_CUBISM_ACTION_INTENSITY_SCALE = 1.86;
 
 const EYE_OWNING_EXPRESSIONS = new Set([
-  'angry',
   'bsmile',
   'closed_eyes',
   'closed_smile',
-  'crying',
   'dizzy',
-  'fire',
-  'namida',
-  'shy',
-  'smile',
-  'smug',
-  'surprised',
-  'tears',
-  'tongue'
+  'namida'
 ]);
 
 const MOMENTARY_EXPRESSION_IDS = new Set(['tongue']);
@@ -42,14 +33,18 @@ const CLOSED_SMILE_EYE_SHAPE = {
   hideOpenEye: 0.9,
   cheek: 0.3
 };
+const SOFT_SMILE_EYE_SHAPE = {
+  happySmile: 0.42,
+  eyeSmile: 0.3,
+  cheek: 0.34
+};
 const EXPRESSION_EYE_OPEN_GUARDS = new Map([
-  ['smile', 0.015],
   ['closed_smile', 0.015],
   ['closed_eyes', 0.015]
 ]);
 const EXPRESSION_CUBISM_EYE_SHAPES = new Map([
-  ['smile', CLOSED_SMILE_EYE_SHAPE],
   ['closed_smile', CLOSED_SMILE_EYE_SHAPE],
+  ['smile', SOFT_SMILE_EYE_SHAPE],
   ['closed_eyes', {
     happySmile: 0.64,
     eyeSmile: 0.72,
@@ -361,18 +356,19 @@ function applySemanticOverlay(frame, expression, strength = 1, options = {}) {
 function applyExpressionEyeGuard(frame, expression) {
   const normalized = normalizeExpression(expression);
   const open = EXPRESSION_EYE_OPEN_GUARDS.get(normalized);
-  if (open === undefined) return;
-  setEyeOpen(frame, open, open, 1);
+  if (open !== undefined) setEyeOpen(frame, open, open, 1);
   const shape = EXPRESSION_CUBISM_EYE_SHAPES.get(normalized);
   if (!shape) return;
   setFrameValue(frame, 'ParamEyeSmile_Happy_L', shape.happySmile, 0.96);
   setFrameValue(frame, 'ParamEyeSmile_Happy_R', shape.happySmile, 0.96);
   setFrameValue(frame, 'ParamEyeLSmile', shape.eyeSmile, 0.94);
   setFrameValue(frame, 'ParamEyeRSmile', shape.eyeSmile, 0.94);
-  setFrameValue(frame, 'ParamHide_EyesL1', shape.hideOpenEye, 0.9);
-  setFrameValue(frame, 'ParamHighLightHide_EyesL1', shape.hideOpenEye, 0.86);
-  setFrameValue(frame, 'ParamHide_EyeSocket', shape.hideOpenEye, 0.84);
-  setFrameValue(frame, 'ParamHide_EyeSocket2', shape.hideOpenEye, 0.84);
+  if (shape.hideOpenEye !== undefined) {
+    setFrameValue(frame, 'ParamHide_EyesL1', shape.hideOpenEye, 0.9);
+    setFrameValue(frame, 'ParamHighLightHide_EyesL1', shape.hideOpenEye, 0.86);
+    setFrameValue(frame, 'ParamHide_EyeSocket', shape.hideOpenEye, 0.84);
+    setFrameValue(frame, 'ParamHide_EyeSocket2', shape.hideOpenEye, 0.84);
+  }
   if (shape.cheek) setFrameValue(frame, 'ParamCheek', shape.cheek, 0.46);
 }
 

@@ -39,14 +39,20 @@ try {
 
   const smileFrame = sampleCubismBehaviorFrame(brain.sample(1280), 1280);
   assert.ok(
-    paramValue(smileFrame, 'ParamEyeLOpen') < 0.1 && paramValue(smileFrame, 'ParamEyeROpen') < 0.1,
-    'smile should let the model-authored 笑咪咪 expression own the closed-eye shape'
+    paramValue(smileFrame, 'ParamEyeLOpen') > 1.1 && paramValue(smileFrame, 'ParamEyeROpen') > 1.1,
+    'smile should keep both eyes naturally open'
   );
   assert.ok(
     hasParam(smileFrame, 'ParamEyeSmile_Happy_L') &&
       hasParam(smileFrame, 'ParamEyeSmile_Happy_R') &&
-      hasParam(smileFrame, 'ParamHide_EyesL1'),
-    'smile should use the dedicated happy-eye and open-eye hide parameters from 笑咪咪'
+      hasParam(smileFrame, 'ParamEyeLSmile') &&
+      hasParam(smileFrame, 'ParamEyeRSmile'),
+    'smile should add a soft happy-eye curve without closing the eyes'
+  );
+  assert.equal(
+    hasParam(smileFrame, 'ParamHide_EyesL1'),
+    false,
+    'smile should not use closed-eye hide parameters'
   );
 
   brain.onRoomAct({

@@ -1,7 +1,13 @@
 {
   "Type": "Live2D Expression",
   "Parameters": [
-    { "Id": "ParamMouthForm", "Value": 0.55, "Blend": "Add" },
-    { "Id": "ParamCheek", "Value": 0.28, "Blend": "Add" }
+    { "Id": "ParamExpression_3", "Value": 0.55, "Blend": "Add" },
+    { "Id": "ParamEyeSmile_Happy_L", "Value": 0.42, "Blend": "Add" },
+    { "Id": "ParamEyeSmile_Happy_R", "Value": 0.42, "Blend": "Add" },
+    { "Id": "ParamEyeLSmile", "Value": 0.3, "Blend": "Add" },
+    { "Id": "ParamEyeRSmile", "Value": 0.3, "Blend": "Add" },
+    { "Id": "ParamMouthForm", "Value": 0.78, "Blend": "Add" },
+    { "Id": "ParamMouthShape", "Value": 0.12, "Blend": "Add" },
+    { "Id": "ParamCheek", "Value": 0.42, "Blend": "Add" }
   ]
 }

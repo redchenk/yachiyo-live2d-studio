@@ -40,14 +40,19 @@ export const YACHIYO_EXPRESSION_PRESETS = [
     prompt: 'warm, happy, reassured, cheerful, or gentle smile',
     aliases: ['happy', 'joy', 'cheerful', 'gentle', 'warm', 'laugh'],
     expression: 'smile',
-    files: ['笑咪咪', '笑眯眯', 'smile', 'happy', 'expression_smile'],
+    files: ['smile', 'happy', 'open_smile', 'expression_smile'],
     actions: [
       action('look_at_chat', 1.0),
       action('smile', 1.6, 0.05),
       action('nod', 1.25, 0.18)
     ],
     vts: [
-      vts('MouthSmile', 0.82, 0.7),
+      vts('MouthSmile', 0.96, 0.8),
+      vts('ParamEyeSmile_Happy_L', 0.42, 0.5, 'add'),
+      vts('ParamEyeSmile_Happy_R', 0.42, 0.5, 'add'),
+      vts('ParamEyeLSmile', 0.3, 0.44, 'add'),
+      vts('ParamEyeRSmile', 0.3, 0.44, 'add'),
+      vts('ParamCheek', 0.34, 0.46),
       vts('Brows', 0.62, 0.46),
       vts('BrowLeftY', 0.62, 0.44),
       vts('BrowRightY', 0.62, 0.44)
