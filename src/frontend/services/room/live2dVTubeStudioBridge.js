@@ -77,6 +77,9 @@ const VTS_EXPRESSION_ALIASES = {
   neutral: ['neutral', 'normal', 'default']
 };
 
+const ACTION_TAKEOVER_MIN_ENERGY = 0.08;
+const ACTION_TAKEOVER_FULL_ENVELOPE = 0.72;
+
 const VTS_RANGES = {
   FacePositionX: [-15, 15],
   FacePositionY: [-15, 15],
@@ -591,18 +594,68 @@ function actionEnvelope(progress) {
   return 1;
 }
 
+function actionTakeoverScale(sample) {
+  const envelope = Number(sample?.envelope);
+  if (!Number.isFinite(envelope)) return 1;
+  return ease(clamp(envelope / ACTION_TAKEOVER_FULL_ENVELOPE, 0, 1));
+}
+
+function scaledActionWeight(frame, weight) {
+  const scale = Number(frame?.__actionWeightScale);
+  if (!Number.isFinite(scale)) return weight;
+  return Number(weight) * clamp(scale, 0.01, 1);
+}
+
+function applyDirectActionWithTakeover(frame, sample, callback) {
+  if (!sample || sample.energy < ACTION_TAKEOVER_MIN_ENERGY) return;
+  const previousActionWeightScale = frame.__actionWeightScale;
+  frame.__actionWeightScale = actionTakeoverScale(sample);
+  try {
+    callback();
+  } finally {
+    if (previousActionWeightScale === undefined) delete frame.__actionWeightScale;
+    else frame.__actionWeightScale = previousActionWeightScale;
+  }
+}
+
+function isDirectSoftTakeoverFrameId(id) {
+  const value = String(id || '');
+  return (
+    value.startsWith('FaceAngle') ||
+    value.startsWith('FacePosition') ||
+    value.startsWith('Mocopi') ||
+    value.startsWith('Eye') ||
+    value.startsWith('Param')
+  );
+}
+
 function setFrameValue(frame, id, value, weight = 1) {
   const range = VTS_RANGES[id] || [-30, 30];
+  const nextValue = clamp(value, range[0], range[1]);
+  const nextWeight = clamp(scaledActionWeight(frame, weight), 0.01, 1);
+  const current = frame.get(id);
+  if (current && nextWeight < current.weight) {
+    if (isDirectSoftTakeoverFrameId(id) && nextWeight >= current.weight * 0.45) {
+      const amount = clamp((nextWeight / Math.max(current.weight, 0.01)) * 0.74, 0.18, 0.78, 0.42);
+      frame.set(id, {
+        id,
+        value: current.value + (nextValue - current.value) * amount,
+        weight: current.weight
+      });
+    }
+    return;
+  }
   frame.set(id, {
     id,
-    value: clamp(value, range[0], range[1]),
-    weight: clamp(weight, 0.01, 1)
+    value: nextValue,
+    weight: nextWeight
   });
 }
 
 function addFrameValue(frame, id, value, weight = 1) {
   const current = frame.get(id);
-  setFrameValue(frame, id, (current?.value || 0) + value, Math.max(current?.weight || 0, weight));
+  const nextWeight = scaledActionWeight(frame, weight);
+  setFrameValue(frame, id, (current?.value || 0) + value, Math.max(current?.weight || 0, nextWeight));
 }
 
 function setFrameEyes(frame, x = 0, y = 0, weight = 0.8) {
@@ -971,6 +1024,7 @@ function pickDominantMotion(samples) {
 function applyDirectMotion(frame, sample) {
   if (!sample) return;
   const { action, progress: t, phase, energy: e, sign } = sample;
+  if (e < ACTION_TAKEOVER_MIN_ENERGY) return;
   const variant = actionVariant(action);
   const arc = actionArc(action);
   const secondarySign = actionSecondarySign(action, -sign);
@@ -1192,6 +1246,7 @@ function applyDressSway(frame, sample) {
 
 function applyDirectOverlay(frame, sample, dominant, options = {}) {
   const { action, progress: t, phase, energy: e, sign } = sample;
+  if (e < ACTION_TAKEOVER_MIN_ENERGY) return;
   const isDominant = dominant?.action === action;
   const faceOnly = Boolean(options.faceOnly);
   const suppressEyeOpen = Boolean(options.suppressEyeOpen);
@@ -1332,8 +1387,12 @@ function sampleVTSBehaviorActions(actions, elapsedMs, nowMs = performance.now(),
   const motionActive = Boolean(options.motionActive || dominant || samples.length);
   applyCharacterStateFrame(frame, character, motionActive ? lerp(0.68, 0.42, speakingBlend) : lerp(0.68, 0.82, speakingBlend));
   applySemanticExpressionOverlay(frame, expression || character?.emotion, lerp(0.82, 0.68, speakingBlend));
-  applyDirectMotion(frame, dominant);
-  samples.forEach((sample) => applyDirectOverlay(frame, sample, dominant, { faceOnly: false, suppressEyeOpen }));
+  applyDirectActionWithTakeover(frame, dominant, () => applyDirectMotion(frame, dominant));
+  samples.forEach((sample) => applyDirectActionWithTakeover(
+    frame,
+    sample,
+    () => applyDirectOverlay(frame, sample, dominant, { faceOnly: false, suppressEyeOpen })
+  ));
   applyAutoBlink(frame, samples, nowMs, character?.eyeOpen, { suppressEyeOpen });
   return finalizeDirectFrame(frame);
 }

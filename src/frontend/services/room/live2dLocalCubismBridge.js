@@ -144,9 +144,9 @@ function normalizeParameterId(item) {
 
 function localFrameSmoothingProfile(id) {
   if (id.startsWith('ParamSwitchCtrl_')) return { alpha: 1, step: 1 };
-  if (id.startsWith('ParamBodyInput_')) return { alpha: 0.32, step: 2.25, accel: 0.48 };
-  if (id.startsWith('ParamOutput_') || id.startsWith('ParamPhysicsRAM_')) return { alpha: 0.3, step: 2.05, accel: 0.42 };
-  if (id.startsWith('ParamAngle_Body') || id.startsWith('ParamAngle_Chest') || id.startsWith('ParamAngle_Hip') || id.startsWith('ParamAngle_Shoulder')) return { alpha: 0.31, step: 2.15, accel: 0.46 };
+  if (id.startsWith('ParamBodyInput_')) return { alpha: 0.28, step: 1.55, accel: 0.32, maxFrameScale: 1 };
+  if (id.startsWith('ParamOutput_') || id.startsWith('ParamPhysicsRAM_')) return { alpha: 0.26, step: 1.55, accel: 0.32, maxFrameScale: 1 };
+  if (id.startsWith('ParamAngle_Body') || id.startsWith('ParamAngle_Chest') || id.startsWith('ParamAngle_Hip') || id.startsWith('ParamAngle_Shoulder')) return { alpha: 0.28, step: 1.55, accel: 0.32, maxFrameScale: 1 };
   if (id === 'ParamPosition_Z') return { alpha: 0.34, step: 1.5, accel: 0.34 };
   if (id.startsWith('ParamHair')) return { alpha: 0.46, step: 2.8 };
   if (id.startsWith('ParamEarShape')) return { alpha: 0.42, step: 0.16 };
@@ -162,8 +162,10 @@ function localFrameSmoothingProfile(id) {
   if (id.includes('EyeBall')) return { alpha: 0.36, step: 0.18 };
   if (id.includes('Brow') || id.includes('Cheek')) return { alpha: 0.34, step: 0.12 };
   if (id.includes('Mouth')) return { alpha: 0.34, step: 0.18 };
-  if (isLocalCubismBodyDriverId(id)) return { alpha: 0.32, step: 2.05, accel: 0.42 };
-  if (id === 'ParamAngleX' || id === 'ParamAngleY' || id === 'ParamAngleZ') return { alpha: 0.34, step: 2.75, accel: 0.56 };
+  if (isLocalCubismBodyDriverId(id)) return { alpha: 0.28, step: 1.55, accel: 0.32, maxFrameScale: 1 };
+  if (id === 'ParamAngleY') return { alpha: 0.28, step: 1.65, accel: 0.34, maxFrameScale: 1 };
+  if (id === 'ParamAngleZ') return { alpha: 0.3, step: 1.55, accel: 0.34, maxFrameScale: 1 };
+  if (id === 'ParamAngleX') return { alpha: 0.34, step: 2.75, accel: 0.56, maxFrameScale: 1 };
   if (id === 'PositionY') return { alpha: 0.27, step: 0.78, accel: 0.17 };
   if (id === 'PositionX' || id === 'PositionZ') return { alpha: 0.32, step: 1.3, accel: 0.3 };
   if (id.includes('Angle') || id.includes('Position')) return { alpha: 0.3, step: 1.35, accel: 0.28 };
@@ -180,14 +182,15 @@ function localCubismReleaseTarget(id) {
 
 function smoothLocalCubismValue(id, value, frameScale) {
   const previous = lastSmoothedFrame.get(id);
-  const { alpha, step, accel } = localFrameSmoothingProfile(id);
+  const { alpha, step, accel, maxFrameScale } = localFrameSmoothingProfile(id);
   const blendedValue = previous === undefined ? value : previous + (value - previous) * alpha;
-  const maxStep = step * frameScale;
+  const smoothingFrameScale = Number(maxFrameScale) > 0 ? Math.min(frameScale, Number(maxFrameScale)) : frameScale;
+  const maxStep = step * smoothingFrameScale;
   const previousVelocity = lastVelocityFrame.get(id) || 0;
   const targetStep = previous === undefined
     ? 0
     : Math.min(Math.max(blendedValue - previous, -maxStep), maxStep);
-  const maxAccel = Number(accel) > 0 ? Number(accel) * frameScale : 0;
+  const maxAccel = Number(accel) > 0 ? Number(accel) * smoothingFrameScale : 0;
   const nextStep = previous === undefined
     ? 0
     : (maxAccel

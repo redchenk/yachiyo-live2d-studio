@@ -16,6 +16,8 @@ const FACE_CAPTURE_EVENT = 'tsukuyomi:live2d-face';
 const MOUTH_EVENT = 'tsukuyomi:live2d-mouth';
 const CHARACTER_STATE_EVENT = 'tsukuyomi:live2d-character-state';
 const LOCAL_CUBISM_ACTION_INTENSITY_SCALE = 1.86;
+const ACTION_TAKEOVER_MIN_ENERGY = 0.08;
+const ACTION_TAKEOVER_FULL_ENVELOPE = 0.72;
 
 const EYE_OWNING_EXPRESSIONS = new Set([
   'bsmile',
@@ -101,7 +103,7 @@ function setFrameValue(frame, id, value, weight = 0.72) {
   if (!id || !Number.isFinite(Number(value))) return;
   const range = TRACKING_PARAMETER_RANGES[id];
   const nextValue = range ? clamp(value, range[0], range[1], range[0]) : Number(value);
-  const nextWeight = clamp(weight, 0.01, 1, 0.72);
+  const nextWeight = clamp(scaledActionWeight(frame, weight), 0.01, 1, 0.72);
   const current = frame.get(id);
   if (
     current &&
@@ -131,11 +133,29 @@ function addFrameValue(frame, id, value, weight = 0.72) {
   const range = TRACKING_PARAMETER_RANGES[id];
   const current = frame.get(id);
   const nextValue = (current?.value || 0) + Number(value || 0);
+  const nextWeight = scaledActionWeight(frame, weight);
   frame.set(id, {
     id,
     value: range ? clamp(nextValue, range[0], range[1], range[0]) : nextValue,
-    weight: clamp(Math.max(current?.weight || 0, weight), 0.01, 1, 0.72)
+    weight: clamp(Math.max(current?.weight || 0, nextWeight), 0.01, 1, 0.72)
   });
+}
+
+function smoothUnit(value) {
+  const t = clamp(value, 0, 1, 0);
+  return t * t * (3 - 2 * t);
+}
+
+function actionTakeoverScale(sample) {
+  const envelope = Number(sample?.envelope);
+  if (!Number.isFinite(envelope)) return 1;
+  return smoothUnit(envelope / ACTION_TAKEOVER_FULL_ENVELOPE);
+}
+
+function scaledActionWeight(frame, weight) {
+  const scale = Number(frame?.__actionWeightScale);
+  if (!Number.isFinite(scale)) return weight;
+  return Number(weight) * clamp(scale, 0.01, 1, 1);
 }
 
 function setEyes(frame, x = 0, y = 0, weight = 0.78) {
@@ -393,216 +413,224 @@ function actionSecondarySign(action, fallback = -1) {
 function applyAction(frame, sample, options = {}) {
   if (!sample) return;
   const { action, progress: t, phase, energy: e, sign } = sample;
-  const dominant = Boolean(options.dominant);
-  const variant = actionVariant(action);
-  const secondarySign = actionSecondarySign(action, -sign);
-  const fast = Math.sin(phase * 2);
-  const slow = Math.sin(phase);
+  if (e < ACTION_TAKEOVER_MIN_ENERGY) return;
+  const previousActionWeightScale = frame.__actionWeightScale;
+  frame.__actionWeightScale = actionTakeoverScale(sample);
+  try {
+    const dominant = Boolean(options.dominant);
+    const variant = actionVariant(action);
+    const secondarySign = actionSecondarySign(action, -sign);
+    const fast = Math.sin(phase * 2);
+    const slow = Math.sin(phase);
 
-  switch (action.type) {
-    case 'look_at_chat': {
-      const x = 14 * slow * e;
-      const z = (8 * Math.sin(phase * 0.5) + (variant === 1 ? 1.8 * sign * Math.abs(slow) : 0)) * e;
-      const y = (3 * Math.sin(phase * 0.7) - (variant === 2 ? 1.4 * Math.abs(slow) : 0)) * e;
-      setHead(frame, { x, y, z }, dominant ? 1 : 0.72);
-      setEyes(frame, -x / 30, -0.12 * e, 0.82);
-      setBody(frame, { x: x / 7.5, z: z / 4.8 }, dominant ? 0.9 : 0.62);
-      break;
-    }
-    case 'smile':
-      setHead(frame, {
-        y: (-0.9 * Math.sin(Math.PI * t) - 0.35 * Math.abs(slow)) * e,
-        z: sign * 1.3 * Math.sin(Math.PI * t) * e
-      }, 0.58);
-      setBody(frame, {
-        y: 1.2 * Math.sin(Math.PI * t) * e,
-        z: sign * 1.4 * Math.sin(Math.PI * t) * e,
-        posY: 0.045 * Math.sin(Math.PI * t) * e
-      }, 0.48);
-      setMouthSmile(frame, 0.74 + 0.16 * e, 0.84);
-      setBrows(frame, 0.56 + 0.08 * e, 0.56 + 0.08 * e, 0.58);
-      setFrameValue(frame, 'ParamCheek', 0.08 + 0.16 * e, 0.42);
-      break;
-    case 'smirk':
-      setMouthSmile(frame, 0.8 + 0.12 * e, 0.9);
-      addFrameValue(frame, 'FaceAngleZ', 3.8 * sign * e, 0.78);
-      setBrows(frame, sign < 0 ? 0.72 : 0.54, sign > 0 ? 0.72 : 0.54, 0.66);
-      setFrameValue(frame, 'MouthX', -0.22 * sign * e, 0.36);
-      break;
-    case 'blink': {
-      if (options.suppressEyeOpen) break;
-      const close = Math.sin(Math.PI * t) * e;
-      const open = clamp(0.92 - close, 0.015, 1, 0.92);
-      setEyeOpen(frame, open, open, 0.98);
-      break;
-    }
-    case 'wink': {
-      if (options.suppressEyeOpen) break;
-      const close = Math.sin(Math.PI * t) * e;
-      const open = clamp(0.92 - close, 0.015, 1, 0.92);
-      setFrameValue(frame, action.side === 'left' ? 'EyeOpenLeft' : 'EyeOpenRight', open, 0.98);
-      setMouthSmile(frame, 0.76, 0.62);
-      break;
-    }
-    case 'nod': {
-      const dip = Math.sin(Math.PI * t) * e;
-      const rebound = Math.sin(Math.PI * 2 * t) * e;
-      setHead(frame, {
-        y: -4.8 * dip + 1.2 * rebound,
-        z: variant === 2 ? sign * 1.8 * dip : 0
-      }, 1);
-      setFacePosition(frame, { y: -2.2 * dip + 0.45 * rebound }, 0.72);
-      setBody(frame, {
-        y: 4.4 * dip - 0.7 * rebound,
-        z: variant === 2 ? sign * 1.2 * dip : 0,
-        posY: 0.16 * dip
-      }, 0.96);
-      break;
-    }
-    case 'shake_head':
-      setHead(frame, { x: 15 * fast * e, z: (6 * fast + (variant === 1 ? 1.4 * slow * secondarySign : 0)) * e }, 1);
-      setEyes(frame, -0.28 * fast * e, 0, 0.72);
-      setBody(frame, { x: 4.8 * fast * e, z: 2.4 * fast * e }, 0.86);
-      break;
-    case 'head_tilt':
-      setHead(frame, { x: (5 * sign + (variant === 2 ? 1.4 * secondarySign * slow : 0)) * e, z: 16 * sign * e }, 1);
-      setEyes(frame, -0.18 * sign * e, 0, 0.7);
-      setBody(frame, { z: 8 * sign * e, posX: 0.32 * sign * e }, 0.96);
-      break;
-    case 'lean_in':
-      setHead(frame, { y: (-5.8 - (variant === 1 ? 0.7 * Math.abs(slow) : 0)) * e, z: variant === 2 ? 2.1 * sign * slow * e : 0 }, 0.9);
-      setFacePosition(frame, { y: -3.2 * e }, 0.78);
-      setEyes(frame, 0, -0.16 * e, 0.72);
-      setBody(frame, {
-        y: -5.4 * e,
-        z: variant === 2 ? 1.2 * sign * slow * e : 0,
-        posY: 0.02 * e
-      }, 0.82);
-      break;
-    case 'lean_left':
-    case 'lean_right': {
-      const leanSign = action.type === 'lean_left' ? -1 : 1;
-      setHead(frame, { x: 5 * leanSign * e, z: 16 * leanSign * e, y: variant === 1 ? -1.4 * e : 0 }, 1);
-      setEyes(frame, -0.35 * leanSign * e, 0, 0.8);
-      setBody(frame, { z: 8 * leanSign * e, posX: 0.38 * leanSign * e, y: variant === 1 ? -1.1 * e : 0 }, 1);
-      break;
-    }
-    case 'sway': {
-      const side = slow * e;
-      const lift = variant === 1 ? 1.2 * Math.abs(slow) * e : 0;
-      setHead(frame, { x: 5.5 * side, z: 9 * side, y: -lift * 0.2 }, 0.9);
-      setEyes(frame, -0.18 * side, 0, 0.76);
-      setBody(frame, { x: 3.2 * side, y: lift * 0.72, z: 6.8 * side, posX: 0.25 * side }, 0.96);
-      break;
-    }
-    case 'bounce': {
-      const lift = Math.sin(Math.PI * t) * e;
-      const rebound = Math.sin(Math.PI * 2 * t) * e;
-      const sideLean = variant ? sign * (1 + Math.abs(Number(action.motionArc) || 0) * 0.42) * lift : 0;
-      setHead(frame, { y: 3.2 * lift - 0.7 * rebound, z: sideLean * 0.92 }, 0.9);
-      setFacePosition(frame, { y: -5.2 * lift + 0.8 * rebound }, 0.86);
-      setMouthSmile(frame, 0.78, 0.8);
-      setBrows(frame, 0.62, 0.62, 0.55);
-      setBody(frame, {
-        y: 6.2 * lift - 0.9 * rebound,
-        z: sideLean * 0.52,
-        posY: 0.26 * lift
-      }, 1);
-      break;
-    }
-    case 'shiver': {
-      const jitter = Math.sin(phase * (variant === 2 ? 5 : 6)) * e;
-      setHead(frame, { x: 4.2 * jitter, z: 3.2 * Math.sin(phase * 7) * e }, 0.86);
-      setBody(frame, { x: 1.8 * jitter, z: 3.5 * Math.sin(phase * 6.6) * e }, 0.82);
-      break;
-    }
-    case 'surprised':
-      if (!options.suppressEyeOpen) setEyeOpen(frame, 1, 1, 0.98);
-      setMouthSmile(frame, 0.48, 0.54);
-      setBrows(frame, 0.78, 0.78, 0.78);
-      setFrameValue(frame, 'JawOpen', 0.34, 0.45);
-      setFrameValue(frame, 'MouthFunnel', 0.34, 0.42);
-      break;
-    case 'tongue_out': {
-      const pulse = clamp(Math.sin(Math.PI * t) * (0.74 + sample.intensity * 0.18), 0, 1, 0);
-      const tongueSway = Math.sin(phase * 0.9) * pulse * sign;
-      setFrameValue(frame, 'TongueOut', pulse, 0.96);
-      setFrameValue(frame, 'ParamTongueOut_BS', pulse, 0.88);
-      setFrameValue(frame, 'ParamTonguePhysics_X1', 9 * tongueSway, 0.54);
-      setFrameValue(frame, 'ParamTonguePhysics_X2', 5.5 * tongueSway, 0.42);
-      setFrameValue(frame, 'ParamTonguePhysics_Y1', -8 * pulse, 0.52);
-      setFrameValue(frame, 'ParamTonguePhysics_Y2', -4.5 * pulse, 0.4);
-      setMouthSmile(frame, 0.82, 0.62);
-      break;
-    }
-    case 'ear_perk':
-    case 'ear_wiggle': {
-      const wiggle = Math.sin(phase * 1.35) * e;
-      const perk = action.type === 'ear_perk' ? e * 1.05 : e * 0.92;
-      setFrameValue(frame, 'ParamEarShape_L1', clamp(0.42 + 0.28 * perk + 0.08 * wiggle, -0.35, 0.92, 0), 0.72);
-      setFrameValue(frame, 'ParamEarShape_R1', clamp(0.42 + 0.28 * perk - 0.08 * wiggle, -0.35, 0.92, 0), 0.72);
-      setFrameValue(frame, 'ParamEarShape_L2', clamp(0.3 + 0.22 * perk + 0.05 * wiggle, -0.35, 0.86, 0), 0.58);
-      setFrameValue(frame, 'ParamEarShape_R2', clamp(0.3 + 0.22 * perk - 0.05 * wiggle, -0.35, 0.86, 0), 0.58);
-      for (let index = 1; index <= 4; index += 1) {
-        setFrameValue(frame, `ParamEarPhysics_L${index}`, (18 * sign + 14 * wiggle) / index, 0.48);
-        setFrameValue(frame, `ParamEarPhysics_R${index}`, (-18 * sign - 14 * wiggle) / index, 0.48);
+    switch (action.type) {
+      case 'look_at_chat': {
+        const x = 14 * slow * e;
+        const z = (8 * Math.sin(phase * 0.5) + (variant === 1 ? 1.8 * sign * Math.abs(slow) : 0)) * e;
+        const y = (3 * Math.sin(phase * 0.7) - (variant === 2 ? 1.4 * Math.abs(slow) : 0)) * e;
+        setHead(frame, { x, y, z }, dominant ? 1 : 0.72);
+        setEyes(frame, -x / 30, -0.12 * e, 0.82);
+        setBody(frame, { x: x / 7.5, z: z / 4.8 }, dominant ? 0.9 : 0.62);
+        break;
       }
-      setFrameValue(frame, 'ParamEarPhysicsBS_L1', 18 * perk + 8 * wiggle, 0.44);
-      setFrameValue(frame, 'ParamEarPhysicsBS_R1', 18 * perk - 8 * wiggle, 0.44);
-      break;
-    }
-    case 'hat_ear_wiggle': {
-      const flap = Math.sin(phase * 1.5) * e;
-      const lift = Math.sin(Math.PI * t) * e;
-      for (let index = 1; index <= 3; index += 1) {
-        setFrameValue(frame, `ParamHatEar_L${index}`, (18 * sign * lift + 15 * flap) / index, 0.54);
-        setFrameValue(frame, `ParamHatEar_R${index}`, (-18 * sign * lift - 15 * flap) / index, 0.54);
+      case 'smile':
+        setHead(frame, {
+          y: (-0.9 * Math.sin(Math.PI * t) - 0.35 * Math.abs(slow)) * e,
+          z: sign * 1.3 * Math.sin(Math.PI * t) * e
+        }, 0.58);
+        setBody(frame, {
+          y: 1.2 * Math.sin(Math.PI * t) * e,
+          z: sign * 1.4 * Math.sin(Math.PI * t) * e,
+          posY: 0.045 * Math.sin(Math.PI * t) * e
+        }, 0.48);
+        setMouthSmile(frame, 0.74 + 0.16 * e, 0.84);
+        setBrows(frame, 0.56 + 0.08 * e, 0.56 + 0.08 * e, 0.58);
+        setFrameValue(frame, 'ParamCheek', 0.08 + 0.16 * e, 0.42);
+        break;
+      case 'smirk':
+        setMouthSmile(frame, 0.8 + 0.12 * e, 0.9);
+        addFrameValue(frame, 'FaceAngleZ', 3.8 * sign * e, 0.78);
+        setBrows(frame, sign < 0 ? 0.72 : 0.54, sign > 0 ? 0.72 : 0.54, 0.66);
+        setFrameValue(frame, 'MouthX', -0.22 * sign * e, 0.36);
+        break;
+      case 'blink': {
+        if (options.suppressEyeOpen) break;
+        const close = Math.sin(Math.PI * t) * e;
+        const open = clamp(0.92 - close, 0.015, 1, 0.92);
+        setEyeOpen(frame, open, open, 0.98);
+        break;
       }
-      for (let index = 1; index <= 4; index += 1) {
-        setFrameValue(frame, `ParamHatPhysics_X${index}`, (12 * sign * lift + 9 * flap) / index, 0.42);
-        setFrameValue(frame, `ParamHatPhysics_Y${index}`, (-10 * lift + 5 * Math.abs(flap)) / index, 0.38);
+      case 'wink': {
+        if (options.suppressEyeOpen) break;
+        const close = Math.sin(Math.PI * t) * e;
+        const open = clamp(0.92 - close, 0.015, 1, 0.92);
+        setFrameValue(frame, action.side === 'left' ? 'EyeOpenLeft' : 'EyeOpenRight', open, 0.98);
+        setMouthSmile(frame, 0.76, 0.62);
+        break;
       }
-      break;
-    }
-    case 'wing_flutter': {
-      const flutter = Math.sin(phase * 2.2) * e;
-      const lift = Math.sin(Math.PI * t) * e;
-      for (let index = 1; index <= 4; index += 1) {
-        setFrameValue(frame, `ParamWingPhysics_L${index}`, (24 * flutter + 12 * sign * lift) / index, 0.44);
-        setFrameValue(frame, `ParamWingPhysics_R${index}`, (-24 * flutter + 12 * sign * lift) / index, 0.44);
+      case 'nod': {
+        const dip = Math.sin(Math.PI * t) * e;
+        const rebound = Math.sin(Math.PI * 2 * t) * e;
+        setHead(frame, {
+          y: -4.8 * dip + 1.2 * rebound,
+          z: variant === 2 ? sign * 1.8 * dip : 0
+        }, 1);
+        setFacePosition(frame, { y: -2.2 * dip + 0.45 * rebound }, 0.72);
+        setBody(frame, {
+          y: 4.4 * dip - 0.7 * rebound,
+          z: variant === 2 ? sign * 1.2 * dip : 0,
+          posY: 0.16 * dip
+        }, 0.96);
+        break;
       }
-      break;
-    }
-    case 'dress_sway':
-      for (let index = 1; index <= 5; index += 1) {
-        setFrameValue(frame, `ParamCheongsamPhysics_X${index}`, (16 * sign * slow * e) / index, 0.4);
+      case 'shake_head':
+        setHead(frame, { x: 15 * fast * e, z: (6 * fast + (variant === 1 ? 1.4 * slow * secondarySign : 0)) * e }, 1);
+        setEyes(frame, -0.28 * fast * e, 0, 0.72);
+        setBody(frame, { x: 4.8 * fast * e, z: 2.4 * fast * e }, 0.86);
+        break;
+      case 'head_tilt':
+        setHead(frame, { x: (5 * sign + (variant === 2 ? 1.4 * secondarySign * slow : 0)) * e, z: 16 * sign * e }, 1);
+        setEyes(frame, -0.18 * sign * e, 0, 0.7);
+        setBody(frame, { z: 8 * sign * e, posX: 0.32 * sign * e }, 0.96);
+        break;
+      case 'lean_in':
+        setHead(frame, { y: (-5.8 - (variant === 1 ? 0.7 * Math.abs(slow) : 0)) * e, z: variant === 2 ? 2.1 * sign * slow * e : 0 }, 0.9);
+        setFacePosition(frame, { y: -3.2 * e }, 0.78);
+        setEyes(frame, 0, -0.16 * e, 0.72);
+        setBody(frame, {
+          y: -5.4 * e,
+          z: variant === 2 ? 1.2 * sign * slow * e : 0,
+          posY: 0.02 * e
+        }, 0.82);
+        break;
+      case 'lean_left':
+      case 'lean_right': {
+        const leanSign = action.type === 'lean_left' ? -1 : 1;
+        setHead(frame, { x: 5 * leanSign * e, z: 16 * leanSign * e, y: variant === 1 ? -1.4 * e : 0 }, 1);
+        setEyes(frame, -0.35 * leanSign * e, 0, 0.8);
+        setBody(frame, { z: 8 * leanSign * e, posX: 0.38 * leanSign * e, y: variant === 1 ? -1.1 * e : 0 }, 1);
+        break;
       }
-      break;
-    case 'emphasis': {
-      const hit = Math.sin(Math.PI * t) * e;
-      const rebound = Math.sin(Math.PI * 2 * t) * e;
-      const side = sign * (0.9 * hit + 0.35 * rebound);
-      setHead(frame, { y: -5.8 * hit + 1.1 * rebound, z: 3.2 * side }, 0.94);
-      setFacePosition(frame, { y: -5.6 * hit + 0.8 * rebound, x: 0.9 * side }, 0.84);
-      setBody(frame, {
-        y: -4.6 * hit + 0.45 * rebound,
-        z: 3.8 * side,
-        posX: 0.045 * side,
-        posY: 0.06 * hit
-      }, 1);
-      break;
+      case 'sway': {
+        const side = slow * e;
+        const lift = variant === 1 ? 1.2 * Math.abs(slow) * e : 0;
+        setHead(frame, { x: 5.5 * side, z: 9 * side, y: -lift * 0.2 }, 0.9);
+        setEyes(frame, -0.18 * side, 0, 0.76);
+        setBody(frame, { x: 3.2 * side, y: lift * 0.72, z: 6.8 * side, posX: 0.25 * side }, 0.96);
+        break;
+      }
+      case 'bounce': {
+        const lift = Math.sin(Math.PI * t) * e;
+        const rebound = Math.sin(Math.PI * 2 * t) * e;
+        const sideLean = variant ? sign * (1 + Math.abs(Number(action.motionArc) || 0) * 0.42) * lift : 0;
+        setHead(frame, { y: 3.2 * lift - 0.7 * rebound, z: sideLean * 0.92 }, 0.9);
+        setFacePosition(frame, { y: -5.2 * lift + 0.8 * rebound }, 0.86);
+        setMouthSmile(frame, 0.78, 0.8);
+        setBrows(frame, 0.62, 0.62, 0.55);
+        setBody(frame, {
+          y: 6.2 * lift - 0.9 * rebound,
+          z: sideLean * 0.52,
+          posY: 0.26 * lift
+        }, 1);
+        break;
+      }
+      case 'shiver': {
+        const jitter = Math.sin(phase * (variant === 2 ? 5 : 6)) * e;
+        setHead(frame, { x: 4.2 * jitter, z: 3.2 * Math.sin(phase * 7) * e }, 0.86);
+        setBody(frame, { x: 1.8 * jitter, z: 3.5 * Math.sin(phase * 6.6) * e }, 0.82);
+        break;
+      }
+      case 'surprised':
+        if (!options.suppressEyeOpen) setEyeOpen(frame, 1, 1, 0.98);
+        setMouthSmile(frame, 0.48, 0.54);
+        setBrows(frame, 0.78, 0.78, 0.78);
+        setFrameValue(frame, 'JawOpen', 0.34, 0.45);
+        setFrameValue(frame, 'MouthFunnel', 0.34, 0.42);
+        break;
+      case 'tongue_out': {
+        const pulse = clamp(Math.sin(Math.PI * t) * (0.74 + sample.intensity * 0.18), 0, 1, 0);
+        const tongueSway = Math.sin(phase * 0.9) * pulse * sign;
+        setFrameValue(frame, 'TongueOut', pulse, 0.96);
+        setFrameValue(frame, 'ParamTongueOut_BS', pulse, 0.88);
+        setFrameValue(frame, 'ParamTonguePhysics_X1', 9 * tongueSway, 0.54);
+        setFrameValue(frame, 'ParamTonguePhysics_X2', 5.5 * tongueSway, 0.42);
+        setFrameValue(frame, 'ParamTonguePhysics_Y1', -8 * pulse, 0.52);
+        setFrameValue(frame, 'ParamTonguePhysics_Y2', -4.5 * pulse, 0.4);
+        setMouthSmile(frame, 0.82, 0.62);
+        break;
+      }
+      case 'ear_perk':
+      case 'ear_wiggle': {
+        const wiggle = Math.sin(phase * 1.35) * e;
+        const perk = action.type === 'ear_perk' ? e * 1.05 : e * 0.92;
+        setFrameValue(frame, 'ParamEarShape_L1', clamp(0.42 + 0.28 * perk + 0.08 * wiggle, -0.35, 0.92, 0), 0.72);
+        setFrameValue(frame, 'ParamEarShape_R1', clamp(0.42 + 0.28 * perk - 0.08 * wiggle, -0.35, 0.92, 0), 0.72);
+        setFrameValue(frame, 'ParamEarShape_L2', clamp(0.3 + 0.22 * perk + 0.05 * wiggle, -0.35, 0.86, 0), 0.58);
+        setFrameValue(frame, 'ParamEarShape_R2', clamp(0.3 + 0.22 * perk - 0.05 * wiggle, -0.35, 0.86, 0), 0.58);
+        for (let index = 1; index <= 4; index += 1) {
+          setFrameValue(frame, `ParamEarPhysics_L${index}`, (18 * sign + 14 * wiggle) / index, 0.48);
+          setFrameValue(frame, `ParamEarPhysics_R${index}`, (-18 * sign - 14 * wiggle) / index, 0.48);
+        }
+        setFrameValue(frame, 'ParamEarPhysicsBS_L1', 18 * perk + 8 * wiggle, 0.44);
+        setFrameValue(frame, 'ParamEarPhysicsBS_R1', 18 * perk - 8 * wiggle, 0.44);
+        break;
+      }
+      case 'hat_ear_wiggle': {
+        const flap = Math.sin(phase * 1.5) * e;
+        const lift = Math.sin(Math.PI * t) * e;
+        for (let index = 1; index <= 3; index += 1) {
+          setFrameValue(frame, `ParamHatEar_L${index}`, (18 * sign * lift + 15 * flap) / index, 0.54);
+          setFrameValue(frame, `ParamHatEar_R${index}`, (-18 * sign * lift - 15 * flap) / index, 0.54);
+        }
+        for (let index = 1; index <= 4; index += 1) {
+          setFrameValue(frame, `ParamHatPhysics_X${index}`, (12 * sign * lift + 9 * flap) / index, 0.42);
+          setFrameValue(frame, `ParamHatPhysics_Y${index}`, (-10 * lift + 5 * Math.abs(flap)) / index, 0.38);
+        }
+        break;
+      }
+      case 'wing_flutter': {
+        const flutter = Math.sin(phase * 2.2) * e;
+        const lift = Math.sin(Math.PI * t) * e;
+        for (let index = 1; index <= 4; index += 1) {
+          setFrameValue(frame, `ParamWingPhysics_L${index}`, (24 * flutter + 12 * sign * lift) / index, 0.44);
+          setFrameValue(frame, `ParamWingPhysics_R${index}`, (-24 * flutter + 12 * sign * lift) / index, 0.44);
+        }
+        break;
+      }
+      case 'dress_sway':
+        for (let index = 1; index <= 5; index += 1) {
+          setFrameValue(frame, `ParamCheongsamPhysics_X${index}`, (16 * sign * slow * e) / index, 0.4);
+        }
+        break;
+      case 'emphasis': {
+        const hit = Math.sin(Math.PI * t) * e;
+        const rebound = Math.sin(Math.PI * 2 * t) * e;
+        const side = sign * (0.9 * hit + 0.35 * rebound);
+        setHead(frame, { y: -5.8 * hit + 1.1 * rebound, z: 3.2 * side }, 0.94);
+        setFacePosition(frame, { y: -5.6 * hit + 0.8 * rebound, x: 0.9 * side }, 0.84);
+        setBody(frame, {
+          y: -4.6 * hit + 0.45 * rebound,
+          z: 3.8 * side,
+          posX: 0.045 * side,
+          posY: 0.06 * hit
+        }, 1);
+        break;
+      }
+      case 'breathe':
+        setBody(frame, { y: 1.8 * Math.sin(phase) * e, posY: 0.07 * Math.sin(phase) * e }, 0.45);
+        break;
+      case 'reset':
+        setHead(frame, {}, 1);
+        setBody(frame, {}, 1);
+        setMouthSmile(frame, 0.56, 0.8);
+        setBrows(frame, 0.52, 0.52, 0.55);
+        break;
+      default:
+        break;
     }
-    case 'breathe':
-      setBody(frame, { y: 1.8 * Math.sin(phase) * e, posY: 0.07 * Math.sin(phase) * e }, 0.45);
-      break;
-    case 'reset':
-      setHead(frame, {}, 1);
-      setBody(frame, {}, 1);
-      setMouthSmile(frame, 0.56, 0.8);
-      setBrows(frame, 0.52, 0.52, 0.55);
-      break;
-    default:
-      break;
+  } finally {
+    if (previousActionWeightScale === undefined) delete frame.__actionWeightScale;
+    else frame.__actionWeightScale = previousActionWeightScale;
   }
 }
 
