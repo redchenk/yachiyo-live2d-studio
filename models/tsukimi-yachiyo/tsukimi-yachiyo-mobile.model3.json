@@ -8,7 +8,7 @@
     ],
     "Expressions": [
       { "Name": "neutral", "File": "expression_neutral.exp3.json" },
-      { "Name": "smile", "File": "expression_smile.exp3.json" },
+      { "Name": "smile", "File": "笑咪咪.exp3.json" },
       { "Name": "closed_smile", "File": "笑咪咪.exp3.json" },
       { "Name": "笑咪咪", "File": "笑咪咪.exp3.json" },
       { "Name": "open_smile", "File": "expression_smile.exp3.json" },

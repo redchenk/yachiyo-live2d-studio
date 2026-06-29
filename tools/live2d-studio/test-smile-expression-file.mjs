@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
 const modelDirectory = new URL('../../models/tsukimi-yachiyo/', import.meta.url);
-const closedSmileExpressionPath = new URL('笑咪咪.exp3.json', modelDirectory);
+const closedSmileExpressionPath = new URL('\u7b11\u54aa\u54aa.exp3.json', modelDirectory);
 const plainSmileExpressionPath = new URL('expression_smile.exp3.json', modelDirectory);
 const closedSmileExpression = JSON.parse(await readFile(closedSmileExpressionPath, 'utf8'));
 const plainSmileExpression = JSON.parse(await readFile(plainSmileExpressionPath, 'utf8'));
@@ -70,15 +70,20 @@ for (const file of modelFiles) {
   const model = JSON.parse(await readFile(new URL(file, modelDirectory), 'utf8'));
   const expressions = Array.isArray(model?.FileReferences?.Expressions) ? model.FileReferences.Expressions : [];
   assert.equal(
-    expressions.some((expression) => expression.Name === 'smile' && expression.File === 'expression_smile.exp3.json'),
+    expressions.some((expression) => expression.Name === 'smile' && expression.File === '\u7b11\u54aa\u54aa.exp3.json'),
     true,
-    `${file} should route smile to the open-eye smile expression`
+    `${file} should route smile to the model-authored closed-eye smile expression`
   );
   assert.equal(
-    expressions.some((expression) => expression.Name === 'closed_smile' && expression.File === '笑咪咪.exp3.json'),
+    expressions.some((expression) => expression.Name === 'closed_smile' && expression.File === '\u7b11\u54aa\u54aa.exp3.json'),
     true,
     `${file} should expose closed_smile as the same model-authored expression`
   );
+  assert.equal(
+    expressions.some((expression) => expression.Name === 'open_smile' && expression.File === 'expression_smile.exp3.json'),
+    true,
+    `${file} should keep open_smile available as the open-eye smile expression`
+  );
 }
 
-console.log('smile expression file separation checks passed');
+console.log('closed-eye smile expression file checks passed');

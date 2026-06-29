@@ -22,6 +22,14 @@ const STREAMING_QUEUE_HANDOFF_MIN_DELAY_MS = 120;
 const STREAMING_QUEUE_HANDOFF_OVERLAP_MS = 260;
 const STREAMING_QUEUE_HANDOFF_BLEND_IN_MS = 520;
 const STREAMING_QUEUE_POSTURE_HOLD_MS = 1200;
+const EYE_OWNING_SEMANTIC_EXPRESSIONS = new Set([
+  'bsmile',
+  'closed_eyes',
+  'closed_smile',
+  'dizzy',
+  'namida',
+  'smile'
+]);
 
 function nowMs() {
   if (typeof performance !== 'undefined' && typeof performance.now === 'function') return performance.now();
@@ -49,6 +57,13 @@ function resolveExpression(detail = {}) {
     detail.emotion ||
     detail.mood
   ) || semanticExpressionFromEmotion(detail.emotion || detail.mood);
+}
+
+function semanticExpressionOwnsEyeOpen(expression, emotion) {
+  const id = normalizeSemanticExpressionId(expression) ||
+    normalizeSemanticExpressionId(emotion) ||
+    semanticExpressionFromEmotion(emotion);
+  return EYE_OWNING_SEMANTIC_EXPRESSIONS.has(id);
 }
 
 function resolveBehaviorActions(detail = {}) {
@@ -306,6 +321,7 @@ export function createLive2DPerformanceBrain() {
         priority: detail.priority,
         source,
         interruptPolicy: detail.interruptPolicy || detail.interrupt,
+        suppressEyeOpen: semanticExpressionOwnsEyeOpen(expression, detail.emotion || detail.mood),
         speechStyle: detail.speechStyle || detail.speech_style
       });
     }

@@ -38,9 +38,9 @@ const API_NAME = 'VTubeStudioPublicAPI';
 const API_VERSION = '1.0';
 
 const VTS_EXPRESSION_ALIASES = {
-  happy: ['happy', 'smile'],
-  joy: ['happy', 'smile'],
-  smile: ['smile', 'happy'],
+  happy: ['笑咪咪', '笑眯眯', 'closed_smile', 'happy_closed', 'smiling_eyes', 'happy', 'smile'],
+  joy: ['笑咪咪', '笑眯眯', 'closed_smile', 'happy_closed', 'smiling_eyes', 'happy', 'smile'],
+  smile: ['笑咪咪', '笑眯眯', 'closed_smile', 'happy_closed', 'smiling_eyes', 'smile', 'happy'],
   closed_smile: ['closed_smile', '笑咪咪', '笑眯眯', 'happy_closed', 'smiling_eyes'],
   happy_closed: ['closed_smile', '笑咪咪', '笑眯眯', 'happy_closed', 'smiling_eyes'],
   smiling_eyes: ['closed_smile', '笑咪咪', '笑眯眯', 'happy_closed', 'smiling_eyes'],
@@ -170,12 +170,14 @@ const EYE_OWNING_EXPRESSION_TOKENS = new Set([
   'closed_eyes',
   'closed_smile',
   'dizzy',
+  'happy',
   'happy_closed',
   'laughing_closed',
   'mimi_eye',
   'mimi_eyes',
   'namida',
   'sad',
+  'smile',
   'smiling_eyes',
   'tear',
   '眯眯眼',

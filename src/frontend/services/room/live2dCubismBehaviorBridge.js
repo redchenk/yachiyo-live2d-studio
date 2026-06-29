@@ -22,7 +22,8 @@ const EYE_OWNING_EXPRESSIONS = new Set([
   'closed_eyes',
   'closed_smile',
   'dizzy',
-  'namida'
+  'namida',
+  'smile'
 ]);
 
 const MOMENTARY_EXPRESSION_IDS = new Set(['tongue']);
@@ -33,18 +34,14 @@ const CLOSED_SMILE_EYE_SHAPE = {
   hideOpenEye: 0.9,
   cheek: 0.3
 };
-const SOFT_SMILE_EYE_SHAPE = {
-  happySmile: 0.42,
-  eyeSmile: 0.3,
-  cheek: 0.34
-};
 const EXPRESSION_EYE_OPEN_GUARDS = new Map([
+  ['smile', 0.015],
   ['closed_smile', 0.015],
   ['closed_eyes', 0.015]
 ]);
 const EXPRESSION_CUBISM_EYE_SHAPES = new Map([
+  ['smile', CLOSED_SMILE_EYE_SHAPE],
   ['closed_smile', CLOSED_SMILE_EYE_SHAPE],
-  ['smile', SOFT_SMILE_EYE_SHAPE],
   ['closed_eyes', {
     happySmile: 0.64,
     eyeSmile: 0.72,
