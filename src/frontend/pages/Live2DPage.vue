@@ -1401,6 +1401,23 @@ onUnmounted(() => {
   >
     <div class="live2d-backdrop" aria-hidden="true"></div>
     <section class="live2d-stage" aria-label="Yachiyo Live2D stage">
+      <header class="live2d-stage-topbar" aria-label="Stage status">
+        <div class="live2d-stage-title">
+          <span class="live2d-stage-dot" :class="{ active: live2d.ready.value }"></span>
+          <div>
+            <strong>{{ liveDirector.running ? 'ON AIR' : 'Broadcast Stage' }}</strong>
+            <small>{{ statusLabel }}</small>
+          </div>
+        </div>
+        <div class="live2d-stage-actions">
+          <button class="live2d-icon-btn" type="button" title="刷新模型状态" aria-label="刷新模型状态" @click="runGreeting">
+            <TsIcon name="refresh" :size="18" />
+          </button>
+          <button class="live2d-icon-btn" type="button" title="全屏" aria-label="全屏" @click="toggleFullscreen">
+            <TsIcon name="maximize" :size="18" />
+          </button>
+        </div>
+      </header>
       <div
         id="live2d-container"
         ref="modelContainerRef"
@@ -1591,9 +1608,6 @@ onUnmounted(() => {
           <strong>{{ liveStateLabel }}</strong>
           <small>{{ statusLabel }}</small>
         </div>
-        <button class="live2d-icon-btn" type="button" title="刷新模型状态" aria-label="刷新模型状态" @click="runGreeting">
-          <TsIcon name="refresh" :size="19" />
-        </button>
         <button
           class="live2d-icon-btn live2d-debug-toggle"
           type="button"
