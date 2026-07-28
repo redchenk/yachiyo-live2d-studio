@@ -70,6 +70,7 @@ $arguments = @(
     "/out:$output",
     '/reference:System.Windows.Forms.dll',
     '/reference:System.Drawing.dll',
+    '/reference:System.Security.dll',
     '/reference:System.Web.Extensions.dll',
     "/reference:$webViewCore",
     "/reference:$webViewWinForms"
@@ -82,6 +83,9 @@ if (Test-Path $icon) {
 $arguments += $source
 
 & $csc @arguments
+if ($LASTEXITCODE -ne 0) {
+    throw "C# compiler failed with exit code $LASTEXITCODE."
+}
 
 function Copy-Dependency {
     param(

@@ -12,6 +12,8 @@ Desktop vision update: the launcher exposes local `/api/vision/context`, which r
 
 本项目的核心目标不是只渲染一个 Live2D 模型，而是把 LLM、TTS、语义动作、VTube Studio 参数注入、长期记忆和八千代人格资料整合成一套可本地一键启动的直播控制台。
 
+直播控制台已采用 Yachiyo 的网易云音乐链路：支持网易云 App 扫码登录、账号权限播放、搜索与音质降级解析；点歌队列和播放控制共用一个状态源，并通过 `window.yachiyoMusic` 向 LLM/自动化开放脱敏接口。接口与安全边界见 [`docs/yachiyo-music-integration.md`](docs/yachiyo-music-integration.md)。
+
 ## 当前定位
 
 推荐工作流：
@@ -137,6 +139,7 @@ Live2D 参数控制层
 
 核心模块：
 
+- `src/frontend/services/room/live2dAudienceTurnSelector.js`: 观众消息优先级、公平选取、去重限流和提示词信任边界。
 - `src/frontend/services/room/live2dLlmControl.js`: LLM 对话层和流式控制协议。
 - `src/frontend/services/room/live2dBehaviorController.js`: 语义动作输出层，把 LLM JSON 编译成统一 intent。
 - `src/frontend/services/room/live2dBehaviorOrchestrator.js`: 动作编排执行层，生成带打断规则和动作变体的 `BehaviorPlan`。
@@ -169,7 +172,7 @@ Live2D 参数控制层
 
 - 主操作台 UI
 - 手动测试表情和动作
-- 处理观众输入、自动直播循环、字幕日志
+- 处理观众输入、优先级调度、自动直播循环、字幕日志
 - 调用 LLM 控制层
 - 将 TTS 播放状态同步到角色状态机
 - 通过 `dispatchRoomLive2D` 触发表情和动作
@@ -581,6 +584,17 @@ C# 本地 API 做了以下限制：
 支持的音频扩展名包括 `.mp3`、`.m4a`、`.aac`、`.wav`、`.flac`、`.ogg`、`.oga`、`.opus`。本地播放通过 `.exe` 的 loopback API 读取音频文件，不会调用 Apple Music API。
 
 如果切换 Provider 为 `Apple Music`，才需要 Apple Developer Token 和 MusicKit 授权。Developer Token 是 Apple Developer MusicKit key 生成的 JWT，不是 Apple ID 密码，也不是普通 API Key。
+
+## B站直播弹幕
+
+1. 打开 `Start-Live2D-Studio.exe`，在左侧进入 `Danmaku`。
+2. 填写 B站直播间的长 ID。短 ID 需要先换成长 ID，否则可能连接成功但收不到消息。
+3. 勾选 `启用 B站弹幕` 和 `启动时自动连接`。
+4. `直接朗读弹幕` 会把原弹幕送入 TTS；`交给 AI 回应` 会送入直播大脑，两项可以同时开启。
+5. 勾选 `首条弹幕自动开播` 后，不需要先回直播页手动点击开始。
+6. 点击 `测试弹幕` 验证弹幕日志、TTS、口型和眼神动作，再点击 `连接直播间`。
+
+匿名连接可以读取普通弹幕。若需要完整观众昵称，可填写 B站登录 UID、弹幕登录 Key 和 Buvid；这些凭据只保存在本机设置中。切换到 Danmaku 或 Music 页面时，Live2D、弹幕事件处理和语音队列仍会在后台运行。
 
 ## 目录说明
 

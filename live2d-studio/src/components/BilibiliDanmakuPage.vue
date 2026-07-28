@@ -7,9 +7,9 @@ import {
   writeRoomBilibiliDanmakuSettings
 } from '@frontend/services/room/roomSettings';
 import {
-  BILIBILI_DANMAKU_EVENT,
   BILIBILI_DANMAKU_STATE_EVENT,
   clearBilibiliDanmakuMessages,
+  publishBilibiliDanmakuTestMessage,
   readBilibiliDanmakuSnapshot,
   startBilibiliDanmakuListener,
   stopBilibiliDanmakuListener,
@@ -31,12 +31,19 @@ const statusTone = computed(() => {
   return 'idle';
 });
 const statusLabel = computed(() => {
-  if (state.value.status === 'error') return 'Error';
-  if (state.value.listening) return 'Listening';
-  if (state.value.status === 'connecting') return 'Connecting';
-  if (state.value.status === 'connected') return 'Connected';
-  if (state.value.status === 'closed') return 'Closed';
-  return 'Idle';
+  if (state.value.status === 'error') return '连接失败';
+  if (state.value.listening) return '正在接收';
+  if (state.value.status === 'connecting') return '正在获取连接信息';
+  if (state.value.status === 'connected') return '正在认证';
+  if (state.value.status === 'closed') return '连接已断开';
+  return '未连接';
+});
+const authLabel = computed(() => {
+  if (state.value.authMode === 'authenticated' && state.value.userNamesComplete) {
+    return '登录模式 · 完整昵称';
+  }
+  if (connected.value) return '匿名模式 · 昵称可能隐藏';
+  return '连接后检测';
 });
 const connectionRoom = computed(() => state.value.actualRoomId || state.value.roomId || settings.roomId || 'Unset');
 const latestMessage = computed(() => messages.value[0] || null);
@@ -77,12 +84,12 @@ function saveSettings() {
   return saved;
 }
 
-function runTask(name, action) {
+async function runTask(name, action) {
   if (busy.value) return;
   busy.value = name;
   localError.value = '';
   try {
-    const nextSnapshot = action();
+    const nextSnapshot = await action();
     if (nextSnapshot) applySnapshot(nextSnapshot);
   } catch (error) {
     localError.value = error?.message || `${name} failed`;
@@ -116,26 +123,26 @@ function clearMessages() {
   runTask('clear', () => clearBilibiliDanmakuMessages());
 }
 
+function sendTestMessage() {
+  runTask('test', () => {
+    const saved = writeRoomBilibiliDanmakuSettings({
+      ...settings,
+      enabled: true
+    });
+    Object.assign(settings, saved);
+    dispatchSettingsSaved(saved);
+    publishBilibiliDanmakuTestMessage();
+    return readBilibiliDanmakuSnapshot();
+  });
+}
+
 function onStateChanged(event) {
   state.value = event.detail || readBilibiliDanmakuSnapshot().state;
   messages.value = readBilibiliDanmakuSnapshot().messages;
 }
 
-function onMessage(event) {
-  const message = event.detail;
-  if (!message?.id) {
-    applySnapshot();
-    return;
-  }
-  messages.value = [
-    message,
-    ...messages.value.filter((item) => item.id !== message.id)
-  ].slice(0, 100);
-}
-
 onMounted(() => {
   window.addEventListener(BILIBILI_DANMAKU_STATE_EVENT, onStateChanged);
-  window.addEventListener(BILIBILI_DANMAKU_EVENT, onMessage);
   applySnapshot();
   if (settings.enabled && settings.autoConnect) {
     runTask('connect', () => syncBilibiliDanmakuListener(settings));
@@ -144,7 +151,6 @@ onMounted(() => {
 
 onUnmounted(() => {
   window.removeEventListener(BILIBILI_DANMAKU_STATE_EVENT, onStateChanged);
-  window.removeEventListener(BILIBILI_DANMAKU_EVENT, onMessage);
 });
 </script>
 
@@ -153,7 +159,7 @@ onUnmounted(() => {
     <section class="studio-music-toolbar studio-danmaku-toolbar" aria-label="Bilibili danmaku runtime">
       <header>
         <span>Bilibili Live</span>
-        <strong>Danmaku</strong>
+        <strong>B站弹幕</strong>
       </header>
       <div class="studio-danmaku-status" :class="statusTone">
         <span></span>
@@ -163,15 +169,19 @@ onUnmounted(() => {
       <div class="studio-music-actions">
         <button class="studio-primary-btn" type="button" :disabled="Boolean(busy) || connected" @click="connectNow">
           <TsIcon name="radio" :size="16" />
-          <span>{{ busy === 'connect' ? 'Connecting' : 'Connect' }}</span>
+          <span>{{ busy === 'connect' ? '连接中' : '连接直播间' }}</span>
         </button>
         <button class="studio-secondary-btn" type="button" :disabled="Boolean(busy) || !connected" @click="disconnectNow">
           <TsIcon name="pause" :size="16" />
-          <span>Disconnect</span>
+          <span>断开</span>
         </button>
         <button class="studio-secondary-btn" type="button" :disabled="Boolean(busy)" @click="saveAndSync">
           <TsIcon name="save" :size="16" />
-          <span>Save</span>
+          <span>保存设置</span>
+        </button>
+        <button class="studio-secondary-btn" type="button" :disabled="Boolean(busy)" @click="sendTestMessage">
+          <TsIcon name="message" :size="16" />
+          <span>测试弹幕</span>
         </button>
       </div>
     </section>
@@ -180,104 +190,118 @@ onUnmounted(() => {
       <article class="studio-music-card studio-danmaku-card studio-danmaku-settings">
         <header>
           <TsIcon name="settings2" :size="18" />
-          <h2>Source</h2>
+          <h2>直播间来源</h2>
         </header>
         <label>
-          <span>Room ID</span>
-          <input v-model="settings.roomId" type="text" inputmode="numeric" spellcheck="false" placeholder="Long room ID">
+          <span>B站直播间 ID</span>
+          <input v-model="settings.roomId" type="text" inputmode="numeric" spellcheck="false" placeholder="例如 25271643">
+        </label>
+        <label>
+          <span>B站完整 Cookie 请求头（用于完整昵称）</span>
+          <input
+            v-model="settings.cookie"
+            type="password"
+            autocomplete="off"
+            spellcheck="false"
+            placeholder="粘贴完整 Cookie 请求头"
+          >
         </label>
         <div class="studio-danmaku-switches">
           <label class="studio-check-row">
             <input v-model="settings.enabled" type="checkbox">
-            <span>Enabled</span>
+            <span>启用 B站弹幕</span>
           </label>
           <label class="studio-check-row">
             <input v-model="settings.autoConnect" type="checkbox">
-            <span>Auto Connect</span>
+            <span>启动时自动连接</span>
           </label>
           <label class="studio-check-row">
             <input v-model="settings.autoForward" type="checkbox">
-            <span>Forward to Live2D</span>
+            <span>交给 AI 回应</span>
+          </label>
+          <label class="studio-check-row">
+            <input v-model="settings.autoStartDirector" type="checkbox">
+            <span>首条弹幕自动开播</span>
+          </label>
+          <label class="studio-check-row">
+            <input v-model="settings.readAloud" type="checkbox">
+            <span>直接朗读弹幕</span>
+          </label>
+          <label class="studio-check-row">
+            <input v-model="settings.readUserName" type="checkbox">
+            <span>朗读观众昵称</span>
           </label>
         </div>
         <div class="studio-music-settings-row">
           <label>
-            <span>Forward Limit</span>
+            <span>每分钟处理上限</span>
             <input v-model.number="settings.maxForwardPerMinute" type="number" min="0" max="120" step="1">
           </label>
           <label>
-            <span>Platform</span>
+            <span>连接平台</span>
             <input v-model="settings.platform" type="text" spellcheck="false">
           </label>
         </div>
-        <div class="studio-music-settings-row">
-          <label>
-            <span>UID</span>
-            <input v-model.number="settings.uid" type="number" min="0" step="1">
-          </label>
-          <label>
-            <span>Buvid</span>
-            <input v-model="settings.buvid" type="text" spellcheck="false">
-          </label>
-        </div>
-        <label>
-          <span>Login Key</span>
-          <input v-model="settings.key" type="password" spellcheck="false" placeholder="Optional">
-        </label>
-        <label>
-          <span>Cookie</span>
-          <textarea v-model="settings.cookie" rows="4" spellcheck="false" placeholder="Stored for local proxy use"></textarea>
-        </label>
+        <p class="studio-danmaku-hint">
+          请勿逐项拼接 Cookie。请在已登录的 B站页面打开开发者工具 → Network，刷新后选中 api.bilibili.com 请求，从 Request Headers 复制完整 Cookie 请求头值（不含 Cookie: 前缀）并整段粘贴。Cookie 只发送给本机代理；认证失败仍会匿名连接。
+        </p>
       </article>
 
       <article class="studio-music-card studio-danmaku-card">
         <header>
           <TsIcon name="activity" :size="18" />
-          <h2>Status</h2>
+          <h2>连接状态</h2>
         </header>
         <div class="studio-music-status-grid studio-danmaku-metrics">
           <div>
-            <span>Status</span>
+            <span>状态</span>
             <strong>{{ statusLabel }}</strong>
           </div>
           <div>
-            <span>Room</span>
+            <span>房间</span>
             <strong>{{ connectionRoom }}</strong>
           </div>
           <div>
-            <span>Messages</span>
+            <span>用户昵称</span>
+            <strong>{{ authLabel }}</strong>
+          </div>
+          <div>
+            <span>弹幕数</span>
             <strong>{{ state.messageCount }}</strong>
           </div>
           <div>
-            <span>Attention</span>
+            <span>关注数</span>
             <strong>{{ state.attention || 0 }}</strong>
           </div>
           <div>
-            <span>Watched</span>
+            <span>看过</span>
             <strong>{{ state.watched || 'Unknown' }}</strong>
           </div>
           <div>
-            <span>Updated</span>
+            <span>更新时间</span>
             <strong>{{ formatTime(state.updatedAt) }}</strong>
           </div>
         </div>
         <p v-if="localError || state.error" class="studio-danmaku-error">
           {{ localError || state.error }}
         </p>
+        <p v-if="state.authWarning" class="studio-danmaku-error">
+          {{ state.authWarning }}
+        </p>
         <div class="studio-music-now">
-          <span>Latest</span>
-          <strong>{{ latestMessage ? `${latestMessage.userName}: ${latestMessage.text}` : 'No messages yet' }}</strong>
-          <small>{{ latestMessage ? messageTypeLabel(latestMessage.type) : 'Idle' }}</small>
+          <span>最新弹幕</span>
+          <strong>{{ latestMessage ? `${latestMessage.userName}: ${latestMessage.text}` : '还没有收到弹幕' }}</strong>
+          <small>{{ latestMessage ? messageTypeLabel(latestMessage.type) : '等待中' }}</small>
         </div>
       </article>
 
       <article class="studio-music-card studio-danmaku-card studio-danmaku-log-card">
         <header>
           <TsIcon name="message" :size="18" />
-          <h2>Recent</h2>
+          <h2>最近弹幕</h2>
           <button class="studio-secondary-btn studio-danmaku-clear" type="button" :disabled="Boolean(busy) || !messages.length" @click="clearMessages">
             <TsIcon name="trash" :size="14" />
-            <span>Clear</span>
+            <span>清空</span>
           </button>
         </header>
         <div class="studio-danmaku-log">
@@ -290,7 +314,7 @@ onUnmounted(() => {
             <p>{{ line.text }}</p>
             <small v-if="line.price">RMB {{ line.price }}</small>
           </article>
-          <p v-if="!messages.length" class="studio-danmaku-empty">No messages yet</p>
+          <p v-if="!messages.length" class="studio-danmaku-empty">暂时没有弹幕</p>
         </div>
       </article>
     </section>

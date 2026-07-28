@@ -11,6 +11,10 @@ import {
 } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, URL } from 'node:url';
+import {
+  extractBilibiliWbiKey,
+  signBilibiliWbiParams
+} from '../tools/live2d-studio/bilibili-wbi.mjs';
 
 const repoRoot = fileURLToPath(new URL('..', import.meta.url));
 const studioRoot = fileURLToPath(new URL('.', import.meta.url));
@@ -288,6 +292,129 @@ function readRequestJson(request) {
   });
 }
 
+function bilibiliRequestHeaders(roomId, cookie = '') {
+  const headers = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124 Safari/537.36',
+    Referer: `https://live.bilibili.com/${roomId}`,
+    Accept: 'application/json, text/plain, */*'
+  };
+  if (String(cookie || '').trim()) headers.Cookie = String(cookie).trim();
+  return headers;
+}
+
+async function readBilibiliJson(url, headers) {
+  const response = await fetch(url, { headers });
+  const text = await response.text();
+  let payload;
+  try {
+    payload = JSON.parse(text);
+  } catch (_) {
+    throw new Error(`B站返回了无法识别的数据（HTTP ${response.status}）`);
+  }
+  if (!response.ok || Number(payload?.code || 0) !== 0) {
+    const error = new Error(payload?.message || payload?.msg || `B站请求失败（HTTP ${response.status}）`);
+    error.bilibiliCode = Number(payload?.code || 0) || 0;
+    throw error;
+  }
+  return payload;
+}
+
+function cookieValue(cookie, name) {
+  const prefix = `${name}=`;
+  const part = String(cookie || '').split(';').map((value) => value.trim()).find((value) => value.startsWith(prefix));
+  return part ? part.slice(prefix.length) : '';
+}
+
+async function resolveBilibiliConnectionInfo(input = {}) {
+  const requestedRoomId = Math.round(Number(input.roomId));
+  if (!Number.isFinite(requestedRoomId) || requestedRoomId <= 0) {
+    throw new Error('请填写有效的 B站直播间 ID');
+  }
+
+  const cookie = String(input.cookie || '').trim();
+  const headers = bilibiliRequestHeaders(requestedRoomId, cookie);
+  const room = await readBilibiliJson(
+    `https://api.live.bilibili.com/room/v1/Room/room_init?id=${requestedRoomId}`,
+    headers
+  );
+  const actualRoomId = Math.round(Number(room?.data?.room_id || 0));
+  if (!actualRoomId) throw new Error('B站没有返回有效的真实直播间 ID');
+
+  const actualHeaders = bilibiliRequestHeaders(actualRoomId, cookie);
+  const authenticatedUid = Number(cookieValue(cookie, 'DedeUserID') || 0) || 0;
+  const canAuthenticate = Boolean(authenticatedUid && cookieValue(cookie, 'SESSDATA'));
+  let authMode = 'anonymous';
+  let authWarning = '';
+  let authFailureStage = '';
+  let authFailureCode = 0;
+  let danmaku = null;
+  if (canAuthenticate) {
+    let authProbeStage = 'nav';
+    try {
+      const nav = await readBilibiliJson(
+        'https://api.bilibili.com/x/web-interface/nav',
+        actualHeaders
+      );
+      authProbeStage = 'wbi-sign';
+      const signedQuery = signBilibiliWbiParams(
+        { id: actualRoomId, type: 0 },
+        {
+          imgKey: extractBilibiliWbiKey(nav?.data?.wbi_img?.img_url),
+          subKey: extractBilibiliWbiKey(nav?.data?.wbi_img?.sub_url)
+        }
+      );
+      authProbeStage = 'danmaku-info';
+      danmaku = await readBilibiliJson(
+        `https://api.live.bilibili.com/xlive/web-room/v1/index/getDanmuInfo?${signedQuery}`,
+        actualHeaders
+      );
+      authMode = 'authenticated';
+    } catch (error) {
+      authFailureStage = authProbeStage;
+      authFailureCode = Number(error?.bilibiliCode || 0) || 0;
+      authWarning = '登录态已失效或认证接口暂不可用，已自动使用匿名模式；用户名可能被隐藏。';
+    }
+  } else if (cookie) {
+    authWarning = 'Cookie 缺少有效的 SESSDATA 或 DedeUserID，已使用匿名模式；用户名可能被隐藏。';
+  }
+  if (!danmaku) {
+    danmaku = await readBilibiliJson(
+      `https://api.live.bilibili.com/room/v1/Danmu/getConf?room_id=${actualRoomId}&platform=pc&player=web`,
+      actualHeaders
+    );
+  }
+  const fingerprint = cookieValue(cookie, 'buvid3')
+    ? null
+    : await readBilibiliJson('https://api.bilibili.com/x/frontend/finger/spi', actualHeaders);
+  const connection = danmaku?.data || {};
+  const hosts = Array.isArray(connection.host_server_list)
+    ? connection.host_server_list
+    : Array.isArray(connection.host_list) ? connection.host_list : [];
+  const selectedHost = hosts.find((item) => item?.host && Number(item?.wss_port || 0) > 0)
+    || hosts.find((item) => item?.host)
+    || {};
+  const token = String(connection.token || '').trim();
+  const host = String(selectedHost.host || connection.host || '').trim();
+  if (!token || !host) throw new Error('B站没有返回可用的弹幕服务器或临时 Key');
+
+  return {
+    success: true,
+    roomId: requestedRoomId,
+    actualRoomId,
+    liveStatus: Number(room?.data?.live_status || 0) || 0,
+    uid: authMode === 'authenticated' ? authenticatedUid : 0,
+    token,
+    buvid: cookieValue(cookie, 'buvid3') || String(fingerprint?.data?.b_3 || '').trim(),
+    host,
+    port: Number(selectedHost.wss_port || 443) || 443,
+    authMode,
+    userNamesComplete: authMode === 'authenticated',
+    authWarning,
+    authFailureStage,
+    authFailureCode
+  };
+}
+
 function safeLive2DItemFileName(fileName) {
   const baseName = path.basename(String(fileName || 'item.png')).replace(/[<>:"/\\|?*\u0000-\u001f]/g, '_');
   const extension = path.extname(baseName).toLowerCase();
@@ -307,6 +434,19 @@ function repoStaticAssetPlugin() {
       server.middlewares.use(async (request, response, next) => {
         const method = String(request.method || 'GET').toUpperCase();
         const requestPath = decodeURIComponent(String(request.url || '').split('?')[0]);
+
+        if (method === 'POST' && requestPath === '/api/bilibili/connect-info') {
+          try {
+            const payload = await readRequestJson(request);
+            writeJsonResponse(response, 200, await resolveBilibiliConnectionInfo(payload));
+          } catch (error) {
+            writeJsonResponse(response, 502, {
+              success: false,
+              message: error.message || '无法获取 B站弹幕连接信息'
+            });
+          }
+          return;
+        }
 
         if ((method === 'GET' || method === 'HEAD') && requestPath === '/api/live2d/items') {
           ensureLive2DItemFolders();

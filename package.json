@@ -17,9 +17,9 @@
   },
   "dependencies": {
     "@lucide/vue": "^1.17.0",
-    "@neteasecloudmusicapienhanced/api": "^4.34.3",
+    "@neteasecloudmusicapienhanced/api": "^4.35.1",
     "@vitejs/plugin-vue": "^6.0.6",
-    "better-sqlite3": "^9.6.0",
+    "better-sqlite3": "^12.6.2",
     "blive-message-listener": "^0.5.5",
     "vite": "^8.0.5",
     "vue": "^3.5.0"

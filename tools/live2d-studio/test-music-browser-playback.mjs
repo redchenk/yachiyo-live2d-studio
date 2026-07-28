@@ -4,6 +4,7 @@ import { createServer } from 'vite';
 const store = new Map();
 const dispatchedEvents = [];
 const playedUrls = [];
+let latestAudio = null;
 
 globalThis.localStorage = {
   getItem(key) {
@@ -33,8 +34,46 @@ globalThis.window = {
   }
 };
 
+globalThis.fetch = async (url, options = {}) => {
+  if (String(url).endsWith('/api/music/netease/search')) {
+    const body = JSON.parse(options.body || '{}');
+    return Response.json({
+      success: true,
+      candidates: body.query === 'healthy-after-search-error'
+        ? [{
+            provider: 'netease-cloud',
+            songId: 'healthy-after-search-error',
+            title: 'Healthy After Search Error'
+          }]
+        : []
+    });
+  }
+  if (String(url).endsWith('/api/music/netease/resolve')) {
+    const body = JSON.parse(options.body || '{}');
+    if (body.songId === 'broken-song') {
+      return Response.json({
+        success: false,
+        message: 'simulated resolve failure'
+      }, { status: 404 });
+    }
+    if (body.songId === 'healthy-after-search-error') {
+      return Response.json({
+        success: true,
+        candidate: {
+          provider: 'netease-cloud',
+          songId: body.songId,
+          title: 'Healthy After Search Error',
+          url: '/api/music/netease/stream?token=healthy-after-search-error'
+        }
+      });
+    }
+  }
+  throw new Error(`Unexpected fetch in music browser test: ${url}`);
+};
+
 globalThis.Audio = class MockAudio {
   constructor(src = '') {
+    latestAudio = this;
     this.src = src;
     this.currentTime = 0;
     this.duration = 180;
@@ -50,6 +89,12 @@ globalThis.Audio = class MockAudio {
     const list = this.listeners.get(type) || [];
     list.push(callback);
     this.listeners.set(type, list);
+  }
+
+  emit(type) {
+    for (const callback of this.listeners.get(type) || []) {
+      callback({ type, target: this });
+    }
   }
 
   getAttribute(name) {
@@ -83,6 +128,7 @@ const server = await createServer({
 try {
   const {
     executeLive2DMusicCommand,
+    setLive2DMusicSpeechDucking,
     warmupLive2DMusicPlayback
   } = await server.ssrLoadModule('/src/frontend/services/room/live2dMusic.js');
   const {
@@ -102,6 +148,16 @@ try {
   assert.equal(await warmupLive2DMusicPlayback(), true);
   assert.ok(playedUrls[0].startsWith('data:audio/wav;base64,'));
   playedUrls.length = 0;
+  assert.deepEqual(
+    setLive2DMusicSpeechDucking(true, { fadeMs: 0 }),
+    { active: true, duckVolume: 0.1, targetVolume: 0.1 }
+  );
+  assert.equal(latestAudio.volume, 0.1);
+  assert.deepEqual(
+    setLive2DMusicSpeechDucking(false, { fadeMs: 0 }),
+    { active: false, duckVolume: 0.1, targetVolume: 1 }
+  );
+  assert.equal(latestAudio.volume, 1);
 
   writeLive2DMusicQueueState({
     current: {
@@ -141,6 +197,96 @@ try {
   assert.equal(llmImmediateResult.current.url, '/api/music/netease/stream?token=llm-song');
   assert.deepEqual(playedUrls, ['/api/music/netease/stream?token=llm-song']);
   assert.equal(readLive2DMusicQueueState().current.title, 'LLM Song');
+
+  const queuedAfterCurrent = await executeLive2DMusicCommand({
+    action: 'request',
+    provider: 'netease-cloud',
+    url: '/api/music/netease/stream?token=recovery-song',
+    title: 'Recovery Song'
+  }, settings);
+  assert.equal(queuedAfterCurrent.status, 'queued');
+  assert.equal(readLive2DMusicQueueState().queue.length, 1);
+  const secondQueuedAfterCurrent = await executeLive2DMusicCommand({
+    action: 'request',
+    provider: 'netease-cloud',
+    url: '/api/music/netease/stream?token=second-queued-song',
+    title: 'Second Queued Song'
+  }, settings);
+  assert.equal(secondQueuedAfterCurrent.status, 'queued');
+  assert.equal(readLive2DMusicQueueState().current.title, 'LLM Song');
+  assert.deepEqual(
+    readLive2DMusicQueueState().queue.map((track) => track.title),
+    ['Recovery Song', 'Second Queued Song']
+  );
+  assert.deepEqual(playedUrls, ['/api/music/netease/stream?token=llm-song']);
+
+  latestAudio.ended = true;
+  latestAudio.emit('ended');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.equal(readLive2DMusicQueueState().current.title, 'Recovery Song');
+  assert.deepEqual(
+    readLive2DMusicQueueState().queue.map((track) => track.title),
+    ['Second Queued Song']
+  );
+  assert.equal(playedUrls.at(-1), '/api/music/netease/stream?token=recovery-song');
+
+  latestAudio.error = { code: 4 };
+  latestAudio.emit('error');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.equal(readLive2DMusicQueueState().current.title, 'Second Queued Song');
+  assert.equal(readLive2DMusicQueueState().queue.length, 0);
+  assert.equal(playedUrls.at(-1), '/api/music/netease/stream?token=second-queued-song');
+
+  const brokenQueued = await executeLive2DMusicCommand({
+    action: 'request',
+    provider: 'netease-cloud',
+    candidate: {
+      provider: 'netease-cloud',
+      songId: 'broken-song',
+      title: 'Broken Song'
+    }
+  }, settings);
+  assert.equal(brokenQueued.status, 'queued');
+
+  const healthyQueued = await executeLive2DMusicCommand({
+    action: 'request',
+    provider: 'netease-cloud',
+    url: '/api/music/netease/stream?token=after-broken-song',
+    title: 'After Broken Song'
+  }, settings);
+  assert.equal(healthyQueued.status, 'queued');
+  assert.equal(readLive2DMusicQueueState().queue.length, 2);
+
+  latestAudio.ended = true;
+  latestAudio.emit('ended');
+  await new Promise((resolve) => setTimeout(resolve, 10));
+
+  assert.equal(readLive2DMusicQueueState().current.title, 'After Broken Song');
+  assert.equal(readLive2DMusicQueueState().queue.length, 0);
+  assert.equal(playedUrls.at(-1), '/api/music/netease/stream?token=after-broken-song');
+
+  await executeLive2DMusicCommand({
+    action: 'stop',
+    provider: 'netease-cloud'
+  }, settings);
+  await assert.rejects(
+    () => executeLive2DMusicCommand({
+      action: 'request',
+      provider: 'netease-cloud',
+      query: 'not-found-first'
+    }, settings),
+    /did not find a song/
+  );
+  const afterSearchError = await executeLive2DMusicCommand({
+    action: 'request',
+    provider: 'netease-cloud',
+    query: 'healthy-after-search-error'
+  }, settings);
+  assert.equal(afterSearchError.status, 'playing');
+  assert.equal(readLive2DMusicQueueState().current.title, 'Healthy After Search Error');
+  assert.equal(playedUrls.at(-1), '/api/music/netease/stream?token=healthy-after-search-error');
   assert.ok(dispatchedEvents.some((event) => event.type === 'tsukuyomi:live2d-music-queue'));
 } finally {
   await server.close();

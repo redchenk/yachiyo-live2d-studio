@@ -11,6 +11,13 @@ import {
   LIVE2D_MUSIC_QUEUE_EVENT,
   readLive2DMusicQueueState
 } from '@frontend/services/room/live2dMusicQueue';
+import {
+  checkNeteaseMusicQrLogin,
+  clearLegacyNeteaseMusicCredentials,
+  createNeteaseMusicQrLogin,
+  logoutNeteaseMusicAccount,
+  readNeteaseMusicAccount
+} from '@frontend/services/room/live2dNeteaseAccount';
 
 const music = reactive(normalizeRoomMusicSettings({
   ...readRoomMusicSettings(),
@@ -25,16 +32,16 @@ const selectedSongId = ref('');
 const resolved = ref(null);
 const logs = ref([]);
 const queueState = ref(readLive2DMusicQueueState());
+const account = ref({ loggedIn: false, displayName: '', avatarUrl: '', source: '' });
+const loginBusy = ref(false);
+const qrLogin = ref(null);
+let qrPollTimer = 0;
+let qrPollGeneration = 0;
 
 const selectedSong = computed(() => candidates.value.find((song) => song.songId === selectedSongId.value) || null);
 const currentMusic = computed(() => queueState.value.current || null);
 const selectedTitle = computed(() => musicSongTitle(selectedSong.value));
-const cookieStatusLabel = computed(() => {
-  if (!serviceStatus.value) return 'Unknown';
-  if (serviceStatus.value.cookieConfigured) return 'Configured';
-  if (serviceStatus.value.cookiePathExists) return 'Empty';
-  return 'Missing';
-});
+const accountStatusLabel = computed(() => account.value.loggedIn ? (account.value.displayName || 'Logged in') : 'Logged out');
 const serviceReadyLabel = computed(() => {
   if (!serviceStatus.value) return 'Unknown';
   return serviceStatus.value.ready ? 'Ready' : 'Offline';
@@ -99,12 +106,9 @@ async function probeService() {
     const settings = saveMusicSettings();
     const result = await postJson('/api/music/netease/managed/status', settings);
     serviceStatus.value = result;
-    const cookieMissing = result.cookiePathExists && !result.cookieConfigured;
     log(
-      result.ready && !cookieMissing ? 'ok' : 'warn',
-      result.ready
-        ? (cookieMissing ? 'Managed api-enhanced is ready, but Cookie file is empty' : 'Managed api-enhanced is ready')
-        : 'Managed api-enhanced is not ready',
+      result.ready ? 'ok' : 'warn',
+      result.ready ? 'Managed api-enhanced is ready' : 'Managed api-enhanced is not ready',
       result
     );
     return result;
@@ -178,11 +182,87 @@ function queueChanged(event) {
   queueState.value = event.detail || readLive2DMusicQueueState();
 }
 
+function stopQrPolling() {
+  qrPollGeneration += 1;
+  if (qrPollTimer) {
+    clearTimeout(qrPollTimer);
+    qrPollTimer = 0;
+  }
+}
+
+async function refreshAccount() {
+  try {
+    account.value = await readNeteaseMusicAccount(music);
+  } catch (error) {
+    log('warn', error?.message || 'Unable to read NetEase account');
+  }
+}
+
+function scheduleQrCheck(key, generation) {
+  if (!key || generation !== qrPollGeneration || !qrLogin.value) return;
+  qrPollTimer = window.setTimeout(async () => {
+    try {
+      const result = await checkNeteaseMusicQrLogin(key, music);
+      if (generation !== qrPollGeneration) return;
+      qrLogin.value = { ...qrLogin.value, status: result.status, message: result.message };
+      if (result.status === 803 && result.loggedIn) {
+        Object.assign(music, clearLegacyNeteaseMusicCredentials(music));
+        account.value = result.account;
+        loginBusy.value = false;
+        qrLogin.value = null;
+        log('ok', `Logged in as ${result.account.displayName || 'NetEase account'}`);
+        return;
+      }
+      if (result.status === 800) {
+        loginBusy.value = false;
+        return;
+      }
+      scheduleQrCheck(key, generation);
+    } catch (error) {
+      loginBusy.value = false;
+      log('error', error?.message || 'QR login check failed');
+    }
+  }, 2200);
+}
+
+async function startQrLogin() {
+  if (loginBusy.value) return;
+  stopQrPolling();
+  loginBusy.value = true;
+  try {
+    const result = await createNeteaseMusicQrLogin(music);
+    qrLogin.value = result;
+    scheduleQrCheck(result.key, qrPollGeneration);
+  } catch (error) {
+    loginBusy.value = false;
+    log('error', error?.message || 'QR login creation failed');
+  }
+}
+
+async function logoutAccount() {
+  if (loginBusy.value) return;
+  stopQrPolling();
+  loginBusy.value = true;
+  try {
+    await logoutNeteaseMusicAccount(music);
+    Object.assign(music, readRoomMusicSettings());
+    account.value = { loggedIn: false, displayName: '', avatarUrl: '', source: '' };
+    qrLogin.value = null;
+    log('ok', 'Logged out from NetEase Cloud Music');
+  } catch (error) {
+    log('error', error?.message || 'NetEase logout failed');
+  } finally {
+    loginBusy.value = false;
+  }
+}
+
 onMounted(() => {
   window.addEventListener(LIVE2D_MUSIC_QUEUE_EVENT, queueChanged);
+  refreshAccount();
 });
 
 onUnmounted(() => {
+  stopQrPolling();
   window.removeEventListener(LIVE2D_MUSIC_QUEUE_EVENT, queueChanged);
 });
 </script>
@@ -216,14 +296,48 @@ onUnmounted(() => {
           <span>Managed URL</span>
           <input v-model="music.neteaseApiUrl" type="text" spellcheck="false">
         </label>
-        <label>
-          <span>Cookie File Path</span>
-          <input v-model="music.neteaseCookiePath" type="text" spellcheck="false">
-        </label>
-        <label>
-          <span>Cookie Override</span>
-          <input v-model="music.neteaseCookie" type="password" spellcheck="false" placeholder="Optional, leave empty to use file">
-        </label>
+        <section class="studio-music-account">
+          <img v-if="account.avatarUrl" :src="account.avatarUrl" alt="">
+          <TsIcon v-else name="user" :size="20" />
+          <div>
+            <strong>{{ accountStatusLabel }}</strong>
+            <small>{{ account.loggedIn ? 'Secure desktop login' : 'Use the NetEase Music App to scan' }}</small>
+          </div>
+          <button
+            v-if="account.loggedIn"
+            class="studio-secondary-btn"
+            type="button"
+            :disabled="loginBusy"
+            @click="logoutAccount"
+          >
+            Logout
+          </button>
+          <button
+            v-else
+            class="studio-primary-btn"
+            type="button"
+            :disabled="loginBusy"
+            @click="startQrLogin"
+          >
+            QR Login
+          </button>
+        </section>
+        <section v-if="qrLogin" class="studio-music-qr">
+          <img v-if="qrLogin.qrImage" :src="qrLogin.qrImage" alt="NetEase Cloud Music login QR code">
+          <div>
+            <strong>Scan with NetEase Music</strong>
+            <small>{{ qrLogin.message || 'Confirm login on your phone' }}</small>
+            <button
+              v-if="qrLogin.status === 800"
+              class="studio-secondary-btn"
+              type="button"
+              :disabled="loginBusy"
+              @click="startQrLogin"
+            >
+              Refresh QR
+            </button>
+          </div>
+        </section>
         <div class="studio-music-settings-row">
           <label>
             <span>Quality</span>
@@ -336,12 +450,12 @@ onUnmounted(() => {
             <strong>{{ serviceStatus?.managed ? 'Yes' : 'Unknown' }}</strong>
           </div>
           <div>
-            <span>Cookie File</span>
-            <strong>{{ serviceStatus?.cookiePathExists ? 'Found' : 'Unknown' }}</strong>
+            <span>Account</span>
+            <strong>{{ account.loggedIn ? 'Logged in' : 'Logged out' }}</strong>
           </div>
           <div>
-            <span>Cookie</span>
-            <strong>{{ cookieStatusLabel }}</strong>
+            <span>Login Store</span>
+            <strong>{{ account.source || 'None' }}</strong>
           </div>
         </div>
         <div class="studio-music-log">

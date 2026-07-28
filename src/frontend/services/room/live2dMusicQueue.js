@@ -60,6 +60,27 @@ function parseSongArtistQuery(query) {
   const text = normalizeMusicText(query);
   if (!text) return { title: '', artist: '', words: [] };
 
+  const possessiveMatch = text.match(/^(.{1,60}?)\s*的\s*(.{1,100})$/u);
+  if (possessiveMatch) {
+    return {
+      title: possessiveMatch[2].trim(),
+      artist: possessiveMatch[1].trim(),
+      words: [
+        ...splitWords(possessiveMatch[1]),
+        ...splitWords(possessiveMatch[2])
+      ]
+    };
+  }
+
+  const byMatch = text.match(/^(.+?)\s+by\s+(.+)$/i);
+  if (byMatch) {
+    return {
+      title: byMatch[1].trim(),
+      artist: byMatch[2].trim(),
+      words: splitWords(text.replace(/\s+by\s+/i, ' '))
+    };
+  }
+
   const dashMatch = text.match(/^(.+?)\s*-\s*(.+)$/);
   if (dashMatch) {
     return {
@@ -142,11 +163,22 @@ function scoreCandidate(query, candidate, index, settings) {
   const title = normalizeMusicText(candidate.title);
   const artist = normalizeMusicText(candidate.artist);
   const combined = candidateSearchText(candidate);
+  const looseQuery = normalizeLooseText(query).replace(/的/gu, '');
+  const looseTitle = normalizeLooseText(title);
+  const looseArtist = normalizeLooseText(artist);
   const baseRank = Math.max(0, 120 - index);
   let score = baseRank;
   let reason = 'rank';
 
-  if (parsed.title && parsed.artist) {
+  if (
+    looseQuery &&
+    looseTitle &&
+    looseArtist &&
+    (looseQuery === `${looseTitle}${looseArtist}` || looseQuery === `${looseArtist}${looseTitle}`)
+  ) {
+    score += 1100;
+    reason = 'exact-title-artist-any-order';
+  } else if (parsed.title && parsed.artist) {
     if (title === parsed.title && artist === parsed.artist) {
       score += 1000;
       reason = 'exact-title-artist';

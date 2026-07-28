@@ -156,6 +156,9 @@ export function publishRoomLive2DPerformanceDebug(performanceFrame = {}, source 
   publishRoomLive2DDebugState({
     emotion: performanceFrame.expression || character.emotion || '',
     mouthEnergy: roundDebugNumber(character.mouthEnergy || 0),
+    gazeX: roundDebugNumber(character.eyeX || 0),
+    gazeY: roundDebugNumber(character.eyeY || 0),
+    eyeOpen: roundDebugNumber(character.eyeOpen ?? 0.92),
     actionQueue: behaviorPlan?.actions || [],
     behaviorPlan,
     interruptPolicy: behaviorPlan?.interruptPolicy || null,

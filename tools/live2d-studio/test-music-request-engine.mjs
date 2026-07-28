@@ -51,7 +51,7 @@ try {
       autoAuthorize: true,
       neteaseApiUrl: 'http://127.0.0.1:3302',
       neteaseCookie: '',
-      neteaseCookiePath: 'C:\\Users\\lenovo\\Desktop\\网易云cookie.txt',
+      neteaseCookiePath: '',
       neteaseQualityLevel: 'exhigh',
       neteaseBitrate: 320000,
       neteaseUnblock: false,
@@ -89,7 +89,7 @@ try {
       autoAuthorize: true,
       neteaseApiUrl: 'http://127.0.0.1:3302',
       neteaseCookie: '',
-      neteaseCookiePath: 'C:\\Users\\lenovo\\Desktop\\网易云cookie.txt',
+      neteaseCookiePath: '',
       neteaseQualityLevel: 'lossless',
       neteaseBitrate: 999000,
       neteaseUnblock: true,
@@ -122,6 +122,19 @@ try {
     minDurationMs: 60000
   });
   assert.equal(picked.candidate.songId, 'exact');
+
+  const chineseCandidates = [
+    { songId: 'wrong-artist', title: '晴天', artist: '其他歌手', durationMs: 220000 },
+    { songId: 'right-artist', title: '晴天', artist: '周杰伦', durationMs: 269000 }
+  ];
+  assert.equal(
+    pickLive2DMusicCandidate('周杰伦的晴天', chineseCandidates, {
+      smartPick: true,
+      filterShortSongs: true,
+      minDurationMs: 60000
+    }).candidate.songId,
+    'right-artist'
+  );
 
   const blacklisted = pickLive2DMusicCandidate('Cloud 9 Beach Bunny', candidates, {
     blacklist: 'Beach Bunny',

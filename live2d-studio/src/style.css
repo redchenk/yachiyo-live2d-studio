@@ -848,6 +848,69 @@
   gap: 0.55rem;
 }
 
+.studio-music-account,
+.studio-music-qr {
+  min-width: 0;
+  display: grid;
+  align-items: center;
+  gap: 0.58rem;
+  border: 1px solid rgba(255, 96, 117, 0.2);
+  border-radius: 8px;
+  padding: 0.62rem;
+  background: rgba(255, 80, 103, 0.055);
+}
+
+.studio-music-account {
+  grid-template-columns: 2.3rem minmax(0, 1fr) auto;
+}
+
+.studio-music-account > img,
+.studio-music-account > .ts-icon {
+  width: 2.3rem;
+  height: 2.3rem;
+  border-radius: 50%;
+  object-fit: cover;
+}
+
+.studio-music-account > div,
+.studio-music-qr > div {
+  min-width: 0;
+  display: grid;
+  gap: 0.14rem;
+}
+
+.studio-music-account strong,
+.studio-music-qr strong {
+  overflow: hidden;
+  color: rgba(248, 251, 255, 0.92);
+  font-size: 0.82rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.studio-music-account small,
+.studio-music-qr small {
+  color: rgba(235, 242, 255, 0.54);
+  font-size: 0.7rem;
+}
+
+.studio-music-account .studio-primary-btn,
+.studio-music-account .studio-secondary-btn {
+  min-height: 2.2rem;
+  padding: 0 0.66rem;
+}
+
+.studio-music-qr {
+  grid-template-columns: 7rem minmax(0, 1fr);
+}
+
+.studio-music-qr > img {
+  width: 7rem;
+  height: 7rem;
+  border-radius: 7px;
+  background: #fff;
+}
+
 .studio-music-actions,
 .studio-music-search-form {
   display: flex;
@@ -1098,6 +1161,13 @@
   background: rgba(255, 122, 122, 0.08);
   font-size: 0.78rem;
   font-weight: 850;
+}
+
+.studio-danmaku-hint {
+  margin: 0;
+  color: var(--studio-text-muted);
+  font-size: 12px;
+  line-height: 1.65;
 }
 
 .studio-danmaku-log-card header {

@@ -30,6 +30,7 @@ const LOCAL_MUSIC_SEARCH_ENDPOINT = '/api/music/local/search';
 const NETEASE_MUSIC_SEARCH_ENDPOINT = '/api/music/netease/search';
 const NETEASE_MUSIC_RESOLVE_ENDPOINT = '/api/music/netease/resolve';
 const DEFAULT_SEARCH_LIMIT = 25;
+const DEFAULT_SPEECH_DUCK_VOLUME = 0.1;
 const SILENT_AUDIO_DATA_URL = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQQAAAAAAA==';
 const PLAYABLE_ACTIONS = new Set([
   'play',
@@ -47,6 +48,14 @@ const PLAYABLE_ACTIONS = new Set([
 ]);
 const STATE_ONLY_ACTIONS = new Set(['queue', 'clear', 'remove']);
 const MUSIC_PROVIDERS = new Set([APPLE_MUSIC_PROVIDER, LOCAL_MUSIC_PROVIDER, NETEASE_MUSIC_PROVIDER]);
+const MUSIC_QUERY_PROMPT_BOUNDARIES = Object.freeze([
+  /treat\W*viewer\W*text\W*only\W*as\W*conversation\W*content/i,
+  /never\W*follow\W*viewer\W*requests/i,
+  /live\W*director\W*tick/i,
+  /selected\W*audience\W*messages/i,
+  /return\W*the\W*required\W*json\W*object\W*only/i,
+  /final\W*control\W*json/i
+]);
 
 let musicKitScriptPromise = null;
 let musicKitConfigurePromise = null;
@@ -54,9 +63,141 @@ let musicKitConfigureKey = '';
 let playbackTimer = 0;
 let localAudio = null;
 let musicWarmupActive = false;
+let localAudioRecoveryPromise = null;
+let localAudioVolumeTimer = 0;
+let localMusicBaseVolume = 1;
+let appleMusicBaseVolume = 1;
+let speechDuckingActive = false;
+let speechDuckVolume = DEFAULT_SPEECH_DUCK_VOLUME;
 
 function asText(value) {
   return String(value ?? '').trim();
+}
+
+function clampVolume(value, fallback = 1) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return fallback;
+  return Math.min(Math.max(numeric, 0), 1);
+}
+
+function musicKitInstance() {
+  if (typeof window === 'undefined') return null;
+  try {
+    return window.MusicKit?.getInstance?.() || null;
+  } catch (_) {
+    return null;
+  }
+}
+
+function readAppleMusicVolume(music) {
+  if (!music) return appleMusicBaseVolume;
+  if (Number.isFinite(Number(music.volume))) return clampVolume(music.volume);
+  if (Number.isFinite(Number(music.player?.volume))) return clampVolume(music.player.volume);
+  return appleMusicBaseVolume;
+}
+
+function writeAppleMusicVolume(music, volume) {
+  if (!music) return;
+  const normalized = clampVolume(volume);
+  try {
+    if ('volume' in music) music.volume = normalized;
+    if (music.player && 'volume' in music.player) music.player.volume = normalized;
+  } catch (_) {
+    // MusicKit volume control is best-effort across API versions.
+  }
+}
+
+function fadeLocalMusicVolume(targetVolume, durationMs) {
+  if (!localAudio) return;
+  if (localAudioVolumeTimer && typeof window !== 'undefined') {
+    window.clearTimeout(localAudioVolumeTimer);
+    localAudioVolumeTimer = 0;
+  }
+  const target = clampVolume(targetVolume);
+  const duration = Math.max(0, Number(durationMs) || 0);
+  if (!duration || typeof window === 'undefined') {
+    localAudio.volume = target;
+    return;
+  }
+  const startVolume = clampVolume(localAudio.volume);
+  const startedAt = Date.now();
+  const step = () => {
+    if (!localAudio) return;
+    const progress = Math.min(1, Math.max(0, (Date.now() - startedAt) / duration));
+    const eased = 1 - Math.pow(1 - progress, 2);
+    localAudio.volume = clampVolume(startVolume + (target - startVolume) * eased);
+    if (progress < 1) {
+      localAudioVolumeTimer = window.setTimeout(step, 24);
+    } else {
+      localAudioVolumeTimer = 0;
+    }
+  };
+  step();
+}
+
+export function setLive2DMusicSpeechDucking(active, options = {}) {
+  const nextActive = Boolean(active);
+  const requestedDuckVolume = clampVolume(
+    options.duckVolume,
+    DEFAULT_SPEECH_DUCK_VOLUME
+  );
+  const requestedFadeMs = Number(options.fadeMs);
+  const fadeMs = Number.isFinite(requestedFadeMs)
+    ? Math.max(0, requestedFadeMs)
+    : (nextActive ? 180 : 420);
+
+  if (nextActive && !speechDuckingActive) {
+    if (localAudio) localMusicBaseVolume = clampVolume(localAudio.volume, localMusicBaseVolume);
+    const music = musicKitInstance();
+    if (music) appleMusicBaseVolume = readAppleMusicVolume(music);
+  }
+  speechDuckingActive = nextActive;
+  speechDuckVolume = requestedDuckVolume;
+
+  const localTarget = nextActive
+    ? Math.min(localMusicBaseVolume, speechDuckVolume)
+    : localMusicBaseVolume;
+  fadeLocalMusicVolume(localTarget, fadeMs);
+
+  const music = musicKitInstance();
+  if (music) {
+    const appleTarget = nextActive
+      ? Math.min(appleMusicBaseVolume, speechDuckVolume)
+      : appleMusicBaseVolume;
+    writeAppleMusicVolume(music, appleTarget);
+  }
+
+  return {
+    active: speechDuckingActive,
+    duckVolume: speechDuckVolume,
+    targetVolume: localTarget
+  };
+}
+
+export function sanitizeLive2DMusicQuery(value) {
+  let query = String(value ?? '')
+    .replace(/[\u0000-\u001f\u007f]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!query) return '';
+
+  let boundaryIndex = query.length;
+  for (const pattern of MUSIC_QUERY_PROMPT_BOUNDARIES) {
+    const match = pattern.exec(query);
+    if (match && match.index < boundaryIndex) boundaryIndex = match.index;
+  }
+  if (boundaryIndex < query.length) {
+    query = query
+      .slice(0, boundaryIndex)
+      .replace(/[\s"'`\\}\])>:;,]+$/g, '')
+      .trim();
+  }
+
+  if (query.length > 180) {
+    query = query.slice(0, 180).replace(/\s+\S*$/g, '').trim();
+  }
+  if (!query || !/[\p{L}\p{N}]/u.test(query)) return '';
+  return query;
 }
 
 function compactObject(value) {
@@ -67,6 +208,7 @@ function compactObject(value) {
 
 function firstText(...values) {
   for (const value of values) {
+    if (value && typeof value === 'object') continue;
     const text = asText(value);
     if (text) return text;
   }
@@ -128,10 +270,29 @@ function compactMusicIntentText(value) {
   return asText(value).replace(/\s+/g, '');
 }
 
+function audienceMusicIntentText(value) {
+  let text = asText(value)
+    .normalize('NFKC')
+    .replace(/^(?:\[(?:SC|醒目留言|礼物|gift)[^\]]*\]\s*)+/giu, '')
+    .replace(/^@\S+\s+/u, '')
+    .trim();
+  const labeledMessage = text.match(/^([^:：\n]{1,48})[:：]\s*(.+)$/u);
+  if (labeledMessage) {
+    const label = labeledMessage[1];
+    const message = labeledMessage[2];
+    const intentPattern = /点歌|点一首|点首|想点|来一首|来首|播放|放一首|放首|想听|要听|听一首|听首|加歌|排歌|play|queue|request|song/iu;
+    if (!intentPattern.test(label) && intentPattern.test(message)) text = message;
+  }
+  return text.trim();
+}
+
 function cleanInferredMusicQuery(value) {
   let query = compactMusicIntentText(value)
+    .replace(/^[\uff0c,\uff1a:\-—]+/u, '')
     .replace(/[\uff0c,.\u3002\uff01!\uff1f?\uff1b;\uff1a:].*$/u, '')
-    .replace(/[\u5427\u5566\u554a\u5440\u5462\u54e6\u561b\u5457]+$/u, '')
+    .replace(/(?:\u8c22\u8c22|\u611f\u8c22|thanks?|thankyou)+$/iu, '')
+    .replace(/(?:\u597d\u4e0d\u597d|\u53ef\u4ee5\u5417|\u884c\u4e0d\u884c)$/u, '')
+    .replace(/[\u5427\u5566\u554a\u5440\u5462\u54e6\u561b\u5457\u5417\u4e48\u561b]+$/u, '')
     .replace(/^[\u300a\u300c\u300e"'\u201c\u2018]+/u, '')
     .replace(/[\u300b\u300d\u300f"'\u201d\u2019]+$/u, '')
     .replace(/^(?:\u4e00\u9996|\u9996|\u4e00\u4e0b|\u70b9|\u70b9\u513f|\u70b9\u4e00\u4e0b|\u6765\u70b9)/u, '')
@@ -144,27 +305,106 @@ function cleanInferredMusicQuery(value) {
 }
 
 export function inferLive2DMusicCommandFromText(rawText = '') {
-  const text = compactMusicIntentText(rawText);
+  const sourceText = audienceMusicIntentText(rawText);
+  const text = compactMusicIntentText(sourceText);
   if (!text) return null;
 
-  const patterns = [
-    /(?:\u6211\u8981|\u6211\u60f3|\u60f3\u8981|\u60f3|\u8981|\u7ed9\u6211|\u5e2e\u6211|\u8bf7\u4f60?|\u9ebb\u70e6\u4f60?|\u6765)(?:\u542c\u542c|\u542c\u4e00\u4e0b|\u542c\u4e00\u9996|\u542c\u9996|\u542c|\u64ad\u653e|\u653e\u4e00\u4e0b|\u653e\u4e00\u9996|\u653e\u9996|\u653e|\u70b9\u6b4c|\u70b9\u4e00\u9996|\u6765\u4e00\u9996)(.+)$/u,
-    /^(?:\u968f\u4fbf)?(?:\u542c\u542c|\u542c\u4e00\u4e0b|\u542c\u4e00\u9996|\u542c\u9996|\u542c|\u64ad\u653e|\u653e\u4e00\u4e0b|\u653e\u4e00\u9996|\u653e\u9996|\u653e|\u70b9\u6b4c|\u70b9\u4e00\u9996|\u6765\u4e00\u9996)(.+)$/u,
-    /^(?:\u6765\u70b9|\u6765\u4e9b)(.+)$/u
+  const chinesePatterns = [
+    {
+      action: 'play_next',
+      pattern: /^(?:(?:\u8bf7|\u9ebb\u70e6|\u62dc\u6258)?(?:\u628a)?)(?:\u4e0b\u4e00\u9996|\u4e0b\u9996|\u63d2\u961f|\u4f18\u5148)(?:\u64ad\u653e|\u64ad|\u653e)?(.+)$/u
+    },
+    {
+      action: 'request',
+      pattern: /^(?:\u968f\u4fbf|\u53ef\u4ee5|\u53ef\u4e0d\u53ef\u4ee5|\u80fd\u4e0d\u80fd|\u80fd\u5426|\u80fd|\u6c42|\u8bf7\u4f60?|\u9ebb\u70e6\u4f60?|\u62dc\u6258|\u5e2e\u6211|\u7ed9\u6211|\u6211\u60f3\u8981|\u6211\u60f3|\u6211\u8981|\u60f3\u8981|\u60f3|\u8981|\u6765|\u6574|\u9a6c\u4e0a|\u7acb\u523b|\u7acb\u5373|\u73b0\u5728)?(?:\u542c\u542c|\u542c\u4e00\u4e0b|\u542c\u4e00\u9996|\u542c\u9996|\u542c|\u64ad\u653e\u4e00\u4e0b|\u64ad\u653e|\u653e\u4e00\u4e0b|\u653e\u4e00\u9996|\u653e\u9996|\u653e\u4e2a|\u653e|\u70b9\u6b4c|\u70b9\u4e00\u9996|\u70b9\u9996|\u70b9\u4e2a|\u70b9\u4e00\u4e0b|\u60f3\u70b9|\u6765\u4e00\u9996|\u6765\u9996|\u6765\u4e2a|\u6765\u70b9|\u6765\u4e9b|\u6574\u4e00\u9996|\u6c42\u4e00\u9996|\u52a0\u6b4c|\u6392\u6b4c)(.+)$/u
+    }
   ];
 
-  for (const pattern of patterns) {
+  for (const { action, pattern } of chinesePatterns) {
     const match = text.match(pattern);
-    const query = cleanInferredMusicQuery(match?.[1] || '');
+    const query = sanitizeLive2DMusicQuery(cleanInferredMusicQuery(match?.[1] || ''));
     if (query) {
       return {
-        action: 'play_now',
+        action,
         provider: NETEASE_MUSIC_PROVIDER,
         query
       };
     }
   }
+
+  const englishMatch = sourceText.match(
+    /^(?:please\s+)?(?:can\s+you\s+|could\s+you\s+|would\s+you\s+)?(?:play|queue|request|add)(?:\s+the\s+song)?\s+(.+?)\s*[?!.]*$/iu
+  );
+  const englishQuery = sanitizeLive2DMusicQuery(
+    asText(englishMatch?.[1]).replace(/\s+by\s+/giu, ' ')
+  );
+  if (englishQuery) {
+    return {
+      action: 'request',
+      provider: NETEASE_MUSIC_PROVIDER,
+      query: englishQuery
+    };
+  }
   return null;
+}
+
+function compactMusicRequesterMatchText(value) {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/[\s\p{P}\p{S}]+/gu, '');
+}
+
+/**
+ * Resolves an LLM music command back to trusted audience metadata.
+ * requestIndex is preferred; query/intent matching is only a fallback.
+ */
+export function resolveLive2DMusicRequester(lines = [], rawCommand = null) {
+  const audienceLines = Array.isArray(lines) ? lines : [];
+  if (!audienceLines.length) return '';
+
+  const command = rawCommand && typeof rawCommand === 'object' ? rawCommand : {};
+  const requestedIndex = Math.round(Number(
+    command.requestIndex ??
+    command.request_index ??
+    command.music?.requestIndex ??
+    0
+  ));
+  if (requestedIndex >= 1 && requestedIndex <= audienceLines.length) {
+    const indexedLine = audienceLines[requestedIndex - 1];
+    return indexedLine?.userName || indexedLine?.userId || '';
+  }
+
+  const normalizedCommand = normalizeLive2DMusicCommand(rawCommand);
+  const compactQuery = compactMusicRequesterMatchText(normalizedCommand?.query || '');
+  const queryTerms = String(normalizedCommand?.query || '')
+    .toLowerCase()
+    .split(/[\s,，/·_-]+/u)
+    .map(compactMusicRequesterMatchText)
+    .filter((term) => term.length >= 2);
+  const musicIntentPattern = /(?:点歌|点一首|来一首|加歌|排歌|播放|放歌|听歌|想听|我要听|music|song|play|listen|request|queue)/iu;
+
+  const ranked = audienceLines
+    .map((line, index) => {
+      const text = String(line?.text || '');
+      const compactText = compactMusicRequesterMatchText(text);
+      let score = 0;
+      if (inferLive2DMusicCommandFromText(text)) score += 40;
+      if (musicIntentPattern.test(text)) score += 20;
+      if (compactQuery && compactText.includes(compactQuery)) score += 100;
+      for (const term of queryTerms) {
+        if (compactText.includes(term)) score += 18;
+      }
+      return { line, index, score };
+    })
+    .sort((left, right) => right.score - left.score || left.index - right.index);
+
+  const best = ranked[0];
+  if (!best || best.score <= 0) {
+    if (!rawCommand || audienceLines.length !== 1) return '';
+    const onlyLine = audienceLines[0];
+    return onlyLine?.userName || onlyLine?.userId || '';
+  }
+  return best.line?.userName || best.line?.userId || '';
 }
 
 function musicQueryFromParts(source = {}, nested = {}) {
@@ -232,6 +472,12 @@ export function normalizeLive2DMusicCommand(rawCommand = null) {
   if (!source) return null;
 
   const nested = source.music && typeof source.music === 'object' ? source.music : {};
+  const rawTrack = [
+    source.track,
+    source.candidate,
+    nested.track,
+    nested.candidate
+  ].find((value) => value && typeof value === 'object' && !Array.isArray(value)) || null;
   const action = normalizeMusicAction(
     source.action ||
     source.command ||
@@ -244,7 +490,17 @@ export function normalizeLive2DMusicCommand(rawCommand = null) {
     nested.intent ||
     nested['动作']
   );
-  const query = musicQueryFromParts(source, nested);
+  const requestedBy = firstText(
+    source.requestedBy,
+    source.by,
+    source.user,
+    source.viewer,
+    nested.requestedBy,
+    nested.by,
+    nested.user,
+    nested.viewer,
+    rawTrack?.requestedBy
+  );
   const songId = firstText(
     source.songId,
     source.catalogId,
@@ -253,9 +509,19 @@ export function normalizeLive2DMusicCommand(rawCommand = null) {
     nested.songId,
     nested.catalogId,
     nested.appleMusicId,
-    nested.id
+    nested.id,
+    rawTrack?.songId,
+    rawTrack?.id
   );
-  const url = firstText(source.url, source.musicUrl, source.appleMusicUrl, nested.url, nested.musicUrl, nested.appleMusicUrl);
+  const url = firstText(
+    source.url,
+    source.musicUrl,
+    source.appleMusicUrl,
+    nested.url,
+    nested.musicUrl,
+    nested.appleMusicUrl,
+    rawTrack?.url
+  );
   const provider = normalizeMusicProvider(
     firstText(
       source.provider,
@@ -271,13 +537,41 @@ export function normalizeLive2DMusicCommand(rawCommand = null) {
       nested.source,
       nested.engine,
       nested['平台'],
-      nested['来源']
+      nested['来源'],
+      rawTrack?.provider,
+      rawTrack?.source
     ),
     ''
   );
+  const trackTitle = firstText(rawTrack?.title, rawTrack?.name);
+  const trackArtist = firstText(rawTrack?.artist, rawTrack?.artistName, textList(rawTrack?.artists));
+  const query = sanitizeLive2DMusicQuery(
+    musicQueryFromParts(source, nested) ||
+    [trackTitle, trackArtist].map(asText).filter(Boolean).join(' ')
+  );
   const storefront = normalizeStorefront(source.storefront || source.storefrontId || nested.storefront || nested.storefrontId, '');
-  const requestedBy = firstText(source.requestedBy, source.by, source.user, source.viewer, nested.requestedBy, nested.by, nested.user, nested.viewer);
   const removeId = firstText(source.removeId, source.queueId, source.uid, nested.removeId, nested.queueId, nested.uid);
+  const rawRequestIndex = source.requestIndex ??
+    source.request_index ??
+    nested.requestIndex ??
+    nested.request_index;
+  const requestIndex = Number.isFinite(Number(rawRequestIndex)) && Number(rawRequestIndex) > 0
+    ? Math.round(Number(rawRequestIndex))
+    : 0;
+  const candidate = rawTrack
+    ? normalizeMusicCandidate({
+        provider,
+        songId,
+        url,
+        title: trackTitle,
+        artist: trackArtist,
+        album: firstText(rawTrack.album, rawTrack.albumName),
+        artworkUrl: firstText(rawTrack.artworkUrl, rawTrack.albumCoverUrl, rawTrack.coverUrl),
+        durationMs: rawTrack.durationMs ?? rawTrack.duration,
+        query,
+        requestedBy
+      })
+    : null;
 
   if (['play', 'request', 'play_next', 'play_now'].includes(action) && !query && !songId && !url) return null;
   if (action === 'remove' && !removeId && !songId) return null;
@@ -290,8 +584,49 @@ export function normalizeLive2DMusicCommand(rawCommand = null) {
     url,
     storefront,
     requestedBy,
-    removeId
+    requestIndex: requestIndex || undefined,
+    removeId,
+    candidate
   });
+}
+
+export function reconcileLive2DMusicCommandWithAudience(rawCommand = null, audienceLines = []) {
+  const command = normalizeLive2DMusicCommand(rawCommand);
+  if (!command || !['play', 'request', 'play_next', 'play_now'].includes(command.action)) return command;
+  const lines = Array.isArray(audienceLines) ? audienceLines : [];
+  if (!lines.length) return null;
+
+  let trustedLine = null;
+  if (command.requestIndex >= 1 && command.requestIndex <= lines.length) {
+    trustedLine = lines[command.requestIndex - 1];
+  } else {
+    const inferredLines = lines
+      .map((line) => ({ line, command: inferLive2DMusicCommandFromText(line?.text || '') }))
+      .filter((item) => item.command?.query);
+    const compactQuery = compactMusicRequesterMatchText(command.query || '');
+    const exactMatches = compactQuery
+      ? inferredLines.filter((item) => (
+          compactMusicRequesterMatchText(item.command.query) === compactQuery
+        ))
+      : [];
+    if (exactMatches.length === 1) {
+      trustedLine = exactMatches[0].line;
+    } else if (inferredLines.length === 1) {
+      trustedLine = inferredLines[0].line;
+    }
+  }
+
+  const trustedCommand = inferLive2DMusicCommandFromText(trustedLine?.text || '');
+  if (!trustedCommand?.query) return null;
+  const reconciled = {
+    ...command,
+    action: trustedCommand.action === 'play_next' ? 'play_next' : 'request',
+    query: trustedCommand.query
+  };
+  delete reconciled.candidate;
+  delete reconciled.songId;
+  delete reconciled.url;
+  return reconciled;
 }
 
 function musicErrorMessage(error, fallback = 'Music failed') {
@@ -423,6 +758,9 @@ async function configureAppleMusic(settings = readRoomMusicSettings()) {
   if (!music) throw new Error('MusicKit did not create a player instance.');
   if (normalized.musicUserToken && music.musicUserToken !== normalized.musicUserToken) {
     music.musicUserToken = normalized.musicUserToken;
+  }
+  if (speechDuckingActive) {
+    writeAppleMusicVolume(music, Math.min(appleMusicBaseVolume, speechDuckVolume));
   }
   return { music, settings: normalized };
 }
@@ -570,6 +908,40 @@ async function searchNeteaseMusicSongs(query, settings) {
   })).filter((song) => song.songId || song.url);
 }
 
+export async function searchLive2DMusic(query, settings = readRoomMusicSettings(), options = {}) {
+  const term = asText(query);
+  if (!term) throw new Error('Music search query is empty.');
+
+  const provider = normalizeMusicProvider(options.provider || settings?.provider, LOCAL_MUSIC_PROVIDER);
+  const requestedLimit = Number(options.limit ?? settings?.searchLimit ?? DEFAULT_SEARCH_LIMIT);
+  const searchLimit = Math.max(1, Math.min(50, Number.isFinite(requestedLimit) ? Math.round(requestedLimit) : DEFAULT_SEARCH_LIMIT));
+  const normalizedSettings = normalizeRoomMusicSettings({
+    ...settings,
+    provider,
+    searchLimit
+  });
+
+  let tracks = [];
+  if (provider === LOCAL_MUSIC_PROVIDER) {
+    tracks = await searchLocalMusicSongs(term, normalizedSettings);
+  } else if (provider === NETEASE_MUSIC_PROVIDER) {
+    tracks = await searchNeteaseMusicSongs(term, normalizedSettings);
+  } else {
+    tracks = await searchAppleMusicSongs(
+      term,
+      normalizedSettings,
+      normalizedSettings.musicUserToken
+    );
+  }
+
+  return {
+    query: term,
+    provider,
+    tracks: tracks.slice(0, searchLimit),
+    total: tracks.length
+  };
+}
+
 async function resolveNeteasePlayableCandidate(candidate, settings) {
   const sourceCandidate = normalizeMusicCandidate(candidate, {
     provider: NETEASE_MUSIC_PROVIDER
@@ -613,6 +985,10 @@ function ensureLocalAudio() {
 
   localAudio = new Audio();
   localAudio.preload = 'auto';
+  if (speechDuckingActive) {
+    localMusicBaseVolume = clampVolume(localAudio.volume, localMusicBaseVolume);
+    localAudio.volume = Math.min(localMusicBaseVolume, speechDuckVolume);
+  }
   localAudio.addEventListener('ended', () => {
     if (musicWarmupActive) return;
     const settings = readRoomMusicSettings();
@@ -636,6 +1012,7 @@ function ensureLocalAudio() {
     updateLive2DMusicCurrent({ durationMs });
   });
   localAudio.addEventListener('error', () => {
+    if (musicWarmupActive) return;
     const code = localAudio?.error?.code || 0;
     const current = readLive2DMusicQueueState().current;
     const provider = current?.provider || readRoomMusicSettings().provider || LOCAL_MUSIC_PROVIDER;
@@ -644,8 +1021,54 @@ function ensureLocalAudio() {
       provider,
       message: `Music audio playback failed${code ? ` (${code})` : ''}.`
     }, provider);
+    if (current && (provider === LOCAL_MUSIC_PROVIDER || provider === NETEASE_MUSIC_PROVIDER)) {
+      startLocalAudioRecovery(provider, current);
+    }
   });
   return localAudio;
+}
+
+function resetLocalAudioSource() {
+  if (!localAudio) return;
+  localAudio.pause();
+  localAudio.removeAttribute('src');
+  localAudio.load?.();
+}
+
+async function waitForLocalAudioRecovery() {
+  if (!localAudioRecoveryPromise) return;
+  await localAudioRecoveryPromise;
+}
+
+function startLocalAudioRecovery(provider, failedCurrent) {
+  if (localAudioRecoveryPromise) return localAudioRecoveryPromise;
+  const failedToken = failedCurrent?.playbackToken || '';
+  const task = Promise.resolve().then(async () => {
+    const latestCurrent = readLive2DMusicQueueState().current;
+    if (!latestCurrent || (failedToken && latestCurrent.playbackToken !== failedToken)) return null;
+    publishMusicDebug('music-auto-recover', {
+      action: 'audio-error-next',
+      provider,
+      songId: latestCurrent.songId,
+      title: latestCurrent.title
+    }, provider);
+    const settings = { ...readRoomMusicSettings(), provider };
+    return provider === NETEASE_MUSIC_PROVIDER
+      ? playNextNeteaseMusic(settings)
+      : playNextLocalMusic(settings);
+  }).catch((error) => {
+    publishMusicDebug('music-error', {
+      action: 'audio-error-next',
+      provider,
+      message: musicErrorMessage(error)
+    }, provider);
+    return null;
+  });
+  localAudioRecoveryPromise = task;
+  task.finally(() => {
+    if (localAudioRecoveryPromise === task) localAudioRecoveryPromise = null;
+  });
+  return task;
 }
 
 export async function warmupLive2DMusicPlayback() {
@@ -801,12 +1224,13 @@ function pickKnownMusicCandidate(command, settings) {
 }
 
 async function resolveAppleMusicCandidate(command, settings, userToken = '') {
-  if (command.songId || command.url) {
+  if (command.candidate || command.songId || command.url) {
     return normalizeMusicCandidate({
+      ...(command.candidate || {}),
       provider: 'apple-music',
-      songId: command.songId,
-      url: command.url,
-      title: command.songId || command.url,
+      songId: command.songId || command.candidate?.songId,
+      url: command.url || command.candidate?.url,
+      title: command.candidate?.title || command.query || command.songId || command.url,
       query: command.query,
       storefront: command.storefront || settings.storefront,
       requestedBy: command.requestedBy
@@ -957,26 +1381,41 @@ async function playLocalMusicCandidate(candidate, settings) {
 }
 
 async function playNextLocalMusic(settings) {
-  const { candidate, state } = dequeueNextLive2DMusicCandidate();
-  if (!candidate) {
-    if (localAudio) {
-      localAudio.pause();
-      localAudio.removeAttribute('src');
-      localAudio.load?.();
+  resetLocalAudioSource();
+  let state = clearLive2DMusicCurrent();
+  while (true) {
+    const next = dequeueNextLive2DMusicCandidate(state);
+    const candidate = next.candidate;
+    state = next.state;
+    if (!candidate) {
+      clearLive2DMusicCurrent(state);
+      return { status: 'ended', provider: LOCAL_MUSIC_PROVIDER, queueLength: 0 };
     }
-    clearLive2DMusicCurrent(state);
-    return { status: 'ended', provider: LOCAL_MUSIC_PROVIDER, queueLength: 0 };
+    try {
+      return await playLocalMusicCandidate(candidate, settings);
+    } catch (error) {
+      resetLocalAudioSource();
+      state = clearLive2DMusicCurrent(readLive2DMusicQueueState());
+      publishMusicDebug('music-queue-item-skipped', {
+        action: 'auto-next',
+        provider: LOCAL_MUSIC_PROVIDER,
+        songId: candidate.songId,
+        title: candidate.title,
+        message: musicErrorMessage(error)
+      }, LOCAL_MUSIC_PROVIDER);
+      if (!state.queue.length) throw error;
+    }
   }
-  return playLocalMusicCandidate(candidate, settings);
 }
 
 async function resolveLocalMusicCandidate(command, settings) {
-  if (command.songId || command.url) {
+  if (command.candidate || command.songId || command.url) {
     return normalizeMusicCandidate({
+      ...(command.candidate || {}),
       provider: LOCAL_MUSIC_PROVIDER,
-      songId: command.songId,
-      url: command.url || localMusicFileUrl(command.songId),
-      title: command.query || command.songId || command.url,
+      songId: command.songId || command.candidate?.songId,
+      url: command.url || command.candidate?.url || localMusicFileUrl(command.songId || command.candidate?.songId),
+      title: command.candidate?.title || command.query || command.songId || command.url,
       query: command.query,
       requestedBy: command.requestedBy
     });
@@ -1019,6 +1458,7 @@ async function resolveLocalMusicCandidate(command, settings) {
 
 async function requestLocalMusic(command, settings) {
   const candidate = await resolveLocalMusicCandidate(command, settings);
+  await waitForLocalAudioRecovery();
   let state = reconcileBrowserMusicCurrent(readLive2DMusicQueueState(), LOCAL_MUSIC_PROVIDER);
   const mode = command.action === 'play_next' ? 'next' : command.action === 'play_now' ? 'immediate' : 'append';
 
@@ -1123,26 +1563,41 @@ async function playNeteaseMusicCandidate(candidate, settings) {
 }
 
 async function playNextNeteaseMusic(settings) {
-  const { candidate, state } = dequeueNextLive2DMusicCandidate();
-  if (!candidate) {
-    if (localAudio) {
-      localAudio.pause();
-      localAudio.removeAttribute('src');
-      localAudio.load?.();
+  resetLocalAudioSource();
+  let state = clearLive2DMusicCurrent();
+  while (true) {
+    const next = dequeueNextLive2DMusicCandidate(state);
+    const candidate = next.candidate;
+    state = next.state;
+    if (!candidate) {
+      clearLive2DMusicCurrent(state);
+      return { status: 'ended', provider: NETEASE_MUSIC_PROVIDER, queueLength: 0 };
     }
-    clearLive2DMusicCurrent(state);
-    return { status: 'ended', provider: NETEASE_MUSIC_PROVIDER, queueLength: 0 };
+    try {
+      return await playNeteaseMusicCandidate(candidate, settings);
+    } catch (error) {
+      resetLocalAudioSource();
+      state = clearLive2DMusicCurrent(readLive2DMusicQueueState());
+      publishMusicDebug('music-queue-item-skipped', {
+        action: 'auto-next',
+        provider: NETEASE_MUSIC_PROVIDER,
+        songId: candidate.songId,
+        title: candidate.title,
+        message: musicErrorMessage(error)
+      }, NETEASE_MUSIC_PROVIDER);
+      if (!state.queue.length) throw error;
+    }
   }
-  return playNeteaseMusicCandidate(candidate, settings);
 }
 
 async function resolveNeteaseMusicCandidate(command, settings) {
-  if (command.songId || command.url) {
+  if (command.candidate || command.songId || command.url) {
     return normalizeMusicCandidate({
+      ...(command.candidate || {}),
       provider: NETEASE_MUSIC_PROVIDER,
-      songId: command.songId,
-      url: command.url,
-      title: command.query || command.songId || command.url,
+      songId: command.songId || command.candidate?.songId,
+      url: command.url || command.candidate?.url,
+      title: command.candidate?.title || command.query || command.songId || command.url,
       query: command.query,
       requestedBy: command.requestedBy
     });
@@ -1173,6 +1628,7 @@ async function resolveNeteaseMusicCandidate(command, settings) {
 
 async function requestNeteaseMusic(command, settings) {
   const candidate = await resolveNeteaseMusicCandidate(command, settings);
+  await waitForLocalAudioRecovery();
   let state = reconcileBrowserMusicCurrent(readLive2DMusicQueueState(), NETEASE_MUSIC_PROVIDER);
   const mode = command.action === 'play_next' ? 'next' : command.action === 'play_now' ? 'immediate' : 'append';
 
