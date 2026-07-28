@@ -7,6 +7,7 @@ using System.IO;
 using System.Net;
 using System.Net.Sockets;
 using System.Runtime.InteropServices;
+using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
 using System.Windows.Forms;
@@ -400,6 +401,12 @@ internal sealed class LocalStudioServer : IDisposable
                 return;
             }
 
+            if (method == "POST" && string.Equals(path, "/api/bilibili/connect-info", StringComparison.OrdinalIgnoreCase))
+            {
+                WriteApiResponse(stream, DesktopApiProxy.BilibiliConnectInfo(request.Body));
+                return;
+            }
+
             if ((method == "GET" || method == "HEAD") && string.Equals(path, "/api/live2d/items", StringComparison.OrdinalIgnoreCase))
             {
                 WriteApiResponse(stream, DesktopApiProxy.Live2DItems());
@@ -451,6 +458,30 @@ internal sealed class LocalStudioServer : IDisposable
             if (method == "POST" && string.Equals(path, "/api/music/netease/managed/status", StringComparison.OrdinalIgnoreCase))
             {
                 WriteApiResponse(stream, DesktopApiProxy.NeteaseMusicManagedStatus(request.Body));
+                return;
+            }
+
+            if (method == "POST" && string.Equals(path, "/api/music/netease/account", StringComparison.OrdinalIgnoreCase))
+            {
+                WriteApiResponse(stream, DesktopApiProxy.NeteaseMusicAccount(request.Body));
+                return;
+            }
+
+            if (method == "POST" && string.Equals(path, "/api/music/netease/login/qr/create", StringComparison.OrdinalIgnoreCase))
+            {
+                WriteApiResponse(stream, DesktopApiProxy.NeteaseMusicQrCreate(request.Body));
+                return;
+            }
+
+            if (method == "POST" && string.Equals(path, "/api/music/netease/login/qr/check", StringComparison.OrdinalIgnoreCase))
+            {
+                WriteApiResponse(stream, DesktopApiProxy.NeteaseMusicQrCheck(request.Body));
+                return;
+            }
+
+            if (method == "POST" && string.Equals(path, "/api/music/netease/logout", StringComparison.OrdinalIgnoreCase))
+            {
+                WriteApiResponse(stream, DesktopApiProxy.NeteaseMusicLogout());
                 return;
             }
 
@@ -841,6 +872,17 @@ internal sealed class StudioApiResponse
     public byte[] Body;
 }
 
+internal sealed class BilibiliApiException : InvalidOperationException
+{
+    public int Code { get; private set; }
+
+    public BilibiliApiException(int code, string message)
+        : base(message)
+    {
+        Code = code;
+    }
+}
+
 internal static class DesktopApiProxy
 {
     private static readonly JavaScriptSerializer Json = new JavaScriptSerializer { MaxJsonLength = int.MaxValue };
@@ -850,11 +892,15 @@ internal static class DesktopApiProxy
     private const int MaxMemorySearchFiles = 800;
     private const int DefaultLocalMusicSearchLimit = 25;
     private const int DefaultLocalMusicMaxScanFiles = 3000;
-    private const int NeteaseMusicApiEnhancedPort = 3302;
+    private const int NeteaseMusicApiLogicalPort = 3302;
     private const string DefaultNeteaseMusicApiUrl = "http://127.0.0.1:3302";
     private const string DefaultNeteaseMusicQualityLevel = "exhigh";
     private const int DefaultNeteaseMusicBitrate = 320000;
     private const int NeteaseMusicStreamTicketTtlSeconds = 1800;
+    private const int NeteaseMusicApiRequestTimeoutMs = 8000;
+    private const int NeteaseMusicResolveRequestTimeoutMs = 4500;
+    private const string NeteaseMusicAccountRelativePath = "YachiyoLive2DStudio\\music\\netease-account.dat";
+    private const string NeteaseMusicAccountEntropy = "YachiyoLive2DStudio.NetEase.Account.v1";
     private const string MemoryIndexRelativePath = ".yachiyo-index/memory-index.json";
     private const string DisabledMemoryRelativePath = ".yachiyo-index/disabled-memory.json";
     private const int MemoryDataServicePort = 3299;
@@ -865,6 +911,7 @@ internal static class DesktopApiProxy
     private static Process memoryDataServiceProcess;
     private static Process asrServiceProcess;
     private static Process neteaseMusicApiServiceProcess;
+    private static int neteaseMusicApiServicePort;
     private static readonly object NeteaseMusicTicketLock = new object();
     private static readonly Dictionary<string, NeteaseMusicStreamTicket> NeteaseMusicStreamTickets =
         new Dictionary<string, NeteaseMusicStreamTicket>(StringComparer.OrdinalIgnoreCase);
@@ -998,6 +1045,7 @@ internal static class DesktopApiProxy
         {
             var process = neteaseMusicApiServiceProcess;
             neteaseMusicApiServiceProcess = null;
+            neteaseMusicApiServicePort = 0;
             if (process == null) return;
             try
             {
@@ -1065,6 +1113,210 @@ internal static class DesktopApiProxy
         {
             return JsonError(500, ex.Message);
         }
+    }
+
+    public static StudioApiResponse BilibiliConnectInfo(byte[] body)
+    {
+        try
+        {
+            var input = ParseObject(body);
+            var requestedRoomId = GetInt(input, "roomId");
+            if (requestedRoomId <= 0)
+            {
+                return JsonError(400, "请填写有效的 B站直播间 ID");
+            }
+
+            var cookie = GetString(input, "cookie");
+            var room = GetJson(
+                "https://api.live.bilibili.com/room/v1/Room/room_init?id=" + requestedRoomId,
+                BilibiliHeaders(requestedRoomId, cookie));
+            EnsureBilibiliSuccess(room, "解析 B站直播间失败");
+            var roomData = GetObject(room, "data") ?? new Dictionary<string, object>();
+            var actualRoomId = GetInt(roomData, "room_id");
+            if (actualRoomId <= 0)
+            {
+                throw new InvalidOperationException("B站没有返回有效的真实直播间 ID");
+            }
+
+            var headers = BilibiliHeaders(actualRoomId, cookie);
+            var authenticatedUid = 0;
+            int.TryParse(ReadCookieValue(cookie, "DedeUserID"), out authenticatedUid);
+            var canAuthenticate = authenticatedUid > 0 &&
+                !string.IsNullOrWhiteSpace(ReadCookieValue(cookie, "SESSDATA"));
+            var authMode = "anonymous";
+            var authWarning = string.Empty;
+            var authFailureStage = string.Empty;
+            var authFailureCode = 0;
+            Dictionary<string, object> danmaku = null;
+            if (canAuthenticate)
+            {
+                var authProbeStage = "nav";
+                try
+                {
+                    var nav = GetJson("https://api.bilibili.com/x/web-interface/nav", headers);
+                    EnsureBilibiliSuccess(nav, "获取 B站 WBI 签名密钥失败");
+                    authProbeStage = "wbi-sign";
+                    var wbi = GetObject(GetObject(nav, "data"), "wbi_img") ?? new Dictionary<string, object>();
+                    var imgKey = BilibiliWbiKey(GetString(wbi, "img_url"));
+                    var subKey = BilibiliWbiKey(GetString(wbi, "sub_url"));
+                    var signedQuery = SignBilibiliWbiQuery(actualRoomId, imgKey, subKey);
+                    authProbeStage = "danmaku-info";
+                    danmaku = GetJson(
+                        "https://api.live.bilibili.com/xlive/web-room/v1/index/getDanmuInfo?" + signedQuery,
+                        headers);
+                    EnsureBilibiliSuccess(danmaku, "获取 B站认证弹幕配置失败");
+                    authMode = "authenticated";
+                }
+                catch (Exception ex)
+                {
+                    danmaku = null;
+                    authFailureStage = authProbeStage;
+                    var apiError = ex as BilibiliApiException;
+                    authFailureCode = apiError == null ? 0 : apiError.Code;
+                    authWarning = "登录态已失效或认证接口暂不可用，已自动使用匿名模式；用户名可能被隐藏。";
+                }
+            }
+            else if (!string.IsNullOrWhiteSpace(cookie))
+            {
+                authWarning = "Cookie 缺少有效的 SESSDATA 或 DedeUserID，已使用匿名模式；用户名可能被隐藏。";
+            }
+            if (danmaku == null)
+            {
+                danmaku = GetJson(
+                    "https://api.live.bilibili.com/room/v1/Danmu/getConf?room_id=" + actualRoomId + "&platform=pc&player=web",
+                    headers);
+                EnsureBilibiliSuccess(danmaku, "获取 B站弹幕配置失败");
+            }
+            var connection = GetObject(danmaku, "data") ?? new Dictionary<string, object>();
+            var hostList = GetArray(connection, "host_server_list") ?? GetArray(connection, "host_list") ?? new object[0];
+            Dictionary<string, object> selectedHost = null;
+            foreach (var item in hostList)
+            {
+                var candidate = item as Dictionary<string, object>;
+                if (candidate == null || string.IsNullOrWhiteSpace(GetString(candidate, "host"))) continue;
+                if (selectedHost == null) selectedHost = candidate;
+                if (GetInt(candidate, "wss_port") > 0)
+                {
+                    selectedHost = candidate;
+                    break;
+                }
+            }
+
+            var token = GetString(connection, "token");
+            var host = selectedHost == null ? GetString(connection, "host") : GetString(selectedHost, "host");
+            var port = selectedHost == null ? 443 : GetInt(selectedHost, "wss_port");
+            if (port <= 0) port = 443;
+            if (string.IsNullOrWhiteSpace(token) || string.IsNullOrWhiteSpace(host))
+            {
+                throw new InvalidOperationException("B站没有返回可用的弹幕服务器或临时 Key");
+            }
+
+            var buvid = ReadCookieValue(cookie, "buvid3");
+            if (string.IsNullOrWhiteSpace(buvid))
+            {
+                var fingerprint = GetJson("https://api.bilibili.com/x/frontend/finger/spi", headers);
+                EnsureBilibiliSuccess(fingerprint, "获取 B站匿名身份失败");
+                buvid = GetString(GetObject(fingerprint, "data"), "b_3");
+            }
+            return JsonOk(new Dictionary<string, object>
+            {
+                { "success", true },
+                { "roomId", requestedRoomId },
+                { "actualRoomId", actualRoomId },
+                { "liveStatus", GetInt(roomData, "live_status") },
+                { "uid", authMode == "authenticated" ? authenticatedUid : 0 },
+                { "token", token },
+                { "buvid", buvid },
+                { "host", host },
+                { "port", port },
+                { "authMode", authMode },
+                { "userNamesComplete", authMode == "authenticated" },
+                { "authWarning", authWarning },
+                { "authFailureStage", authFailureStage },
+                { "authFailureCode", authFailureCode }
+            });
+        }
+        catch (Exception ex)
+        {
+            return JsonError(502, ex.Message);
+        }
+    }
+
+    private static Dictionary<string, string> BilibiliHeaders(int roomId, string cookie)
+    {
+        var headers = new Dictionary<string, string>
+        {
+            { "User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124 Safari/537.36" },
+            { "Referer", "https://live.bilibili.com/" + roomId },
+            { "Accept", "application/json, text/plain, */*" }
+        };
+        if (!string.IsNullOrWhiteSpace(cookie)) headers["Cookie"] = cookie.Trim();
+        return headers;
+    }
+
+    private static string BilibiliWbiKey(string url)
+    {
+        if (string.IsNullOrWhiteSpace(url)) return string.Empty;
+        var slash = url.LastIndexOf('/');
+        var fileName = slash >= 0 ? url.Substring(slash + 1) : url;
+        var dot = fileName.LastIndexOf('.');
+        return dot > 0 ? fileName.Substring(0, dot) : fileName;
+    }
+
+    private static string SignBilibiliWbiQuery(int roomId, string imgKey, string subKey)
+    {
+        var permutation = new[]
+        {
+            46, 47, 18, 2, 53, 8, 23, 32, 15, 50, 10, 31, 58, 3, 45, 35,
+            27, 43, 5, 49, 33, 9, 42, 19, 29, 28, 14, 39, 12, 38, 41, 13,
+            37, 48, 7, 16, 24, 55, 40, 61, 26, 17, 0, 1, 60, 51, 30, 4,
+            22, 25, 54, 21, 56, 59, 6, 63, 57, 62, 11, 36, 20, 34, 44, 52
+        };
+        var source = (imgKey ?? string.Empty) + (subKey ?? string.Empty);
+        if (source.Length < 64)
+        {
+            throw new InvalidOperationException("B站没有返回有效的 WBI 签名密钥");
+        }
+        var mixin = new StringBuilder(32);
+        foreach (var index in permutation)
+        {
+            mixin.Append(source[index]);
+            if (mixin.Length >= 32) break;
+        }
+        var epoch = new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+        var timestamp = (long)(DateTime.UtcNow - epoch).TotalSeconds;
+        var query = "id=" + roomId + "&type=0&wts=" + timestamp;
+        byte[] hash;
+        using (var md5 = MD5.Create())
+        {
+            hash = md5.ComputeHash(Encoding.UTF8.GetBytes(query + mixin));
+        }
+        var signature = new StringBuilder(hash.Length * 2);
+        foreach (var value in hash) signature.Append(value.ToString("x2"));
+        return query + "&w_rid=" + signature;
+    }
+
+    private static void EnsureBilibiliSuccess(Dictionary<string, object> payload, string context)
+    {
+        var code = GetInt(payload, "code");
+        if (code == 0) return;
+        var message = FirstNonEmpty(GetString(payload, "message"), GetString(payload, "msg"), "code " + code);
+        throw new BilibiliApiException(code, context + "：" + message);
+    }
+
+    private static string ReadCookieValue(string cookie, string name)
+    {
+        if (string.IsNullOrWhiteSpace(cookie) || string.IsNullOrWhiteSpace(name)) return string.Empty;
+        var prefix = name + "=";
+        foreach (var part in cookie.Split(';'))
+        {
+            var value = part.Trim();
+            if (value.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            {
+                return value.Substring(prefix.Length);
+            }
+        }
+        return string.Empty;
     }
 
     public static StudioApiResponse Live2DItems()
@@ -1537,13 +1789,50 @@ internal static class DesktopApiProxy
 
             var limit = (int)Math.Round(GetDouble(input, "limit", GetDouble(input, "searchLimit", DefaultLocalMusicSearchLimit, 1, 50), 1, 50));
             var apiUrl = NormalizeNeteaseMusicApiUrl(input);
-            var requestUrl = BuildNeteaseApiUrl(apiUrl, "/search", new Dictionary<string, string>
+            var headers = NeteaseMusicHeaders(input);
+            Dictionary<string, object> data = null;
+            Exception lastError = null;
+
+            try
             {
-                { "keywords", query },
-                { "limit", limit.ToString() },
-                { "type", "1" }
-            });
-            var data = GetJson(requestUrl, NeteaseMusicHeaders(input));
+                data = GetJson(BuildNeteaseApiUrl("https://music.163.com", "/api/cloudsearch/pc", new Dictionary<string, string>
+                {
+                    { "s", query },
+                    { "type", "1" },
+                    { "limit", limit.ToString() },
+                    { "offset", "0" }
+                }), headers, NeteaseMusicApiRequestTimeoutMs);
+            }
+            catch (Exception ex)
+            {
+                lastError = ex;
+            }
+
+            if (!NeteaseMusicSearchHasSongs(data))
+            {
+                foreach (var route in new[] { "/cloudsearch", "/search" })
+                {
+                    try
+                    {
+                        data = GetJson(BuildNeteaseApiUrl(apiUrl, route, new Dictionary<string, string>
+                        {
+                            { "keywords", query },
+                            { "limit", limit.ToString() },
+                            { "type", "1" }
+                        }), headers, NeteaseMusicApiRequestTimeoutMs);
+                        if (NeteaseMusicSearchHasSongs(data)) break;
+                    }
+                    catch (Exception ex)
+                    {
+                        lastError = ex;
+                    }
+                }
+            }
+
+            if (data == null && lastError != null)
+            {
+                throw lastError;
+            }
             var result = GetObject(data, "result");
             var songs = GetArray(result, "songs") ?? GetArray(data, "songs") ?? new object[0];
             var candidates = new List<object>();
@@ -1614,7 +1903,7 @@ internal static class DesktopApiProxy
                 { "album", FirstNonEmpty(GetString(candidate, "album"), GetString(candidate, "albumName"), string.Empty) },
                 { "artworkUrl", GetString(candidate, "artworkUrl") },
                 { "durationMs", GetInt(candidate, "durationMs") },
-                { "quality", level },
+                { "quality", FirstNonEmpty(GetString(detail, "resolvedLevel"), level, DefaultNeteaseMusicQualityLevel) },
                 { "bitrate", GetInt(detail, "br") },
                 { "expiresInMs", NeteaseMusicStreamTicketTtlSeconds * 1000 }
             };
@@ -1696,6 +1985,211 @@ internal static class DesktopApiProxy
                 { "cookiePath", cookiePath },
                 { "cookiePathExists", cookiePathExists },
                 { "cookieConfigured", !string.IsNullOrWhiteSpace(ReadNeteaseCookie(input)) }
+            });
+        }
+        catch (Exception ex)
+        {
+            return JsonError(500, ex.Message);
+        }
+    }
+
+    public static StudioApiResponse NeteaseMusicAccount(byte[] body)
+    {
+        try
+        {
+            var input = ParseObject(body);
+            var storedCookie = ReadStoredNeteaseCookie();
+            var cookie = !string.IsNullOrWhiteSpace(storedCookie) ? storedCookie : ReadManualNeteaseCookie(input);
+            if (string.IsNullOrWhiteSpace(cookie))
+            {
+                return JsonOk(new Dictionary<string, object>
+                {
+                    { "success", true },
+                    { "provider", "netease-cloud" },
+                    { "loggedIn", false },
+                    { "source", "none" },
+                    { "account", null }
+                });
+            }
+
+            var account = FetchNeteaseMusicAccount(cookie);
+            var loggedIn = GetBoolean(account, "loggedIn", false);
+            return JsonOk(new Dictionary<string, object>
+            {
+                { "success", true },
+                { "provider", "netease-cloud" },
+                { "loggedIn", loggedIn },
+                { "source", !string.IsNullOrWhiteSpace(storedCookie) ? "secure-storage" : "manual" },
+                { "account", loggedIn ? account : null }
+            });
+        }
+        catch (WebException ex)
+        {
+            return JsonOk(new Dictionary<string, object>
+            {
+                { "success", true },
+                { "provider", "netease-cloud" },
+                { "loggedIn", false },
+                { "source", HasStoredNeteaseCookie() ? "secure-storage" : "manual" },
+                { "account", null },
+                { "message", "NetEase account status request failed: " + LimitText(ReadWebException(ex), 300) }
+            });
+        }
+        catch (Exception ex)
+        {
+            return JsonError(500, ex.Message);
+        }
+    }
+
+    public static StudioApiResponse NeteaseMusicQrCreate(byte[] body)
+    {
+        try
+        {
+            var input = ParseObject(body);
+            var apiUrl = NormalizeNeteaseMusicApiUrl(input);
+            var timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds().ToString();
+            var keyResponse = GetJson(BuildNeteaseApiUrl(apiUrl, "/login/qr/key", new Dictionary<string, string>
+            {
+                { "timestamp", timestamp },
+                { "ua", "pc" }
+            }), NeteaseMusicHeaders(input), NeteaseMusicApiRequestTimeoutMs);
+            var keyData = GetObject(keyResponse, "data") ?? new Dictionary<string, object>();
+            var key = GetString(keyData, "unikey");
+            if (string.IsNullOrWhiteSpace(key))
+            {
+                return JsonError(502, "NetEase Cloud Music did not return a QR login key.");
+            }
+
+            var qrResponse = GetJson(BuildNeteaseApiUrl(apiUrl, "/login/qr/create", new Dictionary<string, string>
+            {
+                { "key", key },
+                { "qrimg", "true" },
+                { "platform", "web" },
+                { "timestamp", timestamp },
+                { "ua", "pc" }
+            }), NeteaseMusicHeaders(input), NeteaseMusicApiRequestTimeoutMs);
+            var qrData = GetObject(qrResponse, "data") ?? new Dictionary<string, object>();
+            var qrUrl = GetString(qrData, "qrurl");
+            var qrImage = GetString(qrData, "qrimg");
+            if (string.IsNullOrWhiteSpace(qrUrl) && string.IsNullOrWhiteSpace(qrImage))
+            {
+                return JsonError(502, "NetEase Cloud Music did not return a QR code.");
+            }
+
+            return JsonOk(new Dictionary<string, object>
+            {
+                { "success", true },
+                { "provider", "netease-cloud" },
+                { "key", key },
+                { "qrUrl", qrUrl },
+                { "qrImage", qrImage },
+                { "status", 801 },
+                { "message", "请使用网易云音乐 App 扫码登录" }
+            });
+        }
+        catch (WebException ex)
+        {
+            return JsonError(GetStatusCode(ex, 502), "NetEase QR login creation failed: " + LimitText(ReadWebException(ex), 500));
+        }
+        catch (Exception ex)
+        {
+            return JsonError(500, ex.Message);
+        }
+    }
+
+    public static StudioApiResponse NeteaseMusicQrCheck(byte[] body)
+    {
+        try
+        {
+            var input = ParseObject(body);
+            var key = GetString(input, "key");
+            if (string.IsNullOrWhiteSpace(key) || key.Length < 8 || key.Length > 512 ||
+                !RegexContains(key, @"^[A-Za-z0-9_-]+$"))
+            {
+                return JsonError(400, "NetEase QR login key is invalid.");
+            }
+
+            var apiUrl = NormalizeNeteaseMusicApiUrl(input);
+            var response = GetJson(BuildNeteaseApiUrl(apiUrl, "/login/qr/check", new Dictionary<string, string>
+            {
+                { "key", key },
+                { "timestamp", DateTimeOffset.UtcNow.ToUnixTimeMilliseconds().ToString() },
+                { "ua", "pc" }
+            }), NeteaseMusicHeaders(input), NeteaseMusicApiRequestTimeoutMs);
+            var status = GetInt(response, "code");
+            var message = FirstNonEmpty(GetString(response, "message"), GetString(response, "msg"), NeteaseQrStatusMessage(status));
+
+            if (status != 803)
+            {
+                return JsonOk(new Dictionary<string, object>
+                {
+                    { "success", true },
+                    { "provider", "netease-cloud" },
+                    { "status", status },
+                    { "loggedIn", false },
+                    { "message", message }
+                });
+            }
+
+            var cookie = GetString(response, "cookie");
+            if (!IsValidNeteaseLoginCookie(cookie))
+            {
+                return JsonError(502, "NetEase QR login succeeded but no valid MUSIC_U Cookie was returned.");
+            }
+            SaveStoredNeteaseCookie(cookie);
+
+            Dictionary<string, object> account;
+            try
+            {
+                account = FetchNeteaseMusicAccount(cookie);
+            }
+            catch
+            {
+                account = new Dictionary<string, object>
+                {
+                    { "provider", "netease-cloud" },
+                    { "loggedIn", true },
+                    { "userId", string.Empty },
+                    { "displayName", "网易云账号" },
+                    { "avatarUrl", string.Empty }
+                };
+            }
+
+            return JsonOk(new Dictionary<string, object>
+            {
+                { "success", true },
+                { "provider", "netease-cloud" },
+                { "status", 803 },
+                { "loggedIn", true },
+                { "source", "secure-storage" },
+                { "account", account },
+                { "message", "网易云音乐登录成功" }
+            });
+        }
+        catch (WebException ex)
+        {
+            return JsonError(GetStatusCode(ex, 502), "NetEase QR login status request failed: " + LimitText(ReadWebException(ex), 500));
+        }
+        catch (Exception ex)
+        {
+            return JsonError(500, ex.Message);
+        }
+    }
+
+    public static StudioApiResponse NeteaseMusicLogout()
+    {
+        try
+        {
+            DeleteStoredNeteaseCookie();
+            lock (NeteaseMusicTicketLock)
+            {
+                NeteaseMusicStreamTickets.Clear();
+            }
+            return JsonOk(new Dictionary<string, object>
+            {
+                { "success", true },
+                { "provider", "netease-cloud" },
+                { "loggedIn", false }
             });
         }
         catch (Exception ex)
@@ -1973,6 +2467,7 @@ internal static class DesktopApiProxy
         if (IsManagedNeteaseMusicApiUrl(apiUrl))
         {
             EnsureNeteaseMusicApiServiceStarted();
+            return ManagedNeteaseMusicApiUrl();
         }
         return apiUrl;
     }
@@ -1983,7 +2478,18 @@ internal static class DesktopApiProxy
         return Uri.TryCreate(apiUrl, UriKind.Absolute, out parsed) &&
             parsed.Scheme == Uri.UriSchemeHttp &&
             IsLoopbackHost(parsed.Host) &&
-            parsed.Port == NeteaseMusicApiEnhancedPort;
+            (parsed.Port == NeteaseMusicApiLogicalPort ||
+             parsed.Port == 3000 ||
+             (neteaseMusicApiServicePort > 0 && parsed.Port == neteaseMusicApiServicePort));
+    }
+
+    private static string ManagedNeteaseMusicApiUrl()
+    {
+        if (neteaseMusicApiServicePort <= 0)
+        {
+            throw new InvalidOperationException("Managed NetEase Cloud Music API has not started.");
+        }
+        return "http://127.0.0.1:" + neteaseMusicApiServicePort;
     }
 
     private static string NormalizeNeteaseMusicQualityLevel(string value)
@@ -2022,6 +2528,12 @@ internal static class DesktopApiProxy
 
     private static string ReadNeteaseCookie(Dictionary<string, object> input)
     {
+        var storedCookie = ReadStoredNeteaseCookie();
+        return !string.IsNullOrWhiteSpace(storedCookie) ? storedCookie : ReadManualNeteaseCookie(input);
+    }
+
+    private static string ReadManualNeteaseCookie(Dictionary<string, object> input)
+    {
         var inlineCookie = GetString(input, "neteaseCookie");
         if (!string.IsNullOrWhiteSpace(inlineCookie)) return inlineCookie;
 
@@ -2045,6 +2557,106 @@ internal static class DesktopApiProxy
         }
     }
 
+    private static string NeteaseMusicAccountPath()
+    {
+        return Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            NeteaseMusicAccountRelativePath);
+    }
+
+    private static bool HasStoredNeteaseCookie()
+    {
+        try
+        {
+            return File.Exists(NeteaseMusicAccountPath());
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static string ReadStoredNeteaseCookie()
+    {
+        try
+        {
+            var path = NeteaseMusicAccountPath();
+            if (!File.Exists(path)) return string.Empty;
+            var encrypted = File.ReadAllBytes(path);
+            if (encrypted.Length == 0 || encrypted.Length > 256 * 1024) return string.Empty;
+            var entropy = Encoding.UTF8.GetBytes(NeteaseMusicAccountEntropy);
+            var plain = ProtectedData.Unprotect(encrypted, entropy, DataProtectionScope.CurrentUser);
+            var cookie = Encoding.UTF8.GetString(plain ?? new byte[0]).Trim();
+            return IsValidNeteaseLoginCookie(cookie) ? cookie : string.Empty;
+        }
+        catch
+        {
+            return string.Empty;
+        }
+    }
+
+    private static void SaveStoredNeteaseCookie(string cookie)
+    {
+        if (!IsValidNeteaseLoginCookie(cookie))
+        {
+            throw new InvalidOperationException("NetEase login Cookie is invalid.");
+        }
+        var path = NeteaseMusicAccountPath();
+        var directory = Path.GetDirectoryName(path);
+        if (!Directory.Exists(directory)) Directory.CreateDirectory(directory);
+        var entropy = Encoding.UTF8.GetBytes(NeteaseMusicAccountEntropy);
+        var plain = Encoding.UTF8.GetBytes(cookie.Trim());
+        var encrypted = ProtectedData.Protect(plain, entropy, DataProtectionScope.CurrentUser);
+        File.WriteAllBytes(path, encrypted);
+    }
+
+    private static void DeleteStoredNeteaseCookie()
+    {
+        var path = NeteaseMusicAccountPath();
+        if (File.Exists(path)) File.Delete(path);
+    }
+
+    private static bool IsValidNeteaseLoginCookie(string cookie)
+    {
+        return !string.IsNullOrWhiteSpace(cookie) &&
+            cookie.Length <= 128 * 1024 &&
+            RegexContains(cookie, @"(^|;\s*)MUSIC_U=[^;]+");
+    }
+
+    private static Dictionary<string, object> FetchNeteaseMusicAccount(string cookie)
+    {
+        var response = GetJson(
+            "https://music.163.com/api/nuser/account/get",
+            NeteaseMusicAudioHeaders(cookie),
+            NeteaseMusicApiRequestTimeoutMs);
+        var account = GetObject(response, "account") ?? new Dictionary<string, object>();
+        var profile = GetObject(response, "profile") ?? new Dictionary<string, object>();
+        var userId = FirstNonEmpty(GetString(profile, "userId"), GetString(account, "id"), string.Empty);
+        var displayName = FirstNonEmpty(GetString(profile, "nickname"), GetString(account, "userName"), string.Empty);
+        var avatarUrl = GetString(profile, "avatarUrl");
+        var loggedIn = !string.IsNullOrWhiteSpace(userId) || !string.IsNullOrWhiteSpace(displayName);
+        return new Dictionary<string, object>
+        {
+            { "provider", "netease-cloud" },
+            { "loggedIn", loggedIn },
+            { "userId", userId },
+            { "displayName", displayName },
+            { "avatarUrl", avatarUrl }
+        };
+    }
+
+    private static string NeteaseQrStatusMessage(int status)
+    {
+        switch (status)
+        {
+            case 800: return "二维码已过期，请重新生成";
+            case 801: return "等待扫码";
+            case 802: return "已扫码，请在手机上确认";
+            case 803: return "登录成功";
+            default: return "正在确认网易云登录状态";
+        }
+    }
+
     private static Dictionary<string, string> NeteaseMusicAudioHeaders(string cookie)
     {
         var headers = new Dictionary<string, string>
@@ -2059,9 +2671,9 @@ internal static class DesktopApiProxy
         return headers;
     }
 
-    private static Dictionary<string, object> GetJson(string url, Dictionary<string, string> headers)
+    private static Dictionary<string, object> GetJson(string url, Dictionary<string, string> headers, int timeoutMs = 120000)
     {
-        var provider = GetBytes(url, headers);
+        var provider = GetBytes(url, headers, timeoutMs);
         var text = Encoding.UTF8.GetString(provider.Body ?? new byte[0]);
         return DeserializeObject(text);
     }
@@ -2084,6 +2696,14 @@ internal static class DesktopApiProxy
             { "durationMs", durationMs },
             { "query", query }
         };
+    }
+
+    private static bool NeteaseMusicSearchHasSongs(Dictionary<string, object> data)
+    {
+        if (data == null) return false;
+        var result = GetObject(data, "result") ?? new Dictionary<string, object>();
+        var songs = GetArray(result, "songs") ?? GetArray(data, "songs");
+        return songs != null && songs.Length > 0;
     }
 
     private static string JoinNeteaseArtists(Dictionary<string, object> song)
@@ -2109,18 +2729,36 @@ internal static class DesktopApiProxy
         string unblockSource,
         Dictionary<string, string> headers)
     {
-        var v1Parameters = new Dictionary<string, string>
+        Exception lastError = null;
+        foreach (var fallbackLevel in NeteaseMusicQualityFallbacks(level))
         {
-            { "id", songId },
-            { "level", level }
-        };
-        if (unblock)
-        {
-            v1Parameters["unblock"] = "true";
-            if (!string.IsNullOrWhiteSpace(unblockSource)) v1Parameters["source"] = unblockSource.Trim();
+            try
+            {
+                var v1Parameters = new Dictionary<string, string>
+                {
+                    { "id", songId },
+                    { "level", fallbackLevel }
+                };
+                if (unblock)
+                {
+                    v1Parameters["unblock"] = "true";
+                    if (!string.IsNullOrWhiteSpace(unblockSource)) v1Parameters["source"] = unblockSource.Trim();
+                }
+                var detail = PickNeteaseMusicUrlDetail(GetJson(
+                    BuildNeteaseApiUrl(apiUrl, "/song/url/v1", v1Parameters),
+                    headers,
+                    NeteaseMusicResolveRequestTimeoutMs));
+                if (!string.IsNullOrWhiteSpace(GetString(detail, "url")))
+                {
+                    detail["resolvedLevel"] = fallbackLevel;
+                    return detail;
+                }
+            }
+            catch (Exception ex)
+            {
+                lastError = ex;
+            }
         }
-        var detail = PickNeteaseMusicUrlDetail(GetJson(BuildNeteaseApiUrl(apiUrl, "/song/url/v1", v1Parameters), headers));
-        if (!string.IsNullOrWhiteSpace(GetString(detail, "url"))) return detail;
 
         var legacyParameters = new Dictionary<string, string>
         {
@@ -2132,7 +2770,46 @@ internal static class DesktopApiProxy
             legacyParameters["unblock"] = "true";
             if (!string.IsNullOrWhiteSpace(unblockSource)) legacyParameters["source"] = unblockSource.Trim();
         }
-        return PickNeteaseMusicUrlDetail(GetJson(BuildNeteaseApiUrl(apiUrl, "/song/url", legacyParameters), headers));
+        try
+        {
+            var legacy = PickNeteaseMusicUrlDetail(GetJson(
+                BuildNeteaseApiUrl(apiUrl, "/song/url", legacyParameters),
+                headers,
+                NeteaseMusicResolveRequestTimeoutMs));
+            if (!string.IsNullOrWhiteSpace(GetString(legacy, "url")))
+            {
+                legacy["resolvedLevel"] = "legacy";
+            }
+            return legacy;
+        }
+        catch
+        {
+            if (lastError != null) throw lastError;
+            throw;
+        }
+    }
+
+    private static string[] NeteaseMusicQualityFallbacks(string level)
+    {
+        switch (NormalizeNeteaseMusicQualityLevel(level))
+        {
+            case "jymaster":
+                return new[] { "jymaster", "sky", "jyeffect", "hires", "lossless", "exhigh", "higher", "standard" };
+            case "sky":
+                return new[] { "sky", "jyeffect", "hires", "lossless", "exhigh", "higher", "standard" };
+            case "jyeffect":
+                return new[] { "jyeffect", "hires", "lossless", "exhigh", "higher", "standard" };
+            case "hires":
+                return new[] { "hires", "lossless", "exhigh", "higher", "standard" };
+            case "lossless":
+                return new[] { "lossless", "exhigh", "higher", "standard" };
+            case "exhigh":
+                return new[] { "exhigh", "higher", "standard" };
+            case "higher":
+                return new[] { "higher", "standard" };
+            default:
+                return new[] { "standard" };
+        }
     }
 
     private static Dictionary<string, object> PickNeteaseMusicUrlDetail(Dictionary<string, object> data)
@@ -2691,15 +3368,20 @@ internal static class DesktopApiProxy
 
     private static void EnsureNeteaseMusicApiServiceStarted()
     {
-        if (ProbeNeteaseMusicApiService()) return;
+        if (neteaseMusicApiServiceProcess != null &&
+            !neteaseMusicApiServiceProcess.HasExited &&
+            ProbeNeteaseMusicApiService()) return;
         lock (NeteaseMusicApiServiceLock)
         {
-            if (ProbeNeteaseMusicApiService()) return;
-            if (neteaseMusicApiServiceProcess != null && !neteaseMusicApiServiceProcess.HasExited)
+            if (neteaseMusicApiServiceProcess != null &&
+                !neteaseMusicApiServiceProcess.HasExited)
             {
+                if (ProbeNeteaseMusicApiService()) return;
                 WaitForNeteaseMusicApiService();
                 return;
             }
+            neteaseMusicApiServiceProcess = null;
+            neteaseMusicApiServicePort = 0;
 
             var nodeDir = Live2DStudioLauncher.FindNodeDirectory(repoRoot);
             if (string.IsNullOrWhiteSpace(nodeDir))
@@ -2718,21 +3400,41 @@ internal static class DesktopApiProxy
                 throw new InvalidOperationException("Managed NetEase Cloud Music API dependency is missing. Run npm install in the project once.");
             }
 
+            neteaseMusicApiServicePort = ReserveFreeLoopbackPort();
             var start = new ProcessStartInfo
             {
                 FileName = nodeExe,
-                Arguments = QuoteArgument(script) + " --port " + NeteaseMusicApiEnhancedPort + " --host 127.0.0.1 --repo-root " + QuoteArgument(repoRoot),
+                Arguments = QuoteArgument(script) + " --port " + neteaseMusicApiServicePort + " --host 127.0.0.1 --repo-root " + QuoteArgument(repoRoot),
                 WorkingDirectory = repoRoot,
                 UseShellExecute = false,
                 CreateNoWindow = true
             };
             start.EnvironmentVariables["YACHIYO_REPO_ROOT"] = repoRoot;
-            start.EnvironmentVariables["PORT"] = NeteaseMusicApiEnhancedPort.ToString();
+            start.EnvironmentVariables["PORT"] = neteaseMusicApiServicePort.ToString();
             start.EnvironmentVariables["HOST"] = "127.0.0.1";
             start.EnvironmentVariables["NODE_ENV"] = "production";
             start.EnvironmentVariables["CORS_ALLOW_ORIGIN"] = "*";
-            neteaseMusicApiServiceProcess = Process.Start(start);
-            WaitForNeteaseMusicApiService();
+            start.EnvironmentVariables["YACHIYO_MANAGED_INSTANCE"] = "live2d-studio";
+            try
+            {
+                neteaseMusicApiServiceProcess = Process.Start(start);
+                WaitForNeteaseMusicApiService();
+            }
+            catch
+            {
+                var failedProcess = neteaseMusicApiServiceProcess;
+                neteaseMusicApiServiceProcess = null;
+                neteaseMusicApiServicePort = 0;
+                try
+                {
+                    if (failedProcess != null && !failedProcess.HasExited) failedProcess.Kill();
+                }
+                catch
+                {
+                    // Best-effort cleanup after sidecar startup failure.
+                }
+                throw;
+            }
         }
     }
 
@@ -2752,20 +3454,42 @@ internal static class DesktopApiProxy
 
     private static bool ProbeNeteaseMusicApiService()
     {
+        if (neteaseMusicApiServicePort <= 0) return false;
         try
         {
-            var request = (HttpWebRequest)WebRequest.Create(DefaultNeteaseMusicApiUrl + "/healthz");
+            var request = (HttpWebRequest)WebRequest.Create(ManagedNeteaseMusicApiUrl() + "/healthz");
             request.Method = "GET";
             request.Timeout = 500;
             request.ReadWriteTimeout = 500;
             using (var response = (HttpWebResponse)request.GetResponse())
             {
-                return (int)response.StatusCode >= 200 && (int)response.StatusCode < 300;
+                if ((int)response.StatusCode < 200 || (int)response.StatusCode >= 300) return false;
+                using (var reader = new StreamReader(response.GetResponseStream() ?? Stream.Null, Encoding.UTF8))
+                {
+                    var text = reader.ReadToEnd();
+                    return text.IndexOf("\"instance\":\"live2d-studio\"", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                        text.IndexOf("\"instance\": \"live2d-studio\"", StringComparison.OrdinalIgnoreCase) >= 0;
+                }
             }
         }
         catch
         {
             return false;
+        }
+    }
+
+    private static int ReserveFreeLoopbackPort()
+    {
+        TcpListener listener = null;
+        try
+        {
+            listener = new TcpListener(IPAddress.Loopback, 0);
+            listener.Start();
+            return ((IPEndPoint)listener.LocalEndpoint).Port;
+        }
+        finally
+        {
+            if (listener != null) listener.Stop();
         }
     }
 
@@ -4804,13 +5528,13 @@ internal static class DesktopApiProxy
         return ReadProviderResponse((HttpWebResponse)request.GetResponse());
     }
 
-    private static ProviderBytes GetBytes(string url, Dictionary<string, string> headers)
+    private static ProviderBytes GetBytes(string url, Dictionary<string, string> headers, int timeoutMs = 120000)
     {
         var request = (HttpWebRequest)WebRequest.Create(url);
         request.Method = "GET";
         request.Accept = "*/*";
-        request.Timeout = 120000;
-        request.ReadWriteTimeout = 120000;
+        request.Timeout = timeoutMs;
+        request.ReadWriteTimeout = timeoutMs;
         AddHeaders(request, headers);
         return ReadProviderResponse((HttpWebResponse)request.GetResponse());
     }

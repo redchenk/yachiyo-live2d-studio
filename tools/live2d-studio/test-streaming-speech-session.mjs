@@ -34,6 +34,12 @@ const session = createLive2DStreamingSpeechSession({
 
 session.begin();
 session.queueLine();
+session.begin();
+assert.equal(
+  session.getState().queuedLines,
+  1,
+  'starting a pipelined turn must not reset lines still queued by the previous turn'
+);
 session.lineStarted({ durationMs: 640, emotion: 'happy' });
 assert.equal(events.at(-1).mode, 'speaking');
 assert.ok(events.at(-1).detail.holdMs >= streamingSpeechHoldMs(640));

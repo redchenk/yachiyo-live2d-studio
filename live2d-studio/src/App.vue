@@ -34,12 +34,12 @@ onUnmounted(() => {
 <template>
   <div class="studio-app-shell">
     <Live2DPage
-      v-if="activeView === 'live' || activeView === 'items'"
+      v-show="activeView === 'live' || activeView === 'items'"
       :item-editor-open="activeView === 'items'"
       @item-editor-close="activeView = 'live'"
     />
-    <BilibiliDanmakuPage v-else-if="activeView === 'danmaku'" />
-    <MusicTestPage v-else-if="activeView === 'music'" />
+    <BilibiliDanmakuPage v-if="activeView === 'danmaku'" />
+    <MusicTestPage v-if="activeView === 'music'" />
     <aside class="studio-left-rail" aria-label="Studio navigation">
       <div class="studio-rail-brand">
         <span>Y</span>

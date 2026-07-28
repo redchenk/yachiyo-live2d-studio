@@ -43,6 +43,8 @@ async function main() {
       ok: true,
       provider: 'netease-cloud',
       managed: true,
+      instance: process.env.YACHIYO_MANAGED_INSTANCE || 'standalone',
+      version: 2,
       port
     });
   });

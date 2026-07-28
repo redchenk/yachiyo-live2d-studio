@@ -253,7 +253,7 @@ function characterPoseResponseMs(key, pose) {
   }
   if (vertical) return key === 'bodyPosY' ? 300 : 240;
   if (key === 'browLeftY' || key === 'browRightY' || key === 'brows') return speakingLike ? 260 : 220;
-  if (key === 'eyeX' || key === 'eyeY') return speakingLike ? 170 : 190;
+  if (key === 'eyeX' || key === 'eyeY') return speakingLike ? 58 : 82;
   if (key === 'bodyX' || key === 'bodyZ' || key === 'bodyPosX') return speakingLike ? 240 : 210;
   if (key === 'faceX' || key === 'faceZ' || key === 'facePosX') return speakingLike ? 190 : 170;
   return 180;
@@ -508,16 +508,68 @@ function speakingGestureValue(state, at) {
   };
 }
 
+function deterministicUnit(index, seed, salt = 0) {
+  return Math.abs(Math.sin((Number(index) + 1) * 12.9898 + Number(seed) * 0.071 + salt * 37.719) * 43758.5453) % 1;
+}
+
+export function naturalLive2DMicroSaccade(now, options = {}) {
+  const at = Math.max(0, Number(now) || 0);
+  const seed = Number(options.seed) || 0;
+  const attention = clamp(options.attention, 0, 1, 0.5);
+  const mode = normalizeMode(options.mode);
+  const active = mode === 'speaking' || mode === 'acting' || mode === 'listening';
+  const periodMs = active ? 720 : 1040;
+  const shifted = at + deterministicUnit(0, seed, 1) * periodMs;
+  const cycle = Math.floor(shifted / periodMs);
+  const local = shifted - cycle * periodMs;
+  const durationMs = active ? 92 : 118;
+  if (local > durationMs) return { x: 0, y: 0 };
+
+  const progress = clamp(local / durationMs, 0, 1);
+  const envelope = Math.sin(Math.PI * progress);
+  const amplitude = (0.018 + attention * 0.035) * (active ? 1 : 0.72);
+  const x = (deterministicUnit(cycle, seed, 2) * 2 - 1) * amplitude * envelope;
+  const y = (deterministicUnit(cycle, seed, 3) * 2 - 1) * amplitude * 0.58 * envelope;
+  return { x, y };
+}
+
 function pickNextGazeTarget(state, now) {
   const seconds = now / 1000 + state.seed;
-  const active = state.mode === 'speaking' || state.mode === 'acting';
-  const sideGlance = active && Math.random() < 0.36;
-  const span = state.mode === 'thinking' ? 0.18 : (active ? 0.52 : 0.34);
-  state.gazeX = sideGlance
-    ? (Math.random() > 0.5 ? 1 : -1) * (0.34 + Math.random() * 0.2)
-    : clamp(smoothNoise(seconds, 0.43, 0.91, 1.37) * span, -0.62, 0.62);
-  state.gazeY = clamp(-0.04 + smoothNoise(seconds, 0.32, 0.68, 1.11) * span * 0.68, -0.38, 0.34);
-  state.nextGazeAt = now + (active ? 850 + Math.random() * 1700 : 1600 + Math.random() * 2600);
+  const speaking = state.mode === 'speaking';
+  const acting = state.mode === 'acting';
+  const listening = state.mode === 'listening';
+  const thinking = state.mode === 'thinking';
+  const active = speaking || acting;
+  const chatGlance = listening && Math.random() < 0.48;
+  const sideGlance = active && Math.random() < 0.28;
+  const span = thinking ? 0.22 : (active ? 0.46 : 0.36);
+
+  if (chatGlance) {
+    state.gazeX = -0.2 - Math.random() * 0.24;
+    state.gazeY = -0.04 - Math.random() * 0.12;
+  } else if (sideGlance) {
+    state.gazeX = (Math.random() > 0.5 ? 1 : -1) * (0.3 + Math.random() * 0.24);
+    state.gazeY = -0.08 + (Math.random() - 0.5) * 0.2;
+  } else {
+    const centerBias = speaking ? 0.62 : 1;
+    state.gazeX = clamp(smoothNoise(seconds, 0.43, 0.91, 1.37) * span * centerBias, -0.62, 0.62);
+    state.gazeY = clamp(
+      (thinking ? 0.08 : -0.035) + smoothNoise(seconds, 0.32, 0.68, 1.11) * span * 0.68,
+      -0.38,
+      0.34
+    );
+  }
+
+  const waitMs = speaking
+    ? 620 + Math.random() * 1080
+    : acting
+      ? 560 + Math.random() * 1180
+      : listening
+        ? 820 + Math.random() * 1580
+        : thinking
+          ? 920 + Math.random() * 1760
+          : 1100 + Math.random() * 2200;
+  state.nextGazeAt = now + waitMs;
 }
 
 function emotionFromDetail(detail = {}) {
@@ -750,10 +802,15 @@ export function createLive2DCharacterStateMachine() {
     const bodyScale = modeProfile.body * (0.82 + state.arousal * 0.28);
     const gazeScale = modeProfile.gaze * (0.7 + state.attention * 0.44);
     const deltaMs = state.lastSampleAt ? clamp(at - state.lastSampleAt, 1, 80, 16.67) : 16.67;
-    const gazeResponseMs = (speakingSettle > 0.08 || state.mode === 'acting') ? 180 : 260;
+    const gazeResponseMs = (speakingSettle > 0.08 || state.mode === 'acting') ? 54 : 86;
     const gazeAlpha = 1 - Math.exp(-deltaMs / gazeResponseMs);
     state.currentGazeX = lerp(state.currentGazeX, state.gazeX, gazeAlpha);
     state.currentGazeY = lerp(state.currentGazeY, state.gazeY, gazeAlpha);
+    const microSaccade = naturalLive2DMicroSaccade(at, {
+      seed: state.seed,
+      attention: state.attention,
+      mode: state.mode
+    });
     state.lastSampleAt = at;
     const activeSpeechEnergy = clamp(state.speechMotionEnergy * 0.72 + state.mouthEnergy * 0.28, 0, 1);
     const speechEnergy = lerp(state.mouthEnergy * 0.45, activeSpeechEnergy, speakingBlend);
@@ -784,8 +841,8 @@ export function createLive2DCharacterStateMachine() {
       speakingBlend,
       speakingSettleBlend: speakingSettle,
       eyeOpen: clamp(emotionProfile.eye - speechEyeSmile, 0.66, 1),
-      eyeX: clamp(state.currentGazeX * gazeScale - headDrift * 0.07, -0.72, 0.72),
-      eyeY: clamp(state.currentGazeY * gazeScale - 0.02 - thinkingNod * 0.04 - speechNod * 0.018 - speechLift * 0.014, -0.48, 0.42),
+      eyeX: clamp(state.currentGazeX * gazeScale + microSaccade.x - headDrift * 0.07, -0.72, 0.72),
+      eyeY: clamp(state.currentGazeY * gazeScale + microSaccade.y - 0.02 - thinkingNod * 0.04 - speechNod * 0.018 - speechLift * 0.014, -0.48, 0.42),
       faceX: (headDrift * 2.8 + speechSway * 13.2) * headScale,
       faceY: lerp(idleFaceY, speakingFaceY, speakingBlend) * headScale,
       faceZ: (

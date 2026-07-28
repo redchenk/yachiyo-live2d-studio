@@ -158,6 +158,10 @@ export function createLive2DStreamingSpeechSession(options = {}) {
 
   return {
     begin() {
+      if (active) {
+        clearFinishTimer();
+        return;
+      }
       active = true;
       queuedLines = 0;
       started = false;

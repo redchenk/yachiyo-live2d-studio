@@ -371,6 +371,7 @@ export function createLive2DSpeechPlayer({ onState } = {}) {
   let currentReject = null;
   let queueToken = 0;
   let queueRunning = false;
+  let queueSequence = 0;
   const speechQueue = [];
   const audioEnvelopes = new WeakMap();
 
@@ -390,6 +391,24 @@ export function createLive2DSpeechPlayer({ onState } = {}) {
     return error;
   }
 
+  function normalizeQueueOptions(options = {}) {
+    const maxQueueAgeMs = Math.max(0, Number(options.maxQueueAgeMs) || 0);
+    const explicitExpiresAt = Number(options.expiresAt);
+    const expiresAt = Number.isFinite(explicitExpiresAt) && explicitExpiresAt > 0
+      ? explicitExpiresAt
+      : (maxQueueAgeMs ? Date.now() + maxQueueAgeMs : 0);
+    const groupLimit = Number(options.maxQueuedInGroup);
+    return {
+      ...options,
+      queueGroup: String(options.queueGroup || '').trim(),
+      priority: Number.isFinite(Number(options.priority)) ? Number(options.priority) : 0,
+      maxQueuedInGroup: Number.isFinite(groupLimit)
+        ? Math.max(1, Math.round(groupLimit))
+        : 0,
+      expiresAt
+    };
+  }
+
   function isStopError(error) {
     return error?.name === 'AbortError';
   }
@@ -400,6 +419,18 @@ export function createLive2DSpeechPlayer({ onState } = {}) {
       URL.revokeObjectURL(url);
       audio.dataset.objectUrl = '';
     }
+  }
+
+  function rejectQueueItem(item, error = makeStopError()) {
+    if (!item || item.cancelled) return;
+    item.cancelled = true;
+    if (item.audio) {
+      releaseAudio(item.audio);
+      item.audio = null;
+    } else if (item.audioPromise) {
+      item.audioPromise.then((audio) => releaseAudio(audio)).catch(() => {});
+    }
+    item.reject(error);
   }
 
   function clearCurrentAudio() {
@@ -427,8 +458,43 @@ export function createLive2DSpeechPlayer({ onState } = {}) {
   function rejectQueued(error = makeStopError()) {
     while (speechQueue.length) {
       const item = speechQueue.shift();
-      if (item.audio) releaseAudio(item.audio);
-      item.reject(error);
+      rejectQueueItem(item, error);
+    }
+  }
+
+  function isQueueItemExpired(item, now = Date.now()) {
+    return Number(item?.options?.expiresAt || 0) > 0 &&
+      now > Number(item.options.expiresAt);
+  }
+
+  function pruneExpiredQueue(now = Date.now()) {
+    for (let index = speechQueue.length - 1; index >= 0; index -= 1) {
+      const item = speechQueue[index];
+      if (!isQueueItemExpired(item, now)) continue;
+      speechQueue.splice(index, 1);
+      rejectQueueItem(item);
+    }
+  }
+
+  function sortSpeechQueue() {
+    speechQueue.sort((left, right) => (
+      Number(right.options?.priority || 0) - Number(left.options?.priority || 0) ||
+      Number(left.sequence || 0) - Number(right.sequence || 0)
+    ));
+  }
+
+  function enforceQueueGroupLimit(nextItem) {
+    const group = nextItem.options?.queueGroup;
+    const limit = Number(nextItem.options?.maxQueuedInGroup || 0);
+    if (!group || limit < 1) return;
+    const grouped = speechQueue
+      .filter((item) => item.options?.queueGroup === group)
+      .sort((left, right) => Number(left.sequence || 0) - Number(right.sequence || 0));
+    while (grouped.length >= limit) {
+      const stale = grouped.shift();
+      const index = speechQueue.indexOf(stale);
+      if (index >= 0) speechQueue.splice(index, 1);
+      rejectQueueItem(stale);
     }
   }
 
@@ -603,7 +669,7 @@ export function createLive2DSpeechPlayer({ onState } = {}) {
     }
     item.audioPromise = makeAudio(item.text, settings, item.options)
       .then((audio) => {
-        if (token !== queueToken) {
+        if (token !== queueToken || item.cancelled) {
           releaseAudio(audio);
           throw makeStopError();
         }
@@ -645,6 +711,10 @@ export function createLive2DSpeechPlayer({ onState } = {}) {
         ? await preparedAudioPromise
         : await makeAudio(speechText, settings, options);
       if (!audio) return false;
+      if (Number(options.expiresAt || 0) > 0 && Date.now() > Number(options.expiresAt)) {
+        releaseAudio(audio);
+        throw makeStopError();
+      }
       if (token !== queueToken) throw makeStopError();
       currentAudio = audio;
       audio.preload = 'auto';
@@ -782,8 +852,11 @@ export function createLive2DSpeechPlayer({ onState } = {}) {
     if (queueRunning) return;
     queueRunning = true;
     try {
-      while (speechQueue.length && token === queueToken) {
+      while (token === queueToken) {
+        pruneExpiredQueue();
+        if (!speechQueue.length) break;
         const item = speechQueue.shift();
+        if (item.cancelled) continue;
         try {
           const audioPromise = prepareQueueItem(item, token, { notifyLoading: true });
           const played = await playInternal(item.text, item.options, token, audioPromise, () => preloadQueuedAudio(token, {
@@ -815,7 +888,21 @@ export function createLive2DSpeechPlayer({ onState } = {}) {
       return Promise.resolve();
     }
     return new Promise((resolve, reject) => {
-      speechQueue.push({ text: speechText, options, resolve, reject });
+      const queueOptions = normalizeQueueOptions(options);
+      const item = {
+        text: speechText,
+        options: queueOptions,
+        resolve,
+        reject,
+        sequence: queueSequence += 1,
+        cancelled: false,
+        audio: null,
+        audioPromise: null
+      };
+      pruneExpiredQueue();
+      enforceQueueGroupLimit(item);
+      speechQueue.push(item);
+      sortSpeechQueue();
       preloadQueuedAudio(queueToken);
       runQueue(queueToken);
     });

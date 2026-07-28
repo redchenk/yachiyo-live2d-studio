@@ -2005,3 +2005,993 @@ body.vue-live2d-route {
         grid-template-columns: repeat(3, minmax(0, 1fr));
     }
 }
+
+/* Calm live workspace: keep the stage dominant and reveal one tool group at a time. */
+.live2d-control-panel {
+    display: grid;
+    grid-template-rows: auto auto auto minmax(0, 1fr) auto;
+    gap: 0.62rem;
+    padding: 0.78rem;
+    overflow: hidden;
+}
+
+@media (min-width: 1101px) {
+    .live2d-stage {
+        right: 25.5rem;
+    }
+}
+
+.live2d-panel-header {
+    min-height: 3.1rem;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    gap: 0.68rem;
+    padding: 0 0.12rem 0.56rem;
+}
+
+.live2d-status-orb {
+    width: 2.45rem;
+    height: 2.45rem;
+}
+
+.live2d-status-orb::after {
+    inset: 0.88rem;
+}
+
+.live2d-panel-header strong {
+    font-size: 1.18rem;
+    letter-spacing: 0;
+}
+
+.live2d-status-copy {
+    gap: 0.02rem;
+}
+
+.live2d-status-copy span {
+    color: rgba(220, 231, 250, 0.62);
+    font-size: 0.66rem;
+    letter-spacing: 0.11em;
+}
+
+.live2d-status-copy small {
+    color: rgba(220, 231, 250, 0.66);
+    font-size: 0.68rem;
+}
+
+.live2d-primary-control {
+    order: initial;
+    display: grid;
+    gap: 0.58rem;
+    padding: 0.66rem;
+    border: 1px solid rgba(164, 184, 225, 0.13);
+    border-radius: 10px;
+    background:
+        linear-gradient(135deg, rgba(128, 103, 242, 0.11), transparent 58%),
+        rgba(255, 255, 255, 0.025);
+}
+
+.live2d-primary-actions {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 0.5rem;
+    align-items: center;
+}
+
+.live2d-primary-control .live2d-run-btn,
+.live2d-primary-control .live2d-switch {
+    min-height: 2.7rem;
+}
+
+.live2d-primary-control .live2d-run-btn {
+    border-color: rgba(128, 103, 242, 0.52);
+    background: linear-gradient(135deg, rgba(128, 103, 242, 0.72), rgba(108, 81, 221, 0.48));
+    box-shadow: 0 10px 28px rgba(76, 49, 166, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.13);
+}
+
+.live2d-page[data-live-state="on"] .live2d-primary-control .live2d-run-btn {
+    border-color: rgba(56, 232, 165, 0.45);
+    background: linear-gradient(135deg, rgba(32, 173, 117, 0.56), rgba(23, 116, 88, 0.38));
+}
+
+.live2d-primary-control .live2d-switch {
+    padding: 0 0.68rem;
+    border-color: rgba(164, 184, 225, 0.13);
+    background: rgba(255, 255, 255, 0.035);
+    font-size: 0.72rem;
+    white-space: nowrap;
+}
+
+.live2d-topic-field {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 0.3rem 0.5rem;
+    color: var(--live2d-muted);
+    font-size: 0.72rem;
+    font-weight: 850;
+}
+
+.live2d-topic-field small {
+    color: var(--live2d-faint);
+    font-size: 0.68rem;
+}
+
+.live2d-topic-field input {
+    grid-column: 1 / -1;
+    width: 100%;
+    min-height: 2.35rem;
+    padding: 0 0.7rem;
+    border: 1px solid rgba(164, 184, 225, 0.13);
+    border-radius: 8px;
+    outline: none;
+    color: var(--live2d-ink);
+    background: rgba(3, 7, 18, 0.32);
+    font: inherit;
+    font-size: 0.78rem;
+}
+
+.live2d-topic-field input:focus,
+.live2d-audience-field input:focus {
+    border-color: rgba(78, 230, 255, 0.5);
+    box-shadow: 0 0 0 3px rgba(78, 230, 255, 0.09);
+}
+
+.live2d-workspace-tabs {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.26rem;
+    min-height: 2.62rem;
+    padding: 0.25rem;
+    border: 1px solid rgba(164, 184, 225, 0.12);
+    border-radius: 10px;
+    background: rgba(2, 6, 17, 0.26);
+}
+
+.live2d-workspace-tabs button {
+    min-width: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.38rem;
+    border: 0;
+    border-radius: 7px;
+    color: rgba(220, 231, 250, 0.58);
+    background: transparent;
+    font: inherit;
+    font-size: 0.74rem;
+    font-weight: 850;
+    cursor: pointer;
+    transition: color 0.16s ease, background 0.16s ease, box-shadow 0.16s ease;
+}
+
+.live2d-workspace-tabs button:hover {
+    color: rgba(241, 247, 255, 0.9);
+    background: rgba(255, 255, 255, 0.04);
+}
+
+.live2d-workspace-tabs button.active {
+    color: #fff;
+    background: rgba(78, 230, 255, 0.1);
+    box-shadow: inset 0 0 0 1px rgba(78, 230, 255, 0.18);
+}
+
+.live2d-workspace-tabs button.active svg {
+    color: var(--live2d-cyan);
+}
+
+.live2d-control-panel button:focus-visible,
+.live2d-control-panel input:focus-visible,
+.live2d-control-panel select:focus-visible,
+.live2d-control-panel textarea:focus-visible,
+.live2d-control-panel summary:focus-visible {
+    outline: 2px solid rgba(78, 230, 255, 0.72);
+    outline-offset: 2px;
+}
+
+.live2d-workspace {
+    min-height: 0;
+    overflow: auto;
+    border: 1px solid rgba(164, 184, 225, 0.1);
+    border-radius: 10px;
+    background: rgba(3, 7, 18, 0.2);
+    scrollbar-width: thin;
+    scrollbar-color: rgba(164, 184, 225, 0.24) transparent;
+}
+
+.live2d-interaction-panel,
+.live2d-workspace > .live2d-motion-panel,
+.live2d-workspace > .live2d-music-panel {
+    display: grid;
+    gap: 0.64rem;
+    min-height: 0;
+    padding: 0.72rem;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+}
+
+.live2d-section-heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.7rem;
+}
+
+.live2d-section-heading > div {
+    min-width: 0;
+    display: grid;
+    gap: 0.08rem;
+}
+
+.live2d-section-heading strong {
+    color: var(--live2d-ink);
+    font-size: 0.84rem;
+}
+
+.live2d-section-heading > div span {
+    overflow: hidden;
+    color: rgba(220, 231, 250, 0.6);
+    font-size: 0.7rem;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.live2d-live-dot {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    padding: 0.28rem 0.48rem;
+    border: 1px solid rgba(164, 184, 225, 0.12);
+    border-radius: 999px;
+    color: rgba(220, 231, 250, 0.62);
+    background: rgba(255, 255, 255, 0.025);
+    font-size: 0.68rem;
+    font-weight: 850;
+}
+
+.live2d-live-dot::before {
+    content: "";
+    width: 0.38rem;
+    height: 0.38rem;
+    border-radius: 50%;
+    background: rgba(220, 231, 250, 0.34);
+}
+
+.live2d-live-dot.active {
+    color: rgba(174, 250, 218, 0.9);
+    border-color: rgba(56, 232, 165, 0.22);
+    background: rgba(56, 232, 165, 0.07);
+}
+
+.live2d-live-dot.active::before {
+    background: var(--live2d-green);
+    box-shadow: 0 0 10px rgba(56, 232, 165, 0.58);
+}
+
+.live2d-audience-preview {
+    min-width: 0;
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 0.55rem;
+    align-items: center;
+    min-height: 3.15rem;
+    padding: 0.52rem 0.62rem;
+    border: 1px solid rgba(78, 230, 255, 0.11);
+    border-radius: 8px;
+    color: var(--live2d-cyan);
+    background: linear-gradient(90deg, rgba(78, 230, 255, 0.07), rgba(255, 255, 255, 0.018));
+}
+
+.live2d-audience-preview > div {
+    min-width: 0;
+    display: grid;
+    gap: 0.08rem;
+}
+
+.live2d-audience-preview span {
+    color: rgba(220, 231, 250, 0.62);
+    font-size: 0.68rem;
+}
+
+.live2d-audience-preview strong {
+    overflow: hidden;
+    color: rgba(241, 247, 255, 0.88);
+    font-size: 0.76rem;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.live2d-audience-field {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 0.3rem 0.5rem;
+    color: var(--live2d-muted);
+    font-size: 0.72rem;
+    font-weight: 850;
+}
+
+.live2d-audience-field small {
+    color: var(--live2d-faint);
+    font-size: 0.66rem;
+}
+
+.live2d-audience-field .live2d-audience-row {
+    grid-column: 1 / -1;
+}
+
+.live2d-audience-field input {
+    width: 100%;
+    min-height: 2.46rem;
+    padding: 0 0.68rem;
+    border: 1px solid rgba(164, 184, 225, 0.13);
+    border-radius: 8px;
+    outline: none;
+    color: var(--live2d-ink);
+    background: rgba(3, 7, 18, 0.34);
+    font: inherit;
+    font-size: 0.78rem;
+}
+
+.live2d-interaction-panel .live2d-volume-panel,
+.live2d-interaction-panel .live2d-director-command {
+    order: initial;
+    padding: 0.56rem 0 0;
+    border: 0;
+    border-top: 1px solid rgba(164, 184, 225, 0.09);
+    background: transparent;
+}
+
+.live2d-interaction-panel .live2d-volume-panel {
+    gap: 0.4rem;
+}
+
+.live2d-interaction-panel .live2d-volume-panel > div:first-child {
+    font-size: 0.72rem;
+}
+
+.live2d-interaction-panel .live2d-director-command summary {
+    min-height: 1.7rem;
+    text-transform: none;
+    letter-spacing: 0;
+    font-size: 0.7rem;
+}
+
+.live2d-workspace > .live2d-motion-panel {
+    align-content: start;
+}
+
+.live2d-workspace .live2d-tabbar {
+    min-height: 2.42rem;
+}
+
+.live2d-workspace .live2d-control-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.live2d-workspace .live2d-tile-btn {
+    min-height: 3.45rem;
+}
+
+.live2d-workspace > .live2d-music-panel {
+    align-content: start;
+}
+
+.live2d-workspace > .yachiyo-music-panel {
+    display: grid;
+    align-content: start;
+    gap: 0.62rem;
+    min-height: 100%;
+    padding: 0.72rem;
+}
+
+.sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+}
+
+.yachiyo-music-header,
+.yachiyo-music-queue > header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.7rem;
+}
+
+.yachiyo-music-header > div {
+    min-width: 0;
+    display: grid;
+    gap: 0.08rem;
+}
+
+.yachiyo-music-header > div span,
+.yachiyo-music-now .yachiyo-music-track-copy > span {
+    color: rgba(220, 231, 250, 0.56);
+    font-size: 0.66rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+.yachiyo-music-header > div strong {
+    color: var(--live2d-ink);
+    font-size: 0.86rem;
+}
+
+.yachiyo-music-tool-status {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.34rem;
+    min-height: 1.7rem;
+    padding: 0 0.52rem;
+    border: 1px solid rgba(56, 232, 165, 0.2);
+    border-radius: 999px;
+    color: rgba(174, 250, 218, 0.9);
+    background: rgba(56, 232, 165, 0.06);
+    font-size: 0.65rem;
+    font-weight: 800;
+    white-space: nowrap;
+}
+
+.yachiyo-music-tool-status i {
+    width: 0.4rem;
+    height: 0.4rem;
+    border-radius: 50%;
+    background: var(--live2d-green);
+    box-shadow: 0 0 9px rgba(56, 232, 165, 0.62);
+}
+
+.yachiyo-music-account {
+    display: grid;
+    grid-template-columns: 2rem minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 0.48rem;
+    min-height: 2.8rem;
+    padding: 0.38rem 0.44rem;
+    border: 1px solid rgba(255, 80, 103, 0.15);
+    border-radius: 9px;
+    background: linear-gradient(110deg, rgba(255, 80, 103, 0.07), rgba(255, 255, 255, 0.025));
+}
+
+.yachiyo-music-account-avatar {
+    width: 2rem;
+    height: 2rem;
+    display: grid;
+    place-items: center;
+    overflow: hidden;
+    border: 1px solid rgba(255, 132, 148, 0.2);
+    border-radius: 50%;
+    color: rgba(255, 190, 200, 0.82);
+    background: rgba(255, 80, 103, 0.1);
+}
+
+.yachiyo-music-account-avatar img {
+    width: 100%;
+    height: 100%;
+    display: block;
+    object-fit: cover;
+}
+
+.yachiyo-music-account-copy {
+    min-width: 0;
+    display: grid;
+    gap: 0.08rem;
+}
+
+.yachiyo-music-account-copy strong,
+.yachiyo-music-account-copy small {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.yachiyo-music-account-copy strong {
+    color: rgba(244, 248, 255, 0.88);
+    font-size: 0.72rem;
+}
+
+.yachiyo-music-account-copy small {
+    color: rgba(220, 231, 250, 0.5);
+    font-size: 0.61rem;
+}
+
+.yachiyo-music-account .live2d-mini-btn {
+    min-height: 1.8rem;
+    padding: 0 0.52rem;
+}
+
+.yachiyo-music-login-btn {
+    color: rgba(255, 181, 191, 0.96);
+    border-color: rgba(255, 80, 103, 0.23);
+}
+
+.yachiyo-music-qr {
+    position: relative;
+    display: grid;
+    grid-template-columns: 5.4rem minmax(0, 1fr);
+    align-items: center;
+    gap: 0.68rem;
+    padding: 0.62rem 2.3rem 0.62rem 0.62rem;
+    border: 1px solid rgba(255, 80, 103, 0.22);
+    border-radius: 10px;
+    background: rgba(10, 12, 23, 0.94);
+    box-shadow: 0 12px 30px rgba(0, 0, 0, 0.24);
+}
+
+.yachiyo-music-qr-close {
+    position: absolute;
+    top: 0.42rem;
+    right: 0.42rem;
+    width: 1.75rem;
+    height: 1.75rem;
+}
+
+.yachiyo-music-qr-image {
+    width: 5.4rem;
+    height: 5.4rem;
+    display: grid;
+    place-items: center;
+    overflow: hidden;
+    border-radius: 8px;
+    color: rgba(33, 38, 50, 0.66);
+    background: #fff;
+}
+
+.yachiyo-music-qr-image img {
+    width: 100%;
+    height: 100%;
+    display: block;
+}
+
+.yachiyo-music-qr-copy {
+    min-width: 0;
+    display: grid;
+    align-content: center;
+    justify-items: start;
+    gap: 0.34rem;
+}
+
+.yachiyo-music-qr-copy strong {
+    color: rgba(247, 249, 255, 0.92);
+    font-size: 0.75rem;
+}
+
+.yachiyo-music-qr-copy small {
+    color: rgba(220, 231, 250, 0.58);
+    font-size: 0.64rem;
+    line-height: 1.45;
+}
+
+.yachiyo-music-search {
+    display: grid;
+    grid-template-columns: minmax(5.8rem, 0.68fr) minmax(7rem, 1.35fr) 2.5rem;
+    gap: 0.38rem;
+}
+
+.yachiyo-music-search label {
+    min-width: 0;
+}
+
+.yachiyo-music-search select,
+.yachiyo-music-search input {
+    width: 100%;
+    height: 2.5rem;
+    border: 1px solid rgba(164, 184, 225, 0.14);
+    border-radius: 8px;
+    outline: none;
+    color: var(--live2d-ink);
+    background: rgba(3, 7, 18, 0.44);
+    font: inherit;
+    font-size: 0.72rem;
+}
+
+.yachiyo-music-search select {
+    padding: 0 0.46rem;
+    color-scheme: dark;
+}
+
+.yachiyo-music-search input {
+    padding: 0 0.65rem;
+}
+
+.yachiyo-music-search .live2d-icon-btn {
+    width: 2.5rem;
+    height: 2.5rem;
+}
+
+.yachiyo-music-message,
+.yachiyo-music-error {
+    margin: 0;
+    padding: 0.44rem 0.56rem;
+    border-radius: 7px;
+    font-size: 0.68rem;
+    line-height: 1.4;
+}
+
+.yachiyo-music-message {
+    color: rgba(177, 237, 250, 0.88);
+    background: rgba(78, 230, 255, 0.06);
+}
+
+.yachiyo-music-error {
+    color: rgba(255, 173, 193, 0.94);
+    background: rgba(255, 102, 141, 0.08);
+}
+
+.yachiyo-music-results,
+.yachiyo-music-queue-list {
+    display: grid;
+    gap: 0.36rem;
+}
+
+.yachiyo-music-result,
+.yachiyo-music-now,
+.yachiyo-music-empty,
+.yachiyo-music-queue-list > article {
+    border: 1px solid rgba(164, 184, 225, 0.1);
+    border-radius: 9px;
+    background: rgba(255, 255, 255, 0.028);
+}
+
+.yachiyo-music-result {
+    display: grid;
+    grid-template-columns: 2.2rem minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 0.48rem;
+    min-height: 3.1rem;
+    padding: 0.4rem;
+}
+
+.yachiyo-music-result:hover {
+    border-color: rgba(78, 230, 255, 0.2);
+    background: rgba(78, 230, 255, 0.045);
+}
+
+.yachiyo-music-cover {
+    width: 3.35rem;
+    height: 3.35rem;
+    display: grid;
+    place-items: center;
+    overflow: hidden;
+    border: 1px solid rgba(164, 184, 225, 0.12);
+    border-radius: 8px;
+    color: rgba(220, 231, 250, 0.52);
+    background: linear-gradient(145deg, rgba(126, 96, 255, 0.17), rgba(78, 230, 255, 0.08));
+}
+
+.yachiyo-music-cover-small {
+    width: 2.2rem;
+    height: 2.2rem;
+    border-radius: 7px;
+}
+
+.yachiyo-music-cover img {
+    width: 100%;
+    height: 100%;
+    display: block;
+    object-fit: cover;
+}
+
+.yachiyo-music-track-copy {
+    min-width: 0;
+    display: grid;
+    gap: 0.1rem;
+}
+
+.yachiyo-music-track-copy strong,
+.yachiyo-music-track-copy small {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.yachiyo-music-track-copy strong {
+    color: rgba(241, 247, 255, 0.9);
+    font-size: 0.75rem;
+    font-weight: 750;
+}
+
+.yachiyo-music-track-copy small {
+    color: rgba(220, 231, 250, 0.54);
+    font-size: 0.64rem;
+}
+
+.yachiyo-music-result-actions,
+.yachiyo-music-now-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.28rem;
+}
+
+.yachiyo-music-result-actions .live2d-mini-btn {
+    min-height: 2rem;
+    padding: 0 0.5rem;
+    color: var(--live2d-cyan);
+}
+
+.yachiyo-music-result-actions .live2d-icon-btn,
+.yachiyo-music-now-actions .live2d-icon-btn,
+.yachiyo-music-queue-list .live2d-icon-btn {
+    width: 2rem;
+    height: 2rem;
+    border-radius: 7px;
+}
+
+.yachiyo-music-now {
+    display: grid;
+    grid-template-columns: 3.35rem minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 0.58rem;
+    padding: 0.56rem;
+    border-color: rgba(78, 230, 255, 0.16);
+    background: linear-gradient(110deg, rgba(78, 230, 255, 0.07), rgba(126, 96, 255, 0.055));
+}
+
+.yachiyo-music-empty {
+    min-height: 3.6rem;
+    display: flex;
+    align-items: center;
+    gap: 0.58rem;
+    padding: 0.58rem;
+    color: rgba(220, 231, 250, 0.54);
+}
+
+.yachiyo-music-empty > div {
+    min-width: 0;
+    display: grid;
+    gap: 0.08rem;
+}
+
+.yachiyo-music-empty strong {
+    color: rgba(241, 247, 255, 0.82);
+    font-size: 0.75rem;
+}
+
+.yachiyo-music-empty small {
+    font-size: 0.64rem;
+}
+
+.yachiyo-music-queue {
+    display: grid;
+    gap: 0.38rem;
+    padding-top: 0.08rem;
+}
+
+.yachiyo-music-queue > header {
+    min-height: 1.9rem;
+    color: rgba(220, 231, 250, 0.62);
+    font-size: 0.68rem;
+    font-weight: 800;
+}
+
+.yachiyo-music-queue > header .live2d-mini-btn {
+    min-height: 1.8rem;
+    padding: 0 0.5rem;
+}
+
+.yachiyo-music-queue-list > article {
+    display: grid;
+    grid-template-columns: 1.2rem minmax(0, 1fr) 2rem;
+    align-items: center;
+    gap: 0.42rem;
+    min-height: 2.65rem;
+    padding: 0.32rem 0.38rem;
+}
+
+.yachiyo-music-queue-list > article > span {
+    color: rgba(78, 230, 255, 0.72);
+    font-size: 0.68rem;
+    font-weight: 850;
+    text-align: center;
+}
+
+.yachiyo-music-queue > p {
+    margin: 0;
+    padding: 0.48rem;
+    border: 1px dashed rgba(164, 184, 225, 0.1);
+    border-radius: 8px;
+    color: rgba(220, 231, 250, 0.48);
+    font-size: 0.65rem;
+    text-align: center;
+}
+
+.live2d-quick-actions {
+    order: initial;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0.58rem;
+    align-items: center;
+    padding: 0.48rem 0.54rem;
+    border: 1px solid rgba(164, 184, 225, 0.1);
+    border-radius: 10px;
+    background: rgba(3, 7, 18, 0.26);
+}
+
+.live2d-quick-actions h2 {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    clip-path: inset(50%);
+    white-space: nowrap;
+}
+
+.live2d-quick-actions > div {
+    gap: 0.38rem;
+}
+
+.live2d-quick-btn {
+    min-height: 2.9rem;
+    gap: 0.16rem;
+    padding: 0.28rem 0.18rem;
+}
+
+.live2d-quick-btn svg {
+    width: 1rem;
+    height: 1rem;
+}
+
+.live2d-quick-btn span {
+    font-size: 0.68rem;
+}
+
+@media (max-width: 1100px) {
+    .live2d-control-panel {
+        display: grid;
+        grid-template-columns: minmax(12rem, 0.75fr) minmax(18rem, 1.4fr) 4.25rem;
+        grid-template-rows: auto minmax(0, 1fr);
+        gap: 0.55rem;
+        overflow: hidden;
+    }
+
+    .live2d-panel-header {
+        grid-column: 1;
+        grid-row: 1;
+    }
+
+    .live2d-primary-control {
+        grid-column: 1;
+        grid-row: 2;
+        align-content: start;
+        overflow: auto;
+    }
+
+    .live2d-primary-actions {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .live2d-primary-control .live2d-switch {
+        min-height: 2.25rem;
+        justify-content: center;
+    }
+
+    .live2d-model {
+        bottom: -0.4rem;
+        width: min(72vw, 660px);
+        height: min(59vh, 520px);
+    }
+
+    .live2d-workspace-tabs {
+        grid-column: 2;
+        grid-row: 1;
+    }
+
+    .live2d-workspace {
+        grid-column: 2;
+        grid-row: 2;
+    }
+
+    .live2d-quick-actions {
+        grid-column: 3;
+        grid-row: 1 / 3;
+        grid-template-columns: 1fr;
+        align-content: center;
+    }
+
+    .live2d-quick-actions > div {
+        grid-template-columns: 1fr;
+    }
+}
+
+@media (max-width: 720px) {
+    .live2d-control-panel {
+        display: flex;
+        flex-direction: column;
+        padding: 0.58rem;
+        overflow: auto;
+    }
+
+    .live2d-panel-header,
+    .live2d-primary-control,
+    .live2d-workspace-tabs,
+    .live2d-workspace,
+    .live2d-quick-actions {
+        width: 100%;
+        flex: 0 0 auto;
+    }
+
+    .live2d-panel-header {
+        gap: 0.45rem;
+    }
+
+    .live2d-status-orb {
+        width: 2rem;
+        height: 2rem;
+    }
+
+    .live2d-status-orb::after {
+        inset: 0.72rem;
+    }
+
+    .live2d-status-copy span,
+    .live2d-status-copy small {
+        display: none;
+    }
+
+    .live2d-panel-header strong {
+        font-size: 0.92rem;
+    }
+
+    .live2d-primary-control {
+        padding: 0.5rem;
+    }
+
+    .live2d-primary-actions {
+        grid-template-columns: minmax(0, 1fr) auto;
+    }
+
+    .live2d-primary-control {
+        min-height: max-content;
+        overflow: visible;
+    }
+
+    .live2d-model {
+        bottom: -0.35rem;
+        width: min(92vw, 520px);
+        height: min(55dvh, 450px);
+    }
+
+    .live2d-primary-control .live2d-switch {
+        min-height: 2.2rem;
+        justify-content: center;
+    }
+
+    .live2d-topic-field span,
+    .live2d-topic-field small {
+        display: none;
+    }
+
+    .live2d-topic-field input {
+        grid-column: 1 / -1;
+    }
+
+    .live2d-workspace-tabs button {
+        gap: 0.2rem;
+        font-size: 0.66rem;
+    }
+
+    .live2d-workspace-tabs button svg {
+        width: 0.9rem;
+        height: 0.9rem;
+    }
+
+    .live2d-workspace {
+        min-height: 10rem;
+    }
+
+    .live2d-quick-actions {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .live2d-quick-actions > div {
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+    }
+}
