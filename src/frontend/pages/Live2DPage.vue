@@ -28,6 +28,9 @@ import {
   selectLive2DAudienceTurn
 } from '../services/room/live2dAudienceTurnSelector';
 import {
+  createLive2DAudienceMusicRequestRouter
+} from '../services/room/live2dAudienceMusicRequest';
+import {
   executeLive2DMusicCommand,
   inferLive2DMusicCommandFromText,
   normalizeLive2DMusicCommand,
@@ -156,6 +159,14 @@ let bilibiliPendingMessages = [];
 let bilibiliBatchTimer = 0;
 const bilibiliRateGate = createLive2DBilibiliRateGate();
 const bilibiliGiftAcknowledgementGate = createLive2DBilibiliGiftAcknowledgementGate();
+const audienceMusicRequestRouter = createLive2DAudienceMusicRequestRouter({
+  execute: (command, context) => executeMusicFromLLMResult(
+    { music: command },
+    'audience-music',
+    context.text,
+    { requestedBy: context.requestedBy }
+  )
+});
 const CHARACTER_STATE_EVENT = 'tsukuyomi:live2d-character-state';
 const SETTINGS_SAVED_EVENT = 'tsukuyomi:studio-settings-saved';
 const LOCAL_VTS_ITEM_CONTROL_EVENT = 'tsukuyomi:live2d-local-vts-item';
@@ -1360,6 +1371,12 @@ function stopLiveDirector() {
   pushLog('system', 'Live director stopped.');
 }
 
+function routeAudienceMusicRequest(text, meta = {}, audienceEntry = null) {
+  const routed = audienceMusicRequestRouter.handle(text, meta, audienceEntry);
+  routed.promise?.catch(() => {});
+  return routed;
+}
+
 function submitAudienceLine(text, meta = {}) {
   const value = String(text || '').trim();
   if (!value) return;
@@ -1367,6 +1384,9 @@ function submitAudienceLine(text, meta = {}) {
   if (!meta.keepInput) audienceInput.value = '';
   const queued = enqueueLive2DAudienceEntry(audienceQueue.value, value, meta);
   audienceQueue.value = queued.queue;
+  if (queued.accepted) {
+    routeAudienceMusicRequest(value, meta, queued.entry);
+  }
   pushLog('audience', value, meta);
   dispatchCharacterState('listening', { holdMs: 1800, attention: 0.88, arousal: 0.48 });
   if (queued.accepted && liveDirector.running) {
@@ -1419,6 +1439,7 @@ function syncBilibiliDanmakuFromSettings() {
   bilibiliSettingsCache = readRoomBilibiliDanmakuSettings();
   bilibiliRateGate.reset();
   bilibiliGiftAcknowledgementGate.reset();
+  audienceMusicRequestRouter.reset();
   try {
     Promise.resolve(
       syncBilibiliDanmakuListener(bilibiliSettingsCache)
@@ -1479,22 +1500,17 @@ function readBilibiliDanmakuAloud(message, settings) {
 function processBilibiliDanmaku(message, settings) {
   const shouldForward = settings.autoForward;
   const shouldRead = settings.readAloud;
-  if (!settings.enabled || (!shouldForward && !shouldRead)) return;
   const userName = String(message.userName || 'Bilibili').trim();
   const text = String(message.text || '').trim();
   if (!text) return;
+  const musicCommand = audienceMusicRequestRouter.detect(text);
+  if (!settings.enabled || (!shouldForward && !shouldRead && !musicCommand)) return;
   const displayText = formatBilibiliAudienceMessage({
     ...message,
     userName,
     text
   });
-  readBilibiliDanmakuAloud(message, settings);
-  if (!shouldForward) {
-    pushLog('audience', displayText, { source: 'bilibili', readAloud: shouldRead });
-    dispatchCharacterState('listening', { holdMs: 1800, attention: 0.92, arousal: 0.5 });
-    return;
-  }
-  submitAudienceLine(displayText, {
+  const audienceMeta = {
     source: 'bilibili',
     keepInput: true,
     bilibili: {
@@ -1509,7 +1525,15 @@ function processBilibiliDanmaku(message, settings) {
       giftName: message.giftName || '',
       timestamp: message.timestamp
     }
-  });
+  };
+  readBilibiliDanmakuAloud(message, settings);
+  if (!shouldForward) {
+    pushLog('audience', displayText, { source: 'bilibili', readAloud: shouldRead });
+    dispatchCharacterState('listening', { holdMs: 1800, attention: 0.92, arousal: 0.5 });
+    if (musicCommand) routeAudienceMusicRequest(text, audienceMeta);
+    return;
+  }
+  submitAudienceLine(displayText, audienceMeta);
   if (settings.autoStartDirector && !liveDirector.running) startLiveDirector();
 }
 
@@ -1518,13 +1542,14 @@ function flushBilibiliDanmakuBatch() {
   const pending = bilibiliPendingMessages;
   bilibiliPendingMessages = [];
   const settings = bilibiliSettingsCache;
-  if (!settings.enabled || (!settings.autoForward && !settings.readAloud)) return;
+  if (!settings.enabled) return;
   const ranked = selectLive2DBilibiliMessages(pending, {
     limit: pending.length
   });
   for (const message of ranked) {
     if (!bilibiliGiftAcknowledgementGate.allow(message)) continue;
-    if (!bilibiliRateGate.allow(settings, message)) continue;
+    const isMusicRequest = Boolean(audienceMusicRequestRouter.detect(message.text));
+    if (!isMusicRequest && !bilibiliRateGate.allow(settings, message)) continue;
     processBilibiliDanmaku(message, settings);
   }
 }

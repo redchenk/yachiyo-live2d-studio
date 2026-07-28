@@ -280,7 +280,7 @@ function audienceMusicIntentText(value) {
   if (labeledMessage) {
     const label = labeledMessage[1];
     const message = labeledMessage[2];
-    const intentPattern = /点歌|点一首|点首|想点|来一首|来首|播放|放一首|放首|想听|要听|听一首|听首|加歌|排歌|play|queue|request|song/iu;
+    const intentPattern = /点歌|点一首|点首|想点|来一首|来首|唱一首|唱首|播放|放一首|放首|想听|要听|听一首|听首|加歌|排歌|play|queue|request|song/iu;
     if (!intentPattern.test(label) && intentPattern.test(message)) text = message;
   }
   return text.trim();
@@ -316,7 +316,7 @@ export function inferLive2DMusicCommandFromText(rawText = '') {
     },
     {
       action: 'request',
-      pattern: /^(?:\u968f\u4fbf|\u53ef\u4ee5|\u53ef\u4e0d\u53ef\u4ee5|\u80fd\u4e0d\u80fd|\u80fd\u5426|\u80fd|\u6c42|\u8bf7\u4f60?|\u9ebb\u70e6\u4f60?|\u62dc\u6258|\u5e2e\u6211|\u7ed9\u6211|\u6211\u60f3\u8981|\u6211\u60f3|\u6211\u8981|\u60f3\u8981|\u60f3|\u8981|\u6765|\u6574|\u9a6c\u4e0a|\u7acb\u523b|\u7acb\u5373|\u73b0\u5728)?(?:\u542c\u542c|\u542c\u4e00\u4e0b|\u542c\u4e00\u9996|\u542c\u9996|\u542c|\u64ad\u653e\u4e00\u4e0b|\u64ad\u653e|\u653e\u4e00\u4e0b|\u653e\u4e00\u9996|\u653e\u9996|\u653e\u4e2a|\u653e|\u70b9\u6b4c|\u70b9\u4e00\u9996|\u70b9\u9996|\u70b9\u4e2a|\u70b9\u4e00\u4e0b|\u60f3\u70b9|\u6765\u4e00\u9996|\u6765\u9996|\u6765\u4e2a|\u6765\u70b9|\u6765\u4e9b|\u6574\u4e00\u9996|\u6c42\u4e00\u9996|\u52a0\u6b4c|\u6392\u6b4c)(.+)$/u
+      pattern: /^(?:\u968f\u4fbf|\u53ef\u4ee5|\u53ef\u4e0d\u53ef\u4ee5|\u80fd\u4e0d\u80fd|\u80fd\u5426|\u80fd|\u6c42|\u8bf7\u4f60?|\u9ebb\u70e6\u4f60?|\u62dc\u6258|\u5e2e\u6211|\u7ed9\u6211|\u6211\u60f3\u8981|\u6211\u60f3|\u6211\u8981|\u60f3\u8981|\u60f3|\u8981|\u6765|\u6574|\u9a6c\u4e0a|\u7acb\u523b|\u7acb\u5373|\u73b0\u5728)?(?:\u542c\u542c|\u542c\u4e00\u4e0b|\u542c\u4e00\u9996|\u542c\u9996|\u542c|\u64ad\u653e\u4e00\u4e0b|\u64ad\u653e|\u653e\u4e00\u4e0b|\u653e\u4e00\u9996|\u653e\u9996|\u653e\u4e2a|\u653e|\u5531\u4e00\u9996|\u5531\u9996|\u5531\u4e00\u4e0b|\u5531\u4e2a|\u5531|\u70b9\u6b4c|\u70b9\u4e00\u9996|\u70b9\u9996|\u70b9\u4e2a|\u70b9\u4e00\u4e0b|\u60f3\u70b9|\u6765\u4e00\u9996|\u6765\u9996|\u6765\u4e2a|\u6765\u70b9|\u6765\u4e9b|\u6574\u4e00\u9996|\u6c42\u4e00\u9996|\u52a0\u6b4c|\u6392\u6b4c)(.+)$/u
     }
   ];
 
@@ -602,7 +602,7 @@ export function reconcileLive2DMusicCommandWithAudience(rawCommand = null, audie
   } else {
     const inferredLines = lines
       .map((line) => ({ line, command: inferLive2DMusicCommandFromText(line?.text || '') }))
-      .filter((item) => item.command?.query);
+      .filter((item) => item.command?.query && !item.line?.musicRequestHandled);
     const compactQuery = compactMusicRequesterMatchText(command.query || '');
     const exactMatches = compactQuery
       ? inferredLines.filter((item) => (
@@ -616,6 +616,7 @@ export function reconcileLive2DMusicCommandWithAudience(rawCommand = null, audie
     }
   }
 
+  if (trustedLine?.musicRequestHandled) return null;
   const trustedCommand = inferLive2DMusicCommandFromText(trustedLine?.text || '');
   if (!trustedCommand?.query) return null;
   const reconciled = {

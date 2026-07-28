@@ -110,6 +110,11 @@ await window.yachiyoMusic.callTool('music_state');
   name in the second context argument; context always overrides payload data.
 - Live song queries are reconciled with the selected audience message and
   reject leaked director-prompt suffixes before search.
+- Bilibili song requests are detected at the danmaku ingress and sent directly
+  to `request`; they do not wait for the LLM or the ordinary reply rate gate.
+  Phrases such as `我要听 ray`, `点歌晴天`, and `唱一首同桌的你` therefore enter
+  the real FIFO queue even when the live director is busy. The audience entry
+  is marked as handled so a later LLM reply cannot request the same song again.
 - If a queued track cannot resolve or the browser audio element reports a
   media error, the runtime clears the failed current item and advances to the
   next queued song instead of leaving playback stuck.

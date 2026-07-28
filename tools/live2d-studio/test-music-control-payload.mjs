@@ -136,6 +136,11 @@ try {
     provider: 'netease-cloud',
     query: '晴天'
   });
+  assert.deepEqual(inferLive2DMusicCommandFromText('小明: 唱一首同桌的你'), {
+    action: 'request',
+    provider: 'netease-cloud',
+    query: '同桌的你'
+  });
   assert.deepEqual(inferLive2DMusicCommandFromText('viewer-c: play Cloud 9 by Beach Bunny'), {
     action: 'request',
     provider: 'netease-cloud',
@@ -175,6 +180,13 @@ try {
     query: 'hallucinated-song',
     requestIndex: 1
   }, audienceLines), null);
+  assert.equal(reconcileLive2DMusicCommandWithAudience({
+    action: 'request',
+    query: loveLikeTide,
+    requestIndex: 2
+  }, audienceLines.map((line, index) => (
+    index === 1 ? { ...line, musicRequestHandled: true } : line
+  ))), null);
 
   const parsed = parseLive2DControlPayload(`CONTROL: ${JSON.stringify({
     reply: 'すぐ流すね。',

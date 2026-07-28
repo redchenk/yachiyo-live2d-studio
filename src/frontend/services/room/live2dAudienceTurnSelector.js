@@ -53,7 +53,7 @@ export function scoreLive2DAudienceEntry(entry, now = Date.now()) {
 
   if (/(八千代|やちよ|yachiyo|主播|月见)/iu.test(text)) score += 24;
   if (/[?？]|为什么|为何|怎么|如何|哪[个里]|什么|谁|吗(?:\s|[?？!！。.]|$)/u.test(text)) score += 18;
-  if (/(点歌|唱一|播放|来一首|song request|play\s+)/iu.test(text)) score += 10;
+  if (/(点歌|唱一|播放|来一首|我要听|想听|听一首|听首|song request|play\s+)/iu.test(text)) score += 10;
 
   const price = Math.max(0, Number(entry.price) || 0);
   if (price > 0) score += Math.min(42, Math.log2(price + 1) * 7);

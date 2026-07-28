@@ -41,6 +41,19 @@ const turn = selectLive2DAudienceTurn(queue, { limit: 3, now });
 assert.deepEqual(turn.selected.map((entry) => entry.id), ['sc', 'mention', 'question']);
 assert.deepEqual(turn.remaining.map((entry) => entry.id), ['plain']);
 
+const musicRequest = enqueueLive2DAudienceEntry([], '我要听ray', {
+  source: 'bilibili',
+  bilibili: { id: 'music-request', userId: 'music-viewer', userName: '点歌观众' }
+}, { now }).entry;
+const ordinaryMessage = enqueueLive2DAudienceEntry([], '今天挺开心', {
+  source: 'bilibili',
+  bilibili: { id: 'ordinary-message', userId: 'ordinary-viewer', userName: '普通观众' }
+}, { now }).entry;
+assert.equal(
+  selectLive2DAudienceTurn([ordinaryMessage, musicRequest], { limit: 1, now }).selected[0].id,
+  'music-request'
+);
+
 let sameViewerQueue = [];
 for (const [id, text, userId] of [
   ['a1', '八千代第一个问题？', 'viewer-a'],
