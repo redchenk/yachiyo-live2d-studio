@@ -90,8 +90,18 @@ const server = await createServer({
 
 let player = null;
 try {
-  const { createLive2DSpeechPlayer } = await server.ssrLoadModule(
+  const {
+    adaptLive2DInterTurnPauseMs,
+    createLive2DSpeechPlayer
+  } = await server.ssrLoadModule(
     '/src/frontend/services/room/live2dSpeech.js'
+  );
+  assert.equal(adaptLive2DInterTurnPauseMs(240, 0), 240);
+  assert.equal(adaptLive2DInterTurnPauseMs(240, 2), 150);
+  assert.equal(
+    adaptLive2DInterTurnPauseMs(240, 4),
+    110,
+    'heavy reply backlog must keep the human pause short'
   );
   player = createLive2DSpeechPlayer();
 
@@ -217,14 +227,26 @@ try {
   const secondReply = player.enqueue('第二轮流式回复', {
     queueGroup: 'live-reply',
     priority: 100,
+    interTurnPauseMs: 30,
     onStart: () => {
       pipelinedStarts.push('reply-2');
       secondReplyCaptionToken = captionSynchronizer.start({ fallback: '第二轮字幕' });
     }
   }).finally(() => captionSynchronizer.finish(secondReplyCaptionToken));
 
+  const firstReplyEndedAt = Date.now();
   audios.find((audio) => !audio.ended && !audio.paused)?.finish();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.deepEqual(
+    pipelinedStarts,
+    ['reply-1'],
+    'the next audience reply must not start in the same tick as the previous reply ends'
+  );
   await waitFor(() => pipelinedStarts.length === 2, 'second pipelined reply');
+  assert.ok(
+    Date.now() - firstReplyEndedAt >= 15,
+    'the next audience reply should preserve a perceptible but short boundary pause'
+  );
   assert.deepEqual(pipelinedStarts, ['reply-1', 'reply-2']);
   assert.deepEqual(synchronizedCaptions, ['第一轮字幕', '第二轮字幕']);
 

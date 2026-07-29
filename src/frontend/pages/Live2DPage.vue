@@ -173,6 +173,7 @@ const CHARACTER_STATE_EVENT = 'tsukuyomi:live2d-character-state';
 const SETTINGS_SAVED_EVENT = 'tsukuyomi:studio-settings-saved';
 const LOCAL_VTS_ITEM_CONTROL_EVENT = 'tsukuyomi:live2d-local-vts-item';
 const LOCAL_VTS_ITEM_STATE_EVENT = 'tsukuyomi:live2d-local-vts-item-state';
+const LIVE_REPLY_INTER_TURN_PAUSE_MS = 240;
 const liveDirectorScheduler = createLive2DDirectorScheduler({
   onTurn: () => runLiveTurn()
 });
@@ -1150,6 +1151,7 @@ async function performStreamingLiveTurn(message, options = {}) {
         playbackPromises.push(speechPlayer.enqueue(speechSentence, {
           queueGroup: 'live-reply',
           priority: 100,
+          interTurnPauseMs: sentenceIndex === 0 ? LIVE_REPLY_INTER_TURN_PAUSE_MS : 0,
           emotion: sentence.emotion,
           speechStyle: sentence.speechStyle,
           startGate: preparedCaption.ready,
@@ -1183,6 +1185,7 @@ async function performStreamingLiveTurn(message, options = {}) {
       playbackPromises.push(speechPlayer.enqueue(finalSpeech, {
         queueGroup: 'live-reply',
         priority: 100,
+        interTurnPauseMs: LIVE_REPLY_INTER_TURN_PAUSE_MS,
         emotion: finalResult.live2d?.emotion || finalResult.live2d?.expression || 'neutral',
         speechStyle: finalResult.live2d?.speechStyle || null,
         startGate: preparedCaption.ready,

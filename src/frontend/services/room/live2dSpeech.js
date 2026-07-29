@@ -28,6 +28,16 @@ const TTS_EMOTION_GUIDES = {
 let gptSovitsWeightsSignature = '';
 let gptSovitsWeightsPromise = null;
 
+export function adaptLive2DInterTurnPauseMs(requestedMs, pendingReplyCount = 0) {
+  const baseMs = Math.max(0, Math.round(Number(requestedMs) || 0));
+  const pressure = Math.max(0, Math.round(Number(pendingReplyCount) || 0));
+  if (!baseMs) return 0;
+  if (pressure >= 4) return Math.min(baseMs, 110);
+  if (pressure >= 2) return Math.min(baseMs, 150);
+  if (pressure >= 1) return Math.min(baseMs, 190);
+  return baseMs;
+}
+
 function timeoutError(message) {
   const error = new Error(message);
   error.name = 'TimeoutError';
@@ -372,6 +382,7 @@ export function createLive2DSpeechPlayer({ onState } = {}) {
   let queueToken = 0;
   let queueRunning = false;
   let queueSequence = 0;
+  let lastPlaybackEndedAt = 0;
   const speechQueue = [];
   const audioEnvelopes = new WeakMap();
 
@@ -389,6 +400,36 @@ export function createLive2DSpeechPlayer({ onState } = {}) {
     const error = new Error('Speech stopped');
     error.name = 'AbortError';
     return error;
+  }
+
+  async function waitForCancellablePlaybackGate(gate) {
+    let rejectGateWait = null;
+    try {
+      await new Promise((resolve, reject) => {
+        rejectGateWait = reject;
+        currentReject = reject;
+        Promise.resolve(gate).then(resolve, resolve);
+      });
+    } finally {
+      if (currentReject === rejectGateWait) currentReject = null;
+    }
+  }
+
+  async function waitForCancellablePlaybackDelay(delayMs) {
+    const durationMs = Math.max(0, Math.round(Number(delayMs) || 0));
+    if (!durationMs) return;
+    let timer = 0;
+    let rejectDelayWait = null;
+    try {
+      await new Promise((resolve, reject) => {
+        rejectDelayWait = reject;
+        currentReject = reject;
+        timer = window.setTimeout(resolve, durationMs);
+      });
+    } finally {
+      if (timer) window.clearTimeout(timer);
+      if (currentReject === rejectDelayWait) currentReject = null;
+    }
   }
 
   function normalizeQueueOptions(options = {}) {
@@ -503,6 +544,7 @@ export function createLive2DSpeechPlayer({ onState } = {}) {
     rejectQueued();
     if (currentReject) currentReject(makeStopError());
     clearCurrentAudio();
+    lastPlaybackEndedAt = 0;
     setState({ status: 'idle', error: '' });
   }
 
@@ -721,16 +763,19 @@ export function createLive2DSpeechPlayer({ onState } = {}) {
         throw makeStopError();
       }
       if (options.startGate && typeof options.startGate.then === 'function') {
-        let rejectGateWait = null;
-        try {
-          await new Promise((resolve, reject) => {
-            rejectGateWait = reject;
-            currentReject = reject;
-            Promise.resolve(options.startGate).then(resolve, resolve);
-          });
-        } finally {
-          if (currentReject === rejectGateWait) currentReject = null;
+        await waitForCancellablePlaybackGate(options.startGate);
+        if (Number(options.expiresAt || 0) > 0 && Date.now() > Number(options.expiresAt)) {
+          releaseAudio(audio);
+          throw makeStopError();
         }
+        if (token !== queueToken) {
+          releaseAudio(audio);
+          throw makeStopError();
+        }
+      }
+      const startAfterAt = Number(options.startAfterAt || 0);
+      if (startAfterAt > Date.now()) {
+        await waitForCancellablePlaybackDelay(startAfterAt - Date.now());
         if (Number(options.expiresAt || 0) > 0 && Date.now() > Number(options.expiresAt)) {
           releaseAudio(audio);
           throw makeStopError();
@@ -869,7 +914,8 @@ export function createLive2DSpeechPlayer({ onState } = {}) {
     if (!speechText) return;
     stop();
     queueToken += 1;
-    await playInternal(speechText, options, queueToken);
+    const played = await playInternal(speechText, options, queueToken);
+    if (played) lastPlaybackEndedAt = Date.now();
     setState({ status: 'idle', error: '' });
   }
 
@@ -884,11 +930,30 @@ export function createLive2DSpeechPlayer({ onState } = {}) {
         if (item.cancelled) continue;
         try {
           const audioPromise = prepareQueueItem(item, token, { notifyLoading: true });
-          const played = await playInternal(item.text, item.options, token, audioPromise, () => preloadQueuedAudio(token, {
+          const pendingLiveReplyCount = speechQueue.filter(
+            (queuedItem) => (
+              queuedItem.options?.queueGroup === 'live-reply' &&
+              Number(queuedItem.options?.interTurnPauseMs || 0) > 0
+            )
+          ).length;
+          const interTurnPauseMs = adaptLive2DInterTurnPauseMs(
+            item.options.interTurnPauseMs,
+            pendingLiveReplyCount
+          );
+          const playbackOptions = interTurnPauseMs > 0 && lastPlaybackEndedAt > 0
+            ? {
+                ...item.options,
+                startAfterAt: lastPlaybackEndedAt + interTurnPauseMs
+              }
+            : item.options;
+          const played = await playInternal(item.text, playbackOptions, token, audioPromise, () => preloadQueuedAudio(token, {
             afterPlaybackStart: true
           }));
           if (played === false) item.reject(makeStopError());
-          else item.resolve();
+          else {
+            lastPlaybackEndedAt = Date.now();
+            item.resolve();
+          }
         } catch (error) {
           item.reject(error);
         }
