@@ -1699,6 +1699,7 @@ async function auditAndRepairVectorIndex(db, settings, options = {}) {
   const health = {
     signature: expectedSignature,
     dimension: settings.embeddingDimension,
+    checkedAt: new Date().toISOString(),
     notes: notes.length,
     cells: cells.length,
     repairedNotes,
@@ -1724,6 +1725,24 @@ function memoryOrganizationStatus(db) {
     activeCells: Number(db.prepare("SELECT COUNT(*) AS count FROM mem_cells WHERE status IN ('active', 'candidate')").get()?.count) || 0,
     anchors: Number(db.prepare('SELECT COUNT(*) AS count FROM memory_anchors').get()?.count) || 0
   };
+}
+
+function vectorMetadataNeedsRepair(db, settings) {
+  const signature = configuredEmbeddingSignature(settings);
+  const dimension = Number(settings.embeddingDimension) || DEFAULT_DIMENSION;
+  const invalidNotes = db.prepare(`
+    SELECT COUNT(*) AS count FROM memories
+    WHERE deleted = 0 AND (
+      embedding_signature != ? OR vector_dimension != ? OR length(vector_json) < 4
+    )
+  `).get(signature, dimension)?.count || 0;
+  const invalidCells = db.prepare(`
+    SELECT COUNT(*) AS count FROM mem_cells
+    WHERE status != 'forgotten' AND (
+      embedding_signature != ? OR vector_dimension != ? OR length(vector_json) < 4
+    )
+  `).get(signature, dimension)?.count || 0;
+  return invalidNotes > 0 || invalidCells > 0;
 }
 
 function setMeta(db, key, value) {
@@ -2721,6 +2740,22 @@ async function handleSearch(input) {
   const db = openStore(settings);
   try {
     await ensureImportedSources(db, settings);
+    const storedVectorHealth = readJsonValue(getMeta(db, 'vector-health'), null);
+    const healthCheckAge = storedVectorHealth?.checkedAt
+      ? Date.now() - Date.parse(storedVectorHealth.checkedAt)
+      : Number.POSITIVE_INFINITY;
+    const vectorRepairNeeded = (
+      !storedVectorHealth ||
+      storedVectorHealth.signature !== configuredEmbeddingSignature(settings) ||
+      vectorMetadataNeedsRepair(db, settings) ||
+      (
+        healthCheckAge >= 15 * 60 * 1000 &&
+        (Number(storedVectorHealth.invalidNotes) > 0 || Number(storedVectorHealth.invalidCells) > 0)
+      )
+    );
+    if (vectorRepairNeeded) {
+      await auditAndRepairVectorIndex(db, settings, { repair: true });
+    }
     const viewers = resolveViewerProfiles(db, input);
     const viewerIds = new Set(viewers.map((viewer) => viewer.id));
     let notes = activeRows(db, false, MAX_MEMORY_ROWS)
@@ -2780,7 +2815,7 @@ async function handleSearch(input) {
         signature: queryEmbedding.signature,
         dimension: queryEmbedding.vector.length,
         degraded: queryEmbedding.degraded,
-        compatible: !queryEmbedding.degraded || notes.every((note) => (
+        compatible: notes.every((note) => (
           !note.embeddingSignature || note.embeddingSignature === queryEmbedding.signature
         ))
       },

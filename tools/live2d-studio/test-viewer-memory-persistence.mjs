@@ -200,8 +200,26 @@ try {
   db.close();
 
   await startService();
+  const lazyRepairedRecall = await post('/api/memory/search', {
+    ...settings,
+    query: {
+      text: 'Ray 点歌偏好',
+      viewerIds: ['bilibili:1001'],
+      retrievalMode: 'hybrid',
+      maxNotes: 6
+    }
+  });
+  assert.equal(lazyRepairedRecall.vectorHealth.compatible, true, 'first search after reopen should lazily repair the vector index');
+  const repairedDb = new Database(dbPath, { readonly: true });
+  const repairedViewerCells = repairedDb.prepare("SELECT vector_json, embedding_signature FROM mem_cells WHERE viewer_id != ''").all();
+  repairedDb.close();
+  assert.equal(
+    repairedViewerCells.every((row) => JSON.parse(row.vector_json || '[]').length === 64 && row.embedding_signature === 'hash-v2:64'),
+    true,
+    'lazy reopen repair should persist compatible viewer cell vectors'
+  );
+
   const reopened = await post('/api/memory/init', settings);
-  assert.equal(reopened.vectorHealth.repairedCells > 0, true, 'reopen should repair missing or incompatible vectors');
   assert.equal(reopened.vectorHealth.invalidCells, 0);
 
   const restoredProfile = await post('/api/memory/profile', {
