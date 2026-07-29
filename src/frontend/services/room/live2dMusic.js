@@ -30,7 +30,7 @@ const LOCAL_MUSIC_SEARCH_ENDPOINT = '/api/music/local/search';
 const NETEASE_MUSIC_SEARCH_ENDPOINT = '/api/music/netease/search';
 const NETEASE_MUSIC_RESOLVE_ENDPOINT = '/api/music/netease/resolve';
 const DEFAULT_SEARCH_LIMIT = 25;
-const DEFAULT_SPEECH_DUCK_VOLUME = 0.1;
+const DEFAULT_SPEECH_DUCK_VOLUME = 0.08;
 const SILENT_AUDIO_DATA_URL = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQQAAAAAAA==';
 const PLAYABLE_ACTIONS = new Set([
   'play',
@@ -65,6 +65,7 @@ let localAudio = null;
 let musicWarmupActive = false;
 let localAudioRecoveryPromise = null;
 let localAudioVolumeTimer = 0;
+let appleMusicVolumeTimer = 0;
 let localMusicBaseVolume = 1;
 let appleMusicBaseVolume = 1;
 let speechDuckingActive = false;
@@ -120,16 +121,51 @@ function fadeLocalMusicVolume(targetVolume, durationMs) {
     return;
   }
   const startVolume = clampVolume(localAudio.volume);
+  if (Math.abs(startVolume - target) < 0.001) {
+    localAudio.volume = target;
+    return;
+  }
   const startedAt = Date.now();
   const step = () => {
     if (!localAudio) return;
     const progress = Math.min(1, Math.max(0, (Date.now() - startedAt) / duration));
-    const eased = 1 - Math.pow(1 - progress, 2);
+    const eased = progress * progress * (3 - 2 * progress);
     localAudio.volume = clampVolume(startVolume + (target - startVolume) * eased);
     if (progress < 1) {
-      localAudioVolumeTimer = window.setTimeout(step, 24);
+      localAudioVolumeTimer = window.setTimeout(step, 16);
     } else {
       localAudioVolumeTimer = 0;
+    }
+  };
+  step();
+}
+
+function fadeAppleMusicVolume(music, targetVolume, durationMs) {
+  if (appleMusicVolumeTimer && typeof window !== 'undefined') {
+    window.clearTimeout(appleMusicVolumeTimer);
+    appleMusicVolumeTimer = 0;
+  }
+  if (!music) return;
+  const target = clampVolume(targetVolume);
+  const duration = Math.max(0, Number(durationMs) || 0);
+  if (!duration || typeof window === 'undefined') {
+    writeAppleMusicVolume(music, target);
+    return;
+  }
+  const startVolume = readAppleMusicVolume(music);
+  if (Math.abs(startVolume - target) < 0.001) {
+    writeAppleMusicVolume(music, target);
+    return;
+  }
+  const startedAt = Date.now();
+  const step = () => {
+    const progress = Math.min(1, Math.max(0, (Date.now() - startedAt) / duration));
+    const eased = progress * progress * (3 - 2 * progress);
+    writeAppleMusicVolume(music, startVolume + (target - startVolume) * eased);
+    if (progress < 1) {
+      appleMusicVolumeTimer = window.setTimeout(step, 16);
+    } else {
+      appleMusicVolumeTimer = 0;
     }
   };
   step();
@@ -144,12 +180,16 @@ export function setLive2DMusicSpeechDucking(active, options = {}) {
   const requestedFadeMs = Number(options.fadeMs);
   const fadeMs = Number.isFinite(requestedFadeMs)
     ? Math.max(0, requestedFadeMs)
-    : (nextActive ? 180 : 420);
+    : (nextActive ? 220 : 620);
 
   if (nextActive && !speechDuckingActive) {
-    if (localAudio) localMusicBaseVolume = clampVolume(localAudio.volume, localMusicBaseVolume);
+    if (localAudio && !localAudioVolumeTimer) {
+      localMusicBaseVolume = clampVolume(localAudio.volume, localMusicBaseVolume);
+    }
     const music = musicKitInstance();
-    if (music) appleMusicBaseVolume = readAppleMusicVolume(music);
+    if (music && !appleMusicVolumeTimer) {
+      appleMusicBaseVolume = readAppleMusicVolume(music);
+    }
   }
   speechDuckingActive = nextActive;
   speechDuckVolume = requestedDuckVolume;
@@ -164,7 +204,10 @@ export function setLive2DMusicSpeechDucking(active, options = {}) {
     const appleTarget = nextActive
       ? Math.min(appleMusicBaseVolume, speechDuckVolume)
       : appleMusicBaseVolume;
-    writeAppleMusicVolume(music, appleTarget);
+    fadeAppleMusicVolume(music, appleTarget, fadeMs);
+  } else if (appleMusicVolumeTimer && typeof window !== 'undefined') {
+    window.clearTimeout(appleMusicVolumeTimer);
+    appleMusicVolumeTimer = 0;
   }
 
   return {
@@ -172,6 +215,13 @@ export function setLive2DMusicSpeechDucking(active, options = {}) {
     duckVolume: speechDuckVolume,
     targetVolume: localTarget
   };
+}
+
+export function syncLive2DMusicSpeechDucking(status, options = {}) {
+  return setLive2DMusicSpeechDucking(
+    String(status || '').trim().toLowerCase() === 'playing',
+    options
+  );
 }
 
 export function sanitizeLive2DMusicQuery(value) {

@@ -4,7 +4,18 @@ import { createServer } from 'vite';
 const store = new Map();
 const dispatchedEvents = [];
 const playedUrls = [];
+const appleVolumeWrites = [];
 let latestAudio = null;
+let appleVolume = 1;
+const appleMusic = {};
+Object.defineProperty(appleMusic, 'volume', {
+  configurable: true,
+  get: () => appleVolume,
+  set(value) {
+    appleVolume = Number(value);
+    appleVolumeWrites.push(appleVolume);
+  }
+});
 
 globalThis.localStorage = {
   getItem(key) {
@@ -29,6 +40,9 @@ globalThis.window = {
   localStorage: globalThis.localStorage,
   setTimeout,
   clearTimeout,
+  MusicKit: {
+    getInstance: () => appleMusic
+  },
   dispatchEvent(event) {
     dispatchedEvents.push(event);
   }
@@ -74,6 +88,8 @@ globalThis.fetch = async (url, options = {}) => {
 globalThis.Audio = class MockAudio {
   constructor(src = '') {
     latestAudio = this;
+    this.volumeWrites = [];
+    this._volume = 1;
     this.src = src;
     this.currentTime = 0;
     this.duration = 180;
@@ -81,8 +97,16 @@ globalThis.Audio = class MockAudio {
     this.muted = false;
     this.paused = true;
     this.preload = '';
-    this.volume = 1;
     this.listeners = new Map();
+  }
+
+  get volume() {
+    return this._volume;
+  }
+
+  set volume(value) {
+    this._volume = Number(value);
+    this.volumeWrites.push(this._volume);
   }
 
   addEventListener(type, callback) {
@@ -119,6 +143,14 @@ globalThis.Audio = class MockAudio {
   }
 };
 
+async function waitFor(predicate, label) {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    if (predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  throw new Error(`Timed out waiting for ${label}`);
+}
+
 const server = await createServer({
   configFile: false,
   server: { middlewareMode: true, hmr: false },
@@ -129,6 +161,7 @@ try {
   const {
     executeLive2DMusicCommand,
     setLive2DMusicSpeechDucking,
+    syncLive2DMusicSpeechDucking,
     warmupLive2DMusicPlayback
   } = await server.ssrLoadModule('/src/frontend/services/room/live2dMusic.js');
   const {
@@ -150,14 +183,58 @@ try {
   playedUrls.length = 0;
   assert.deepEqual(
     setLive2DMusicSpeechDucking(true, { fadeMs: 0 }),
-    { active: true, duckVolume: 0.1, targetVolume: 0.1 }
+    { active: true, duckVolume: 0.08, targetVolume: 0.08 }
   );
-  assert.equal(latestAudio.volume, 0.1);
+  assert.equal(latestAudio.volume, 0.08);
   assert.deepEqual(
     setLive2DMusicSpeechDucking(false, { fadeMs: 0 }),
-    { active: false, duckVolume: 0.1, targetVolume: 1 }
+    { active: false, duckVolume: 0.08, targetVolume: 1 }
   );
   assert.equal(latestAudio.volume, 1);
+
+  setLive2DMusicSpeechDucking(true, { fadeMs: 0 });
+  setLive2DMusicSpeechDucking(false, { fadeMs: 120 });
+  await waitFor(
+    () => latestAudio.volume > 0.08 && latestAudio.volume < 0.95,
+    'partial music volume recovery'
+  );
+  const partialRecoveryVolume = latestAudio.volume;
+  setLive2DMusicSpeechDucking(true, { fadeMs: 0 });
+  setLive2DMusicSpeechDucking(false, { fadeMs: 0 });
+  assert.equal(
+    latestAudio.volume,
+    1,
+    `re-entering speech during recovery must not ratchet base volume down to ${partialRecoveryVolume}`
+  );
+  assert.equal(appleMusic.volume, 1);
+
+  for (let cycle = 0; cycle < 300; cycle += 1) {
+    syncLive2DMusicSpeechDucking('playing', { fadeMs: 0 });
+    syncLive2DMusicSpeechDucking(cycle % 2 ? 'loading' : 'idle', { fadeMs: 0 });
+  }
+  assert.equal(latestAudio.volume, 1, 'long-running speech state cycles must always restore local music');
+  assert.equal(appleMusic.volume, 1, 'long-running speech state cycles must always restore Apple Music');
+  syncLive2DMusicSpeechDucking('playing', { fadeMs: 0 });
+  const recoveredFromError = syncLive2DMusicSpeechDucking('error', { fadeMs: 0 });
+  assert.equal(recoveredFromError.active, false);
+  assert.equal(latestAudio.volume, 1, 'speech errors must force music recovery');
+
+  latestAudio.volumeWrites.length = 0;
+  appleVolumeWrites.length = 0;
+  setLive2DMusicSpeechDucking(true, { fadeMs: 90 });
+  assert.equal(latestAudio.volume, 1, 'local music fade must not jump on the first frame');
+  assert.equal(appleMusic.volume, 1, 'Apple Music fade must not jump on the first frame');
+  await waitFor(() => latestAudio.volume <= 0.08, 'smooth local music duck');
+  await waitFor(() => appleMusic.volume <= 0.08, 'smooth Apple Music duck');
+  assert.ok(
+    latestAudio.volumeWrites.some((value) => value > 0.08 && value < 1),
+    'local music duck must include intermediate volume steps'
+  );
+  assert.ok(
+    appleVolumeWrites.some((value) => value > 0.08 && value < 1),
+    'Apple Music duck must include intermediate volume steps'
+  );
+  setLive2DMusicSpeechDucking(false, { fadeMs: 0 });
 
   writeLive2DMusicQueueState({
     current: {

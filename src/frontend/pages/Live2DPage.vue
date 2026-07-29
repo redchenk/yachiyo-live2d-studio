@@ -37,6 +37,7 @@ import {
   reconcileLive2DMusicCommandWithAudience,
   resolveLive2DMusicRequester as musicRequesterFromAudience,
   setLive2DMusicSpeechDucking,
+  syncLive2DMusicSpeechDucking,
   warmupLive2DMusicPlayback
 } from '../services/room/live2dMusic';
 import { yachiyoMusicAdapter } from '../services/room/yachiyoMusicAdapter';
@@ -892,11 +893,10 @@ async function init() {
   speechPlayer = createLive2DSpeechPlayer({
     onState: (patch) => {
       speechState.value = { ...speechState.value, ...patch };
+      syncLive2DMusicSpeechDucking(patch.status);
       if (patch.status === 'playing') {
-        setLive2DMusicSpeechDucking(true);
         if (liveDirector.running) liveDirector.status = 'speaking';
       } else if (patch.status === 'idle' || patch.status === 'disabled' || patch.status === 'error') {
-        setLive2DMusicSpeechDucking(false);
         if (liveDirector.running && !liveTurnInFlight) liveDirector.status = 'idle';
       }
       if (patch.status === 'disabled' || patch.status === 'error') {
