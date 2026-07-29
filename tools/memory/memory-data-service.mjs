@@ -5,6 +5,7 @@ import http from 'node:http';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
+import { gzipSync } from 'node:zlib';
 import Database from 'better-sqlite3';
 
 const DEFAULT_PORT = 3299;
@@ -14,11 +15,12 @@ const DEFAULT_MILVUS_IMAGE = 'milvusdb/milvus:latest';
 const DEFAULT_MILVUS_URL = 'http://127.0.0.1:19530';
 const DEFAULT_PERSONA_CORPUS_FILE = 'yachiyo_novel_detailed_corpus.txt';
 const MANAGED_MILVUS_CONTAINER = 'yachiyo-milvus-standalone';
-const MAX_MEMORY_ROWS = 2000;
+const MAX_MEMORY_ROWS = 50000;
 const MAX_NOTE_BYTES = 256 * 1024;
 const MAX_WRITE_CHARS = 2400;
 const DOCKER_DAEMON_WAIT_MS = 120000;
 const SESSION_ROLLUP_MAX_MESSAGES = 24;
+const SESSION_ROLLUP_TURNS = 12;
 const DEFAULT_GC_ARCHIVE_DAYS = 30;
 const DEFAULT_GC_FORGET_DAYS = 120;
 const DEFAULT_RAW_RETENTION_DAYS = 120;
@@ -221,6 +223,9 @@ function openStore(settings) {
   fs.mkdirSync(path.dirname(settings.databasePath), { recursive: true });
   const db = new Database(settings.databasePath);
   db.pragma('journal_mode = WAL');
+  db.pragma('synchronous = FULL');
+  db.pragma('busy_timeout = 5000');
+  db.pragma('wal_autocheckpoint = 1000');
   db.pragma('foreign_keys = ON');
   db.exec(`
     CREATE TABLE IF NOT EXISTS memories (
@@ -366,10 +371,25 @@ function ensureColumn(db, tableName, columnSql) {
 function migrateStore(db) {
   ensureColumn(db, 'memories', "last_recalled TEXT NOT NULL DEFAULT ''");
   ensureColumn(db, 'memories', 'recall_count INTEGER NOT NULL DEFAULT 0');
+  ensureColumn(db, 'memories', "viewer_id TEXT NOT NULL DEFAULT ''");
+  ensureColumn(db, 'memories', "embedding_signature TEXT NOT NULL DEFAULT ''");
+  ensureColumn(db, 'memories', 'vector_dimension INTEGER NOT NULL DEFAULT 0');
   ensureColumn(db, 'mem_cells', 'pinned INTEGER NOT NULL DEFAULT 0');
   ensureColumn(db, 'mem_cells', 'decay_score REAL NOT NULL DEFAULT 0');
   ensureColumn(db, 'mem_cells', "last_recalled TEXT NOT NULL DEFAULT ''");
   ensureColumn(db, 'mem_cells', 'recall_count INTEGER NOT NULL DEFAULT 0');
+  ensureColumn(db, 'mem_cells', "viewer_id TEXT NOT NULL DEFAULT ''");
+  ensureColumn(db, 'mem_cells', "embedding_signature TEXT NOT NULL DEFAULT ''");
+  ensureColumn(db, 'mem_cells', 'vector_dimension INTEGER NOT NULL DEFAULT 0');
+  ensureColumn(db, 'mem_scenes', "viewer_id TEXT NOT NULL DEFAULT ''");
+  ensureColumn(db, 'mem_scenes', "embedding_signature TEXT NOT NULL DEFAULT ''");
+  ensureColumn(db, 'mem_scenes', 'vector_dimension INTEGER NOT NULL DEFAULT 0');
+  ensureColumn(db, 'raw_messages', "viewer_id TEXT NOT NULL DEFAULT ''");
+  ensureColumn(db, 'raw_messages', "compacted_at TEXT NOT NULL DEFAULT ''");
+  ensureColumn(db, 'user_profile', "viewer_id TEXT NOT NULL DEFAULT ''");
+  ensureColumn(db, 'retrieval_traces', "viewer_ids_json TEXT NOT NULL DEFAULT '[]'");
+  ensureColumn(db, 'retrieval_traces', "embedding_signature TEXT NOT NULL DEFAULT ''");
+  ensureColumn(db, 'retrieval_traces', 'vector_degraded INTEGER NOT NULL DEFAULT 0');
   db.exec(`
     CREATE TABLE IF NOT EXISTS memory_anchors (
       id TEXT PRIMARY KEY,
@@ -392,6 +412,58 @@ function migrateStore(db) {
       value TEXT NOT NULL DEFAULT '',
       updated TEXT NOT NULL DEFAULT ''
     );
+
+    CREATE TABLE IF NOT EXISTS viewer_profiles (
+      id TEXT PRIMARY KEY,
+      identity_key TEXT NOT NULL UNIQUE,
+      platform TEXT NOT NULL DEFAULT '',
+      platform_user_id TEXT NOT NULL DEFAULT '',
+      display_name TEXT NOT NULL DEFAULT '',
+      aliases_json TEXT NOT NULL DEFAULT '[]',
+      summary TEXT NOT NULL DEFAULT '',
+      topics_json TEXT NOT NULL DEFAULT '[]',
+      preferences_json TEXT NOT NULL DEFAULT '[]',
+      evidence_turn_ids_json TEXT NOT NULL DEFAULT '[]',
+      first_seen TEXT NOT NULL DEFAULT '',
+      last_seen TEXT NOT NULL DEFAULT '',
+      interaction_count INTEGER NOT NULL DEFAULT 0,
+      message_count INTEGER NOT NULL DEFAULT 0,
+      gift_count INTEGER NOT NULL DEFAULT 0,
+      superchat_count INTEGER NOT NULL DEFAULT 0,
+      guard_count INTEGER NOT NULL DEFAULT 0,
+      total_amount REAL NOT NULL DEFAULT 0,
+      last_message TEXT NOT NULL DEFAULT '',
+      last_event_type TEXT NOT NULL DEFAULT '',
+      last_session_id TEXT NOT NULL DEFAULT '',
+      updated TEXT NOT NULL DEFAULT ''
+    );
+    CREATE INDEX IF NOT EXISTS idx_viewer_profiles_platform_user ON viewer_profiles(platform, platform_user_id);
+    CREATE INDEX IF NOT EXISTS idx_viewer_profiles_last_seen ON viewer_profiles(last_seen DESC);
+
+    CREATE TABLE IF NOT EXISTS memory_segments (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL,
+      viewer_id TEXT NOT NULL DEFAULT '',
+      segment_index INTEGER NOT NULL DEFAULT 0,
+      first_turn_id TEXT NOT NULL DEFAULT '',
+      last_turn_id TEXT NOT NULL DEFAULT '',
+      turn_count INTEGER NOT NULL DEFAULT 0,
+      message_count INTEGER NOT NULL DEFAULT 0,
+      transcript_gzip BLOB NOT NULL,
+      content_hash TEXT NOT NULL DEFAULT '',
+      sealed INTEGER NOT NULL DEFAULT 0,
+      created TEXT NOT NULL DEFAULT '',
+      updated TEXT NOT NULL DEFAULT '',
+      UNIQUE(session_id, viewer_id, segment_index)
+    );
+    CREATE INDEX IF NOT EXISTS idx_memory_segments_session ON memory_segments(session_id, viewer_id, segment_index);
+    CREATE INDEX IF NOT EXISTS idx_memory_segments_updated ON memory_segments(updated DESC);
+
+    CREATE INDEX IF NOT EXISTS idx_memories_viewer ON memories(viewer_id, disabled, deleted);
+    CREATE INDEX IF NOT EXISTS idx_mem_cells_viewer ON mem_cells(viewer_id, status, updated DESC);
+    CREATE INDEX IF NOT EXISTS idx_mem_scenes_viewer ON mem_scenes(viewer_id, status, updated DESC);
+    CREATE INDEX IF NOT EXISTS idx_raw_messages_viewer ON raw_messages(viewer_id, session_id, created);
+    CREATE INDEX IF NOT EXISTS idx_user_profile_viewer ON user_profile(viewer_id, category, status);
   `);
 }
 
@@ -620,9 +692,21 @@ function addHashedTerm(vector, term, weight) {
   vector[index] += sign * weight;
 }
 
-async function embeddingFor(text, settings) {
+function configuredEmbeddingSignature(settings) {
+  const dimension = Math.max(32, Math.min(4096, Math.round(Number(settings.embeddingDimension) || DEFAULT_DIMENSION)));
+  if (!settings.embeddingApiUrl || !settings.embeddingApiKey) return `hash-v2:${dimension}`;
+  return `api:${sha1(settings.embeddingApiUrl).slice(0, 12)}:${settings.embeddingModel}:${dimension}`;
+}
+
+async function embeddingForDetailed(text, settings) {
+  const hashSignature = `hash-v2:${settings.embeddingDimension}`;
   if (!settings.embeddingApiUrl || !settings.embeddingApiKey) {
-    return hashEmbedding(text, settings.embeddingDimension);
+    return {
+      vector: hashEmbedding(text, settings.embeddingDimension),
+      signature: hashSignature,
+      degraded: false,
+      provider: 'hash'
+    };
   }
   try {
     const response = await fetch(settings.embeddingApiUrl, {
@@ -641,10 +725,43 @@ async function embeddingFor(text, settings) {
     const payload = await response.json();
     const vector = payload?.data?.[0]?.embedding || payload?.embedding;
     if (!Array.isArray(vector) || !vector.length) throw new Error('empty embedding');
-    return normalizeVector(vector, settings.embeddingDimension);
-  } catch (_) {
-    return hashEmbedding(text, settings.embeddingDimension);
+    return {
+      vector: normalizeVector(vector, settings.embeddingDimension),
+      signature: configuredEmbeddingSignature(settings),
+      degraded: false,
+      provider: 'api'
+    };
+  } catch (error) {
+    return {
+      vector: hashEmbedding(text, settings.embeddingDimension),
+      signature: `${hashSignature}:fallback`,
+      degraded: true,
+      provider: 'hash',
+      error: error.message || 'Embedding API unavailable.'
+    };
   }
+}
+
+async function embeddingFor(text, settings) {
+  return (await embeddingForDetailed(text, settings)).vector;
+}
+
+function vectorIsValid(vector, dimension) {
+  if (!Array.isArray(vector) || vector.length !== Number(dimension)) return false;
+  if (vector.some((item) => !Number.isFinite(Number(item)))) return false;
+  const norm = Math.sqrt(vector.reduce((sum, item) => sum + Number(item) * Number(item), 0));
+  return Number.isFinite(norm) && norm > 0.92 && norm < 1.08;
+}
+
+function embeddingsCompatible(leftSignature, rightSignature, leftVector, rightVector) {
+  return Boolean(
+    leftSignature &&
+    rightSignature &&
+    leftSignature === rightSignature &&
+    Array.isArray(leftVector) &&
+    Array.isArray(rightVector) &&
+    leftVector.length === rightVector.length
+  );
 }
 
 function normalizeVector(vector, dimension) {
@@ -679,10 +796,13 @@ function noteEmbeddingText(note) {
 }
 
 async function prepareNoteForStore(note, settings) {
-  const vector = await embeddingFor(noteEmbeddingText(note), settings);
+  const embedding = await embeddingForDetailed(noteEmbeddingText(note), settings);
   return {
     ...note,
-    vector
+    vector: embedding.vector,
+    embeddingSignature: embedding.signature,
+    vectorDimension: embedding.vector.length,
+    embeddingDegraded: embedding.degraded
   };
 }
 
@@ -690,11 +810,13 @@ function upsertNote(db, note) {
   db.prepare(`
     INSERT INTO memories (
       id, title, type, scope, tags_json, summary, content, source, path,
-      importance, confidence, disabled, deleted, review_status, updated, content_hash, vector_json
+      importance, confidence, disabled, deleted, review_status, updated, content_hash, vector_json,
+      viewer_id, embedding_signature, vector_dimension
     )
     VALUES (
       @id, @title, @type, @scope, @tagsJson, @summary, @content, @source, @path,
-      @importance, @confidence, @disabled, @deleted, @reviewStatus, @updated, @contentHash, @vectorJson
+      @importance, @confidence, @disabled, @deleted, @reviewStatus, @updated, @contentHash, @vectorJson,
+      @viewerId, @embeddingSignature, @vectorDimension
     )
     ON CONFLICT(id) DO UPDATE SET
       title = excluded.title,
@@ -711,7 +833,10 @@ function upsertNote(db, note) {
       review_status = excluded.review_status,
       updated = excluded.updated,
       content_hash = excluded.content_hash,
-      vector_json = excluded.vector_json
+      vector_json = excluded.vector_json,
+      viewer_id = excluded.viewer_id,
+      embedding_signature = excluded.embedding_signature,
+      vector_dimension = excluded.vector_dimension
   `).run({
     id: note.id,
     title: note.title,
@@ -729,7 +854,10 @@ function upsertNote(db, note) {
     reviewStatus: note.reviewStatus || 'approved',
     updated: note.updated || new Date().toISOString(),
     contentHash: note.contentHash || sha1(`${note.title}\n${note.content}`),
-    vectorJson: JSON.stringify(note.vector || [])
+    vectorJson: JSON.stringify(note.vector || []),
+    viewerId: note.viewerId || '',
+    embeddingSignature: note.embeddingSignature || '',
+    vectorDimension: Number(note.vectorDimension) || (note.vector || []).length
   });
 }
 
@@ -758,6 +886,9 @@ function rowToNote(row) {
     contentHash: row.content_hash,
     lastRecalled: row.last_recalled || '',
     recallCount: Number(row.recall_count) || 0,
+    viewerId: row.viewer_id || '',
+    embeddingSignature: row.embedding_signature || '',
+    vectorDimension: Number(row.vector_dimension) || vector.length,
     vector
   };
 }
@@ -827,8 +958,14 @@ function cellEmbeddingText(cell) {
 }
 
 async function prepareCellForStore(cell, settings) {
-  const vector = await embeddingFor(cellEmbeddingText(cell), settings);
-  return { ...cell, vector };
+  const embedding = await embeddingForDetailed(cellEmbeddingText(cell), settings);
+  return {
+    ...cell,
+    vector: embedding.vector,
+    embeddingSignature: embedding.signature,
+    vectorDimension: embedding.vector.length,
+    embeddingDegraded: embedding.degraded
+  };
 }
 
 function rowToCell(row) {
@@ -857,6 +994,9 @@ function rowToCell(row) {
     decayScore: Number(row.decay_score) || 0,
     lastRecalled: row.last_recalled || '',
     recallCount: Number(row.recall_count) || 0,
+    viewerId: row.viewer_id || '',
+    embeddingSignature: row.embedding_signature || '',
+    vectorDimension: Number(row.vector_dimension) || readJsonValue(row.vector_json, []).length,
     vector: readJsonValue(row.vector_json, [])
   };
 }
@@ -892,7 +1032,10 @@ function rowToScene(row) {
     status: row.status,
     created: row.created,
     updated: row.updated,
-    lastCellId: row.last_cell_id
+    lastCellId: row.last_cell_id,
+    viewerId: row.viewer_id || '',
+    embeddingSignature: row.embedding_signature || '',
+    vectorDimension: Number(row.vector_dimension) || readJsonValue(row.centroid_vector_json, []).length
   };
 }
 
@@ -908,8 +1051,170 @@ function rowToProfile(row) {
     status: row.status,
     validFrom: row.valid_from,
     validUntil: row.valid_until,
+    viewerId: row.viewer_id || '',
     updated: row.updated
   };
+}
+
+function normalizeViewerIdentity(value = {}) {
+  if (!value || typeof value !== 'object') return null;
+  const platform = asText(value.platform || value.source || 'bilibili', 40).toLowerCase().replace(/[^a-z0-9_-]+/g, '-');
+  const platformUserId = asText(value.platformUserId || value.userId || value.uid || value.id, 120);
+  const displayName = asText(value.displayName || value.userName || value.username || value.name, 120);
+  if (!platformUserId && !displayName) return null;
+  const identityKey = platformUserId
+    ? `${platform}:${platformUserId}`
+    : `${platform}:name:${displayName.normalize('NFKC').toLowerCase()}`;
+  return {
+    id: `viewer-${sha1(identityKey).slice(0, 24)}`,
+    identityKey,
+    platform,
+    platformUserId,
+    displayName: displayName || platformUserId
+  };
+}
+
+function rowToViewerProfile(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    identityKey: row.identity_key,
+    platform: row.platform,
+    platformUserId: row.platform_user_id,
+    displayName: row.display_name,
+    aliases: readJsonValue(row.aliases_json, []),
+    summary: row.summary,
+    topics: readJsonValue(row.topics_json, []),
+    preferences: readJsonValue(row.preferences_json, []),
+    evidenceTurnIds: readJsonValue(row.evidence_turn_ids_json, []),
+    firstSeen: row.first_seen,
+    lastSeen: row.last_seen,
+    interactionCount: Number(row.interaction_count) || 0,
+    messageCount: Number(row.message_count) || 0,
+    giftCount: Number(row.gift_count) || 0,
+    superchatCount: Number(row.superchat_count) || 0,
+    guardCount: Number(row.guard_count) || 0,
+    totalAmount: Number(row.total_amount) || 0,
+    lastMessage: row.last_message,
+    lastEventType: row.last_event_type,
+    lastSessionId: row.last_session_id,
+    updated: row.updated
+  };
+}
+
+function preferenceHints(text) {
+  const value = asText(text, 600);
+  if (!value || !/(喜欢|最爱|想听|我要听|点歌|偏好|讨厌|favorite|prefer|like|love|request)/iu.test(value)) return [];
+  return [value];
+}
+
+function upsertViewerProfile(db, viewer, event = {}) {
+  if (!viewer) return null;
+  const existing = rowToViewerProfile(db.prepare('SELECT * FROM viewer_profiles WHERE id = ?').get(viewer.id));
+  const now = asText(event.at || event.created || new Date().toISOString(), 80);
+  const message = asText(event.input || event.message || event.text, 600);
+  const eventType = asText(event.eventType || event.messageType || event.type || 'message', 40).toLowerCase();
+  const topics = [...new Set([...(existing?.topics || []), ...textKeywords(message)])].slice(-32);
+  const preferences = [...new Set([...(existing?.preferences || []), ...preferenceHints(message)])].slice(-20);
+  const aliases = [...new Set([...(existing?.aliases || []), existing?.displayName, viewer.displayName].filter(Boolean))].slice(-12);
+  const evidenceTurnIds = [...new Set([...(existing?.evidenceTurnIds || []), asText(event.turnId || event.turn_id, 120)].filter(Boolean))].slice(-100);
+  const interactionCount = (existing?.interactionCount || 0) + 1;
+  const summary = [
+    `${viewer.displayName} is a ${viewer.platform} viewer with ${interactionCount} recorded interaction(s).`,
+    topics.length ? `Recent durable topics: ${topics.slice(-8).join(', ')}.` : '',
+    preferences.length ? `Confirmed preference evidence: ${preferences.slice(-3).join(' | ')}` : ''
+  ].filter(Boolean).join(' ');
+  const amount = Math.max(0, Number(event.price ?? event.amount) || 0);
+  db.prepare(`
+    INSERT INTO viewer_profiles (
+      id, identity_key, platform, platform_user_id, display_name, aliases_json,
+      summary, topics_json, preferences_json, evidence_turn_ids_json, first_seen,
+      last_seen, interaction_count, message_count, gift_count, superchat_count,
+      guard_count, total_amount, last_message, last_event_type, last_session_id, updated
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET
+      identity_key = excluded.identity_key,
+      platform = excluded.platform,
+      platform_user_id = CASE WHEN excluded.platform_user_id != '' THEN excluded.platform_user_id ELSE viewer_profiles.platform_user_id END,
+      display_name = CASE WHEN excluded.display_name != '' THEN excluded.display_name ELSE viewer_profiles.display_name END,
+      aliases_json = excluded.aliases_json,
+      summary = excluded.summary,
+      topics_json = excluded.topics_json,
+      preferences_json = excluded.preferences_json,
+      evidence_turn_ids_json = excluded.evidence_turn_ids_json,
+      last_seen = excluded.last_seen,
+      interaction_count = excluded.interaction_count,
+      message_count = excluded.message_count,
+      gift_count = excluded.gift_count,
+      superchat_count = excluded.superchat_count,
+      guard_count = excluded.guard_count,
+      total_amount = excluded.total_amount,
+      last_message = excluded.last_message,
+      last_event_type = excluded.last_event_type,
+      last_session_id = excluded.last_session_id,
+      updated = excluded.updated
+  `).run(
+    viewer.id,
+    viewer.identityKey,
+    viewer.platform,
+    viewer.platformUserId,
+    viewer.displayName,
+    stableJson(aliases),
+    summary,
+    stableJson(topics),
+    stableJson(preferences),
+    stableJson(evidenceTurnIds),
+    existing?.firstSeen || now,
+    now,
+    interactionCount,
+    (existing?.messageCount || 0) + (eventType === 'message' || eventType === 'danmu' ? 1 : 0),
+    (existing?.giftCount || 0) + (eventType === 'gift' ? 1 : 0),
+    (existing?.superchatCount || 0) + (eventType === 'superchat' ? 1 : 0),
+    (existing?.guardCount || 0) + (eventType === 'guard' ? 1 : 0),
+    (existing?.totalAmount || 0) + amount,
+    message || existing?.lastMessage || '',
+    eventType,
+    asText(event.sessionId || event.session_id, 120),
+    now
+  );
+  return rowToViewerProfile(db.prepare('SELECT * FROM viewer_profiles WHERE id = ?').get(viewer.id));
+}
+
+function viewerLookupValues(input = {}) {
+  const query = input.query && typeof input.query === 'object' ? input.query : {};
+  const values = [
+    ...(Array.isArray(input.viewerIds) ? input.viewerIds : []),
+    ...(Array.isArray(query.viewerIds) ? query.viewerIds : []),
+    ...(Array.isArray(input.viewers) ? input.viewers : []),
+    ...(Array.isArray(query.viewers) ? query.viewers : [])
+  ];
+  if (input.viewer) values.push(input.viewer);
+  if (query.viewer) values.push(query.viewer);
+  return values;
+}
+
+function resolveViewerProfiles(db, input = {}) {
+  const all = db.prepare('SELECT * FROM viewer_profiles ORDER BY last_seen DESC').all().map(rowToViewerProfile).filter(Boolean);
+  const lookups = viewerLookupValues(input);
+  if (!lookups.length) return [];
+  const requested = new Set();
+  for (const lookup of lookups) {
+    if (lookup && typeof lookup === 'object') {
+      const identity = normalizeViewerIdentity(lookup);
+      if (identity) {
+        requested.add(identity.id);
+        requested.add(identity.identityKey);
+      }
+      continue;
+    }
+    const token = asText(lookup, 160);
+    if (token) requested.add(token);
+  }
+  return all.filter((viewer) => (
+    requested.has(viewer.id) ||
+    requested.has(viewer.identityKey) ||
+    requested.has(viewer.platformUserId)
+  ));
 }
 
 function cellPublic(cell, score = undefined, scene = null) {
@@ -960,6 +1265,7 @@ function memoryNoteToCell(note, settings) {
     decayScore: 0,
     lastRecalled: '',
     recallCount: 0,
+    viewerId: note.viewerId || '',
     settingsDimension: settings.embeddingDimension
   };
 }
@@ -1011,13 +1317,13 @@ function upsertCell(db, cell) {
       id, title, type, scope, episode, facts_json, foresight_json, source_turn_ids_json,
       source_memory_id, source, scene_id, importance, confidence, status, valid_from,
       valid_until, created, updated, content_hash, vector_json, pinned, decay_score,
-      last_recalled, recall_count
+      last_recalled, recall_count, viewer_id, embedding_signature, vector_dimension
     )
     VALUES (
       @id, @title, @type, @scope, @episode, @factsJson, @foresightJson, @sourceTurnIdsJson,
       @sourceMemoryId, @source, @sceneId, @importance, @confidence, @status, @validFrom,
       @validUntil, @created, @updated, @contentHash, @vectorJson, @pinned, @decayScore,
-      @lastRecalled, @recallCount
+      @lastRecalled, @recallCount, @viewerId, @embeddingSignature, @vectorDimension
     )
     ON CONFLICT(id) DO UPDATE SET
       title = excluded.title,
@@ -1038,6 +1344,9 @@ function upsertCell(db, cell) {
       updated = excluded.updated,
       content_hash = excluded.content_hash,
       vector_json = excluded.vector_json,
+      viewer_id = excluded.viewer_id,
+      embedding_signature = excluded.embedding_signature,
+      vector_dimension = excluded.vector_dimension,
       pinned = CASE WHEN mem_cells.pinned > excluded.pinned THEN mem_cells.pinned ELSE excluded.pinned END,
       decay_score = excluded.decay_score
   `).run({
@@ -1064,7 +1373,10 @@ function upsertCell(db, cell) {
     pinned: cell.pinned ? 1 : 0,
     decayScore: Number(cell.decayScore) || 0,
     lastRecalled: cell.lastRecalled || '',
-    recallCount: Number(cell.recallCount) || 0
+    recallCount: Number(cell.recallCount) || 0,
+    viewerId: cell.viewerId || '',
+    embeddingSignature: cell.embeddingSignature || '',
+    vectorDimension: Number(cell.vectorDimension) || (cell.vector || []).length
   });
 }
 
@@ -1082,10 +1394,16 @@ function activeCells(db) {
 
 function chooseSceneForCell(db, cell) {
   const keywords = cellKeywords(cell);
-  const scenes = activeScenes(db);
+  const scenes = activeScenes(db).filter((scene) => scene.viewerId === (cell.viewerId || ''));
   let best = null;
   for (const scene of scenes) {
-    const score = cosine(cell.vector, scene.centroidVector) * 0.74 + keywordOverlapScore(keywords, scene.keywords) * 0.26;
+    const vectorScore = embeddingsCompatible(
+      cell.embeddingSignature,
+      scene.embeddingSignature,
+      cell.vector,
+      scene.centroidVector
+    ) ? cosine(cell.vector, scene.centroidVector) : 0;
+    const score = vectorScore * 0.74 + keywordOverlapScore(keywords, scene.keywords) * 0.26;
     if (!best || score > best.score) best = { scene, score };
   }
   if (best && best.score >= 0.62) return best.scene;
@@ -1103,15 +1421,20 @@ function chooseSceneForCell(db, cell) {
     status: 'active',
     created: now,
     updated: now,
-    lastCellId: cell.id
+    lastCellId: cell.id,
+    viewerId: cell.viewerId || '',
+    embeddingSignature: cell.embeddingSignature || '',
+    vectorDimension: Number(cell.vectorDimension) || (cell.vector || []).length
   };
   db.prepare(`
     INSERT OR IGNORE INTO mem_scenes (
       id, title, summary, keywords_json, centroid_vector_json, cell_count,
-      importance, confidence, status, created, updated, last_cell_id
+      importance, confidence, status, created, updated, last_cell_id,
+      viewer_id, embedding_signature, vector_dimension
     )
     VALUES (@id, @title, @summary, @keywordsJson, @centroidVectorJson, @cellCount,
-      @importance, @confidence, @status, @created, @updated, @lastCellId)
+      @importance, @confidence, @status, @created, @updated, @lastCellId,
+      @viewerId, @embeddingSignature, @vectorDimension)
   `).run({
     ...scene,
     keywordsJson: stableJson(scene.keywords),
@@ -1143,10 +1466,12 @@ function recomputeScene(db, sceneId, settings) {
   db.prepare(`
     UPDATE mem_scenes SET
       summary = ?, keywords_json = ?, centroid_vector_json = ?, cell_count = ?,
-      importance = ?, confidence = ?, updated = ?, last_cell_id = ?
+      importance = ?, confidence = ?, updated = ?, last_cell_id = ?,
+      viewer_id = ?, embedding_signature = ?, vector_dimension = ?
     WHERE id = ?
   `).run(summary || scene?.summary || '', stableJson(keywords), stableJson(centroid), rows.length,
-    importance, confidence, now, rows[0].id, sceneId);
+    importance, confidence, now, rows[0].id, rows[0].viewerId || '',
+    rows[0].embeddingSignature || '', centroid.length, sceneId);
   return rowToScene(db.prepare('SELECT * FROM mem_scenes WHERE id = ?').get(sceneId));
 }
 
@@ -1168,16 +1493,17 @@ function updateProfileFromCell(db, cell) {
   const category = profileCategoryForCell(cell);
   if (!category || cell.confidence < 0.58) return null;
   const name = safeSlug(cell.title || cell.type).slice(0, 80) || cell.type;
-  const id = `profile-${category}-${sha1(name).slice(0, 16)}`;
+  const id = `profile-${category}-${sha1(`${cell.viewerId || 'global'}:${name}`).slice(0, 16)}`;
   const existing = rowToProfile(db.prepare('SELECT * FROM user_profile WHERE id = ?').get(id));
   const evidence = [...new Set([...(existing?.evidence || []), cell.id])].slice(-12);
   const confidence = Math.min(1, Math.max(existing?.confidence || 0, cell.confidence) + Math.max(0, evidence.length - 1) * 0.04);
   const status = evidence.length >= 2 || cell.confidence >= 0.78 ? 'active' : 'candidate';
   db.prepare(`
     INSERT INTO user_profile (
-      id, category, name, value, confidence, evidence_json, status, valid_from, valid_until, updated
+      id, category, name, value, confidence, evidence_json, status, valid_from, valid_until, updated,
+      viewer_id
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       value = excluded.value,
       confidence = excluded.confidence,
@@ -1185,9 +1511,10 @@ function updateProfileFromCell(db, cell) {
       status = excluded.status,
       valid_from = excluded.valid_from,
       valid_until = excluded.valid_until,
+      viewer_id = excluded.viewer_id,
       updated = excluded.updated
   `).run(id, category, name, cell.episode, confidence, stableJson(evidence), status,
-    cell.validFrom || cell.created || '', cell.validUntil || '', new Date().toISOString());
+    cell.validFrom || cell.created || '', cell.validUntil || '', new Date().toISOString(), cell.viewerId || '');
   return rowToProfile(db.prepare('SELECT * FROM user_profile WHERE id = ?').get(id));
 }
 
@@ -1242,7 +1569,8 @@ function upsertAnchorForCell(db, cell, settings, reason = 'importance') {
     source: cell.source || '',
     type: cell.type || '',
     scope: cell.scope || '',
-    sceneId: cell.sceneId || ''
+    sceneId: cell.sceneId || '',
+    viewerId: cell.viewerId || ''
   };
   db.prepare(`
     INSERT INTO memory_anchors (
@@ -1298,16 +1626,128 @@ async function ensureLifecycleForNotes(db, notes, settings) {
   };
 }
 
+async function repairVectorItems(items, batchSize, prepare, store) {
+  let repaired = 0;
+  let degraded = 0;
+  for (let offset = 0; offset < items.length; offset += batchSize) {
+    const batch = items.slice(offset, offset + batchSize);
+    const prepared = await Promise.all(batch.map((item) => prepare(item)));
+    for (const item of prepared) {
+      store(item);
+      repaired += 1;
+      if (item.embeddingDegraded) degraded += 1;
+    }
+  }
+  return { repaired, degraded };
+}
+
+async function auditAndRepairVectorIndex(db, settings, options = {}) {
+  const repair = options.repair !== false;
+  const expectedSignature = configuredEmbeddingSignature(settings);
+  const notes = activeRows(db, true, MAX_MEMORY_ROWS);
+  const cells = db.prepare('SELECT * FROM mem_cells ORDER BY updated DESC LIMIT ?')
+    .all(MAX_MEMORY_ROWS)
+    .map(rowToCell)
+    .filter(Boolean);
+  const invalidNoteRows = notes.filter((note) => (
+    !vectorIsValid(note.vector, settings.embeddingDimension) ||
+    note.embeddingSignature !== expectedSignature
+  ));
+  const invalidCellRows = cells.filter((cell) => (
+    !vectorIsValid(cell.vector, settings.embeddingDimension) ||
+    cell.embeddingSignature !== expectedSignature
+  ));
+  let repairedNotes = 0;
+  let repairedCells = 0;
+  let degraded = 0;
+
+  if (repair && invalidNoteRows.length) {
+    const result = await repairVectorItems(
+      invalidNoteRows,
+      8,
+      (note) => prepareNoteForStore(note, settings),
+      (note) => upsertNote(db, note)
+    );
+    repairedNotes = result.repaired;
+    degraded += result.degraded;
+  }
+  if (repair && invalidCellRows.length) {
+    const result = await repairVectorItems(
+      invalidCellRows,
+      8,
+      (cell) => prepareCellForStore(cell, settings),
+      (cell) => upsertCell(db, cell)
+    );
+    repairedCells = result.repaired;
+    degraded += result.degraded;
+    const sceneIds = [...new Set(invalidCellRows.map((cell) => cell.sceneId).filter(Boolean))];
+    for (const sceneId of sceneIds) recomputeScene(db, sceneId, settings);
+  }
+
+  const remainingInvalidNotes = db.prepare('SELECT vector_json, embedding_signature FROM memories WHERE deleted = 0')
+    .all()
+    .filter((row) => (
+      !vectorIsValid(readJsonValue(row.vector_json, []), settings.embeddingDimension) ||
+      row.embedding_signature !== expectedSignature
+    )).length;
+  const remainingInvalidCells = db.prepare("SELECT vector_json, embedding_signature FROM mem_cells WHERE status != 'forgotten'")
+    .all()
+    .filter((row) => (
+      !vectorIsValid(readJsonValue(row.vector_json, []), settings.embeddingDimension) ||
+      row.embedding_signature !== expectedSignature
+    )).length;
+  const health = {
+    signature: expectedSignature,
+    dimension: settings.embeddingDimension,
+    notes: notes.length,
+    cells: cells.length,
+    repairedNotes,
+    repairedCells,
+    invalidNotes: remainingInvalidNotes,
+    invalidCells: remainingInvalidCells,
+    degraded,
+    compatible: remainingInvalidNotes === 0 && remainingInvalidCells === 0
+  };
+  setMeta(db, 'vector-health', health);
+  return health;
+}
+
+function memoryOrganizationStatus(db) {
+  const integrityRows = db.pragma('quick_check');
+  const integrity = integrityRows.every((row) => String(row.quick_check || '').toLowerCase() === 'ok') ? 'ok' : 'error';
+  return {
+    integrity,
+    viewers: Number(db.prepare('SELECT COUNT(*) AS count FROM viewer_profiles').get()?.count) || 0,
+    segments: Number(db.prepare('SELECT COUNT(*) AS count FROM memory_segments').get()?.count) || 0,
+    sealedSegments: Number(db.prepare('SELECT COUNT(*) AS count FROM memory_segments WHERE sealed = 1').get()?.count) || 0,
+    rawMessages: Number(db.prepare('SELECT COUNT(*) AS count FROM raw_messages').get()?.count) || 0,
+    activeCells: Number(db.prepare("SELECT COUNT(*) AS count FROM mem_cells WHERE status IN ('active', 'candidate')").get()?.count) || 0,
+    anchors: Number(db.prepare('SELECT COUNT(*) AS count FROM memory_anchors').get()?.count) || 0
+  };
+}
+
 function setMeta(db, key, value) {
+  const serialized = value && typeof value === 'object' ? stableJson(value) : String(value || '');
   db.prepare(`
     INSERT INTO memory_meta (key, value, updated)
     VALUES (?, ?, ?)
     ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated = excluded.updated
-  `).run(key, String(value || ''), new Date().toISOString());
+  `).run(key, serialized, new Date().toISOString());
 }
 
 function getMeta(db, key) {
   return db.prepare('SELECT value FROM memory_meta WHERE key = ?').get(key)?.value || '';
+}
+
+function maybeRunAutomaticMaintenance(db, settings, minimumIntervalMs = 15 * 60 * 1000) {
+  const now = Date.now();
+  const lastRun = Number(getMeta(db, 'last-auto-maintenance-at')) || 0;
+  if (lastRun > 0 && now - lastRun < minimumIntervalMs) return { skipped: true };
+  const gc = garbageCollectMemory(db, settings);
+  db.pragma('optimize');
+  db.pragma('wal_checkpoint(PASSIVE)');
+  setMeta(db, 'last-auto-maintenance-at', now);
+  return { skipped: false, gc, at: new Date(now).toISOString() };
 }
 
 function fileSignature(file) {
@@ -1720,6 +2160,8 @@ function scoreNote(note, query, options = {}) {
   if (queryText && haystack.includes(queryText.slice(0, 80))) score += 0.16;
   if (options.vectorScore !== undefined) score += Number(options.vectorScore) * 0.34;
   if (options.milvusScore !== undefined) score += Number(options.milvusScore) * 0.42;
+  if (options.viewerMatch) score += 0.34;
+  if (note.viewerId && note.type === 'viewer') score += 0.2;
   score += Math.min(0.16, Number(note.importance || 0) * 0.11 + Number(note.confidence || 0) * 0.05);
   if (note.source === 'seed' && ['profile', 'style', 'lore', 'policy'].includes(note.type)) score += 0.08;
   return score;
@@ -1742,26 +2184,40 @@ function isCellExpired(cell, now = new Date()) {
   return Number.isFinite(until) && until < now.getTime();
 }
 
-function scoreScene(scene, queryVector, queryKeywords) {
-  return cosine(queryVector, scene.centroidVector) * 0.72 +
+function scoreScene(scene, queryEmbedding, queryKeywords) {
+  const vectorScore = embeddingsCompatible(
+    queryEmbedding.signature,
+    scene.embeddingSignature,
+    queryEmbedding.vector,
+    scene.centroidVector
+  ) ? cosine(queryEmbedding.vector, scene.centroidVector) : 0;
+  return vectorScore * 0.72 +
     keywordOverlapScore(queryKeywords, scene.keywords) * 0.22 +
-    Math.min(0.06, Number(scene.importance || 0) * 0.06);
+    Math.min(0.06, Number(scene.importance || 0) * 0.06) +
+    (scene.viewerId ? 0.26 : 0);
 }
 
-function scoreCell(cell, query, queryVector, sceneBoost = 0) {
+function scoreCell(cell, query, queryEmbedding, sceneBoost = 0) {
   const queryText = String(query.text || '').toLowerCase();
   const queryTags = normalizeTags(query.tags || []);
   const queryKeywords = normalizeTags([...(query.keywords || []), ...textKeywords(queryText)]);
   const haystack = [cell.title, cell.type, cell.scope, cell.episode, ...(cell.facts || []), ...(cell.foresight || []).map((item) => item.content)]
     .join('\n')
     .toLowerCase();
-  let score = cosine(queryVector, cell.vector) * 0.42 + sceneBoost;
+  const vectorScore = embeddingsCompatible(
+    queryEmbedding.signature,
+    cell.embeddingSignature,
+    queryEmbedding.vector,
+    cell.vector
+  ) ? cosine(queryEmbedding.vector, cell.vector) : 0;
+  let score = vectorScore * 0.42 + sceneBoost;
   score += keywordOverlapScore(queryKeywords, textKeywords(haystack)) * 0.18;
   for (const tag of queryTags) {
     if (haystack.includes(tag)) score += 0.06;
   }
   if (queryText && haystack.includes(queryText.slice(0, 80))) score += 0.08;
   if (cell.scope === 'temporary' || cell.type === 'session') score += 0.03;
+  if (cell.viewerId) score += cell.type === 'viewer' ? 0.38 : 0.28;
   score += Math.min(0.14, Number(cell.importance || 0) * 0.08 + Number(cell.confidence || 0) * 0.06);
   if (isCellExpired(cell)) score *= 0.18;
   return score;
@@ -1781,6 +2237,7 @@ function anchorPublic(anchor, score = undefined) {
     source: metadata?.source || '',
     type: metadata?.type || '',
     sceneId: metadata?.sceneId || '',
+    viewerId: metadata?.viewerId || '',
     ...(score === undefined ? {} : { score: Number(score.toFixed(4)) })
   };
 }
@@ -1808,12 +2265,13 @@ function markRecalled(db, target) {
   return { cells: cellIds.length, notes: noteIds.length, anchors: anchorIds.length };
 }
 
-function relevantProfileRows(db, queryText, limit = 6) {
+function relevantProfileRows(db, queryText, limit = 6, viewerIds = new Set()) {
   const queryKeywords = textKeywords(queryText);
   return db.prepare("SELECT * FROM user_profile WHERE status IN ('active', 'candidate') ORDER BY confidence DESC, updated DESC LIMIT ?")
     .all(80)
     .map(rowToProfile)
     .filter(Boolean)
+    .filter((profile) => !profile.viewerId || viewerIds.has(profile.viewerId))
     .map((profile) => {
       const haystack = `${profile.category} ${profile.name} ${profile.value}`.toLowerCase();
       const score = keywordOverlapScore(queryKeywords, textKeywords(haystack)) + Number(profile.confidence || 0) * 0.36;
@@ -1863,29 +2321,35 @@ function insertRetrievalTrace(db, trace) {
   db.prepare(`
     INSERT INTO retrieval_traces (
       id, query_text, query_type, scene_ids_json, cell_ids_json, note_ids_json,
-      sufficient, missing_json, created, context_json
+      sufficient, missing_json, created, context_json, viewer_ids_json,
+      embedding_signature, vector_degraded
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(id, trace.queryText || '', trace.queryType || 'general', stableJson(trace.sceneIds || []),
     stableJson(trace.cellIds || []), stableJson(trace.noteIds || []), trace.sufficient ? 1 : 0,
-    stableJson(trace.missing || []), created, stableJson(trace.context || {}));
+    stableJson(trace.missing || []), created, stableJson(trace.context || {}),
+    stableJson(trace.viewerIds || []), trace.embeddingSignature || '', trace.vectorDegraded ? 1 : 0);
   return id;
 }
 
-async function buildRecollection(db, settings, input, legacyNotes) {
+async function buildRecollection(db, settings, input, legacyNotes, providedQueryEmbedding = null) {
   const query = input.query || {};
   const queryText = String(query.text || '').trim();
   const queryType = queryTypeFor(queryText);
-  const queryVector = await embeddingFor(queryText, settings);
-  let cells = activeCells(db);
+  const queryEmbedding = providedQueryEmbedding || await embeddingForDetailed(queryText, settings);
+  const viewers = resolveViewerProfiles(db, input);
+  const viewerIds = new Set(viewers.map((viewer) => viewer.id));
+  let cells = activeCells(db).filter((cell) => !cell.viewerId || viewerIds.has(cell.viewerId));
   if (!cells.length) {
     const notes = activeRows(db, false, MAX_MEMORY_ROWS);
     await ensureLifecycleForNotes(db, notes, settings);
-    cells = activeCells(db);
+    cells = activeCells(db).filter((cell) => !cell.viewerId || viewerIds.has(cell.viewerId));
   }
-  const scenes = activeScenes(db);
+  const scenes = activeScenes(db).filter((scene) => !scene.viewerId || viewerIds.has(scene.viewerId));
+  const allowedCellIds = new Set(cells.map((cell) => cell.id));
   const queryKeywords = normalizeTags([...(query.keywords || []), ...textKeywords(queryText), ...(query.tags || [])]);
   const anchorScores = activeAnchors(db)
+    .filter((anchor) => anchor.targetType !== 'cell' || allowedCellIds.has(anchor.targetId))
     .map((anchor) => ({ anchor, score: scoreAnchor(anchor, queryText.toLowerCase(), queryKeywords) }))
     .filter((item) => item.score > 0.16 || !queryText)
     .sort((a, b) => b.score - a.score)
@@ -1894,7 +2358,7 @@ async function buildRecollection(db, settings, input, legacyNotes) {
     .filter((item) => item.anchor.targetType === 'cell')
     .map((item) => [item.anchor.targetId, item.score]));
   const sceneScores = scenes
-    .map((scene) => ({ scene, score: scoreScene(scene, queryVector, queryKeywords) }))
+    .map((scene) => ({ scene, score: scoreScene(scene, queryEmbedding, queryKeywords) }))
     .filter((item) => item.score > 0.22 || !queryText)
     .sort((a, b) => b.score - a.score)
     .slice(0, 5);
@@ -1905,13 +2369,13 @@ async function buildRecollection(db, settings, input, legacyNotes) {
     .map((cell) => {
       const sceneScore = sceneScores.find((item) => item.scene.id === cell.sceneId)?.score || 0;
       const anchorBoost = Math.min(0.18, anchorTargetScores.get(cell.id) || 0);
-      return { cell, score: scoreCell(cell, query, queryVector, sceneScore * 0.18) + anchorBoost };
+      return { cell, score: scoreCell(cell, query, queryEmbedding, sceneScore * 0.18) + anchorBoost };
     })
     .filter((item) => item.score > 0.18 || !queryText)
     .sort((a, b) => b.score - a.score)
     .slice(0, Math.max(settings.maxNotes, 6));
 
-  const profile = relevantProfileRows(db, queryText, 6);
+  const profile = relevantProfileRows(db, queryText, 6, viewerIds);
   const topScore = cellScores[0]?.score || legacyNotes[0]?.score || 0;
   const sufficient = Boolean(topScore > 0.42 && (cellScores.length || legacyNotes.length));
   const missing = sufficient ? [] : missingInformationFor(queryType);
@@ -1927,7 +2391,10 @@ async function buildRecollection(db, settings, input, legacyNotes) {
       maxNotes: settings.maxNotes,
       profile: profile.map((item) => item.id),
       anchors: anchorScores.map((item) => item.anchor.id)
-    }
+    },
+    viewerIds: [...viewerIds],
+    embeddingSignature: queryEmbedding.signature,
+    vectorDegraded: queryEmbedding.degraded
   });
   const recalled = markRecalled(db, {
     cellIds: cellScores.map((item) => item.cell.id),
@@ -1944,6 +2411,7 @@ async function buildRecollection(db, settings, input, legacyNotes) {
     scenes: sceneScores.map((item) => scenePublic(item.scene, item.score)),
     cells: cellScores.map((item) => cellPublic(item.cell, item.score, sceneMap.get(item.cell.sceneId))),
     anchors: anchorScores.map((item) => anchorPublic(item.anchor, item.score)),
+    viewers,
     profile,
     recalled,
     notesFromCells: cellScores.map((item) => cellAsNote(item.cell, sceneMap.get(item.cell.sceneId), item.score))
@@ -1954,18 +2422,76 @@ function looksUnsafeMemoryText(text) {
   return /api[_ -]?key|token|password|passwd|secret|bearer\s+[a-z0-9._-]+|sk-[a-z0-9]{16,}|身份证|证件号|真实地址|住址|电话|手机号/iu.test(text || '');
 }
 
-function rawRowsForSession(db, sessionId, limit = SESSION_ROLLUP_MAX_MESSAGES) {
+function rawTurnIdsForIdentity(db, sessionId, viewerId = '') {
+  return db.prepare(`
+    SELECT turn_id, MIN(created) AS first_created
+    FROM raw_messages
+    WHERE session_id = ? AND viewer_id = ?
+    GROUP BY turn_id
+    ORDER BY first_created, turn_id
+  `).all(sessionId, viewerId).map((row) => row.turn_id).filter(Boolean);
+}
+
+function rawRowsForSegment(db, sessionId, viewerId, segmentIndex) {
+  const turnIds = rawTurnIdsForIdentity(db, sessionId, viewerId)
+    .slice(segmentIndex * SESSION_ROLLUP_TURNS, (segmentIndex + 1) * SESSION_ROLLUP_TURNS);
+  if (!turnIds.length) return [];
+  const placeholders = turnIds.map(() => '?').join(', ');
   return db.prepare(`
     SELECT * FROM raw_messages
-    WHERE session_id = ?
-    ORDER BY created DESC
+    WHERE session_id = ? AND viewer_id = ? AND turn_id IN (${placeholders})
+    ORDER BY created, CASE role WHEN 'user' THEN 0 ELSE 1 END, id
     LIMIT ?
-  `).all(sessionId, limit).reverse();
+  `).all(sessionId, viewerId, ...turnIds, SESSION_ROLLUP_MAX_MESSAGES);
 }
 
 function compactRawMessage(row) {
   const role = row.role === 'assistant' ? 'Yachiyo' : 'User';
   return `${role}: ${asText(row.content, 260)}`;
+}
+
+function archiveTranscriptSegment(db, sessionId, viewerId, segmentIndex, rows) {
+  if (!rows.length) return null;
+  const turnIds = [...new Set(rows.map((row) => row.turn_id).filter(Boolean))];
+  const transcript = rows.map((row) => {
+    const metadata = readJsonValue(row.metadata_json, {});
+    return stableJson({
+      id: row.id,
+      turnId: row.turn_id,
+      role: row.role,
+      content: row.content,
+      source: row.source,
+      emotion: row.emotion,
+      created: row.created,
+      metadata
+    });
+  }).join('\n');
+  const now = new Date().toISOString();
+  const id = `segment-${sha1(`${sessionId}:${viewerId}:${segmentIndex}`).slice(0, 24)}`;
+  const sealed = turnIds.length >= SESSION_ROLLUP_TURNS;
+  db.prepare(`
+    INSERT INTO memory_segments (
+      id, session_id, viewer_id, segment_index, first_turn_id, last_turn_id,
+      turn_count, message_count, transcript_gzip, content_hash, sealed, created, updated
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET
+      first_turn_id = excluded.first_turn_id,
+      last_turn_id = excluded.last_turn_id,
+      turn_count = excluded.turn_count,
+      message_count = excluded.message_count,
+      transcript_gzip = excluded.transcript_gzip,
+      content_hash = excluded.content_hash,
+      sealed = CASE WHEN memory_segments.sealed = 1 THEN 1 ELSE excluded.sealed END,
+      updated = excluded.updated
+  `).run(id, sessionId, viewerId, segmentIndex, turnIds[0] || '', turnIds.at(-1) || '',
+    turnIds.length, rows.length, gzipSync(Buffer.from(transcript, 'utf8')), sha1(transcript), sealed ? 1 : 0,
+    now, now);
+  if (sealed) {
+    const placeholders = rows.map(() => '?').join(', ');
+    db.prepare(`UPDATE raw_messages SET compacted_at = ? WHERE id IN (${placeholders})`)
+      .run(now, ...rows.map((row) => row.id));
+  }
+  return { id, sessionId, viewerId, segmentIndex, turnCount: turnIds.length, messageCount: rows.length, sealed };
 }
 
 function keyEventDetected(text) {
@@ -1976,50 +2502,60 @@ async function upsertSessionRollupFromRawTurn(db, settings, turn) {
   if (!settings.sessionRollupEnabled) return null;
   const sessionId = asText(turn.sessionId || turn.session_id || 'live2d-default', 120);
   if (!sessionId) return null;
-  const rows = rawRowsForSession(db, sessionId);
+  const viewerId = asText(turn.viewerId || turn.viewer_id, 120);
+  const allTurnIds = rawTurnIdsForIdentity(db, sessionId, viewerId);
+  const segmentIndex = Number.isFinite(Number(turn.segmentIndex))
+    ? Math.max(0, Math.floor(Number(turn.segmentIndex)))
+    : Math.max(0, Math.floor((allTurnIds.length - 1) / SESSION_ROLLUP_TURNS));
+  const rows = rawRowsForSegment(db, sessionId, viewerId, segmentIndex);
   if (!rows.length) return null;
+  const segment = archiveTranscriptSegment(db, sessionId, viewerId, segmentIndex, rows);
   const transcript = rows.map(compactRawMessage).join('\n');
   if (!transcript || looksUnsafeMemoryText(transcript)) return null;
   const day = asText((turn.at || turn.created || rows[rows.length - 1]?.created || new Date().toISOString()).slice(0, 10), 10);
-  const turnIds = [...new Set(rows.map((row) => row.turn_id).filter(Boolean))].slice(-20);
+  const turnIds = [...new Set(rows.map((row) => row.turn_id).filter(Boolean))].slice(-SESSION_ROLLUP_TURNS);
   const topics = textKeywords(transcript).slice(0, 10);
   const important = keyEventDetected(transcript);
   const latestUser = rows.filter((row) => row.role === 'user').slice(-1)[0]?.content || '';
   const latestAssistant = rows.filter((row) => row.role === 'assistant').slice(-1)[0]?.content || '';
-  const title = `Live session rollup ${day}`;
+  const viewer = viewerId ? rowToViewerProfile(db.prepare('SELECT * FROM viewer_profiles WHERE id = ?').get(viewerId)) : null;
+  const title = viewer
+    ? `${viewer.displayName} interaction segment ${day} #${segmentIndex + 1}`
+    : `Live session segment ${day} #${segmentIndex + 1}`;
   const episode = [
-    `Persistent session rollup for ${sessionId} on ${day}.`,
+    `Persistent ${viewer ? `viewer interaction for ${viewer.displayName}` : 'session'} segment for ${sessionId} on ${day}.`,
     topics.length ? `Topics: ${topics.join(', ')}.` : '',
     latestUser ? `Latest user intent: ${asText(latestUser, 180)}.` : '',
     latestAssistant ? `Latest Yachiyo response: ${asText(latestAssistant, 180)}.` : ''
   ].filter(Boolean).join(' ');
   const facts = [
-    `Recorded ${rows.length} recent raw messages for session ${sessionId}.`,
+    `Recorded ${turnIds.length} turn(s) and ${rows.length} raw message(s) in immutable segment ${segmentIndex + 1}.`,
     topics.length ? `Durable topic keywords: ${topics.slice(0, 6).join(', ')}` : '',
     important ? 'This segment contains a possible key event or decision.' : ''
   ].filter(Boolean);
   const now = new Date().toISOString();
-  const id = `rollup-${sha1(`${sessionId}:${day}`).slice(0, 24)}`;
+  const id = `rollup-${sha1(`${sessionId}:${viewerId}:${segmentIndex}`).slice(0, 24)}`;
   const note = await prepareNoteForStore({
     id,
     title,
     type: 'session',
     scope: 'session',
-    tags: normalizeTags(['session', 'live-stream', ...(important ? ['key-event'] : []), ...topics.slice(0, 4)]),
+    tags: normalizeTags(['session', 'live-stream', ...(viewer ? ['viewer'] : []), ...(important ? ['key-event'] : []), ...topics.slice(0, 4)]),
     summary: asText(episode, 420),
     content: asText(`${episode}\n\n${transcript}`, 2800),
     source: 'runtime',
-    path: `runtime/rollups/${day}-${safeSlug(sessionId)}.md`,
+    path: `runtime/rollups/${day}-${safeSlug(sessionId)}-${safeSlug(viewerId || 'global')}-${segmentIndex + 1}.md`,
     importance: important ? 0.72 : 0.48,
     confidence: important ? 0.76 : 0.62,
     disabled: 0,
     deleted: 0,
     reviewStatus: 'approved',
     updated: now,
-    contentHash: sha1(`${episode}\n${turnIds.join(',')}\n${transcript}`)
+    contentHash: sha1(`${episode}\n${turnIds.join(',')}\n${transcript}`),
+    viewerId
   }, settings);
   upsertNote(db, note);
-  return consolidateNoteToCell(db, {
+  const lifecycle = await consolidateNoteToCell(db, {
     ...note,
     episode,
     facts,
@@ -2032,6 +2568,7 @@ async function upsertSessionRollupFromRawTurn(db, settings, turn) {
     }] : [],
     sourceTurnIds: turnIds
   }, settings);
+  return { ...lifecycle, segment };
 }
 
 function ageDays(iso, now = new Date()) {
@@ -2083,7 +2620,7 @@ function garbageCollectMemory(db, settings, options = {}) {
   }
   const rawCutoff = new Date(now.getTime() - rawRetentionDays * 86400000).toISOString();
   const traceCutoff = new Date(now.getTime() - Math.min(rawRetentionDays, 90) * 86400000).toISOString();
-  const rawDeleted = db.prepare('DELETE FROM raw_messages WHERE created < ?').run(rawCutoff).changes || 0;
+  const rawDeleted = db.prepare("DELETE FROM raw_messages WHERE created < ? AND compacted_at != ''").run(rawCutoff).changes || 0;
   const tracesDeleted = db.prepare('DELETE FROM retrieval_traces WHERE created < ?').run(traceCutoff).changes || 0;
   return { skipped: false, archived, forgotten, rawDeleted, tracesDeleted };
 }
@@ -2093,15 +2630,19 @@ async function handleInit(input) {
   const db = openStore(settings);
   try {
     const imported = await ensureImportedSources(db, settings, { force: true });
-    const notes = activeRows(db, false, MAX_MEMORY_ROWS);
+    let notes = activeRows(db, false, MAX_MEMORY_ROWS);
+    const lifecycle = await ensureLifecycleForNotes(db, notes, settings);
+    const vectorHealth = await auditAndRepairVectorIndex(db, settings, { repair: true });
+    notes = activeRows(db, false, MAX_MEMORY_ROWS);
     let milvus = { enabled: false };
     try {
       milvus = await syncMilvus(settings, notes);
     } catch (error) {
       milvus = { enabled: true, synced: 0, error: error.message };
     }
-    const lifecycle = await ensureLifecycleForNotes(db, notes, settings);
     const gc = garbageCollectMemory(db, settings);
+    db.pragma('optimize');
+    db.pragma('wal_checkpoint(PASSIVE)');
     return {
       success: true,
       provider: 'sqlite-milvus',
@@ -2109,6 +2650,8 @@ async function handleInit(input) {
       indexed: notes.length,
       imported,
       lifecycle,
+      vectorHealth,
+      organization: memoryOrganizationStatus(db),
       gc,
       milvus
     };
@@ -2135,6 +2678,10 @@ async function handleList(input) {
     const cells = activeCells(db).slice(0, maxNotes).map((cell) => cellPublic(cell));
     const scenes = activeScenes(db).slice(0, maxNotes).map((scene) => scenePublic(scene));
     const anchors = activeAnchors(db, Math.min(maxNotes, 500)).map((anchor) => anchorPublic(anchor));
+    const viewers = db.prepare('SELECT * FROM viewer_profiles ORDER BY last_seen DESC LIMIT ?')
+      .all(Math.min(maxNotes, 500))
+      .map(rowToViewerProfile)
+      .filter(Boolean);
     const profile = db.prepare("SELECT * FROM user_profile WHERE status IN ('candidate', 'active') ORDER BY updated DESC LIMIT ?")
       .all(Math.min(maxNotes, 200))
       .map(rowToProfile)
@@ -2151,7 +2698,18 @@ async function handleList(input) {
         created: row.created,
         updated: row.updated
       }));
-    return { success: true, notes, cells, scenes, anchors, profile, conflicts, databasePath: settings.databasePath };
+    return {
+      success: true,
+      notes,
+      cells,
+      scenes,
+      anchors,
+      profile,
+      viewers,
+      conflicts,
+      organization: memoryOrganizationStatus(db),
+      databasePath: settings.databasePath
+    };
   } finally {
     db.close();
   }
@@ -2163,20 +2721,31 @@ async function handleSearch(input) {
   const db = openStore(settings);
   try {
     await ensureImportedSources(db, settings);
-    let notes = activeRows(db, false, MAX_MEMORY_ROWS);
+    const viewers = resolveViewerProfiles(db, input);
+    const viewerIds = new Set(viewers.map((viewer) => viewer.id));
+    let notes = activeRows(db, false, MAX_MEMORY_ROWS)
+      .filter((note) => !note.viewerId || viewerIds.has(note.viewerId));
     if (!notes.length) {
       await ensureImportedSources(db, settings, { force: true });
-      notes = activeRows(db, false, MAX_MEMORY_ROWS);
+      notes = activeRows(db, false, MAX_MEMORY_ROWS)
+        .filter((note) => !note.viewerId || viewerIds.has(note.viewerId));
     }
     const query = input.query || {};
     const queryText = String(query.text || '').trim();
-    const queryVector = await embeddingFor(queryText, settings);
+    const queryEmbedding = await embeddingForDetailed(queryText, settings);
     const milvusScores = settings.retrievalMode === 'vector' || settings.retrievalMode === 'hybrid' || settings.retrievalMode === 'index'
-      ? await searchMilvus(settings, queryVector, Math.max(settings.maxNotes * 4, 12))
+      ? (queryEmbedding.degraded
+          ? new Map()
+          : await searchMilvus(settings, queryEmbedding.vector, Math.max(settings.maxNotes * 4, 12)))
       : new Map();
     const scored = notes
       .map((note) => {
-        const vectorScore = settings.retrievalMode === 'tags' ? 0 : cosine(queryVector, note.vector);
+        const vectorScore = settings.retrievalMode === 'tags' || !embeddingsCompatible(
+          queryEmbedding.signature,
+          note.embeddingSignature,
+          queryEmbedding.vector,
+          note.vector
+        ) ? 0 : cosine(queryEmbedding.vector, note.vector);
         const score = scoreNote(note, query, {
           vectorScore,
           milvusScore: milvusScores.get(note.id)
@@ -2192,7 +2761,7 @@ async function handleSearch(input) {
         return { ...publicNote, score: Number(score.toFixed(4)) };
       });
     await ensureLifecycleForNotes(db, notes, settings);
-    const recollection = await buildRecollection(db, settings, input, scored);
+    const recollection = await buildRecollection(db, settings, input, scored, queryEmbedding);
     const noteIds = new Set();
     const merged = [...recollection.notesFromCells, ...scored]
       .filter((note) => {
@@ -2203,7 +2772,20 @@ async function handleSearch(input) {
       })
       .slice(0, settings.maxNotes);
     const { notesFromCells, ...publicRecollection } = recollection;
-    return { success: true, notes: merged, recollection: publicRecollection, databasePath: settings.databasePath };
+    return {
+      success: true,
+      notes: merged,
+      recollection: publicRecollection,
+      vectorHealth: {
+        signature: queryEmbedding.signature,
+        dimension: queryEmbedding.vector.length,
+        degraded: queryEmbedding.degraded,
+        compatible: !queryEmbedding.degraded || notes.every((note) => (
+          !note.embeddingSignature || note.embeddingSignature === queryEmbedding.signature
+        ))
+      },
+      databasePath: settings.databasePath
+    };
   } finally {
     db.close();
   }
@@ -2222,7 +2804,9 @@ async function handleWrite(input) {
   const type = asText(memory.type || 'session', 40).toLowerCase().replace(/[\s-]+/g, '_');
   const scope = asText(memory.scope || inferScopeFromType(type), 40).toLowerCase().replace(/[\s-]+/g, '_');
   const now = new Date().toISOString();
-  const id = `runtime-${sha1(`${now}:${title}:${text}`).slice(0, 24)}`;
+  const viewer = normalizeViewerIdentity(memory.viewer || input.viewer || {});
+  const idempotencyKey = asText(memory.idempotencyKey || memory.idempotency_key || input.idempotencyKey, 300);
+  const id = `runtime-${sha1(idempotencyKey || `${now}:${title}:${text}`).slice(0, 24)}`;
   const note = await prepareNoteForStore({
     id,
     title,
@@ -2232,7 +2816,7 @@ async function handleWrite(input) {
     summary: asText(memory.summary || text, 420),
     content: text,
     source: 'runtime',
-    path: `runtime/${now.slice(0, 10)}-${safeSlug(title)}.md`,
+    path: `runtime/${now.slice(0, 10)}-${safeSlug(viewer?.id || 'global')}-${safeSlug(title)}.md`,
     importance: asNumber(memory.importance, 0.45, 0, 1),
     confidence: asNumber(memory.confidence, 0.65, 0, 1),
     pinned: asBoolean(memory.pinned),
@@ -2240,10 +2824,20 @@ async function handleWrite(input) {
     deleted: 0,
     reviewStatus: settings.writeMode === 'auto-approved' ? 'approved' : 'pending',
     updated: now,
-    contentHash: sha1(`${title}\n${text}`)
+    contentHash: sha1(`${title}\n${text}`),
+    viewerId: viewer?.id || ''
   }, settings);
   const db = openStore(settings);
   try {
+    if (viewer && !db.prepare('SELECT 1 FROM viewer_profiles WHERE id = ?').get(viewer.id)) {
+      upsertViewerProfile(db, viewer, {
+        turnId: `memory-${note.id}`,
+        input: text,
+        eventType: 'memory',
+        source: viewer.platform,
+        at: now
+      });
+    }
     upsertNote(db, note);
     let milvus = { enabled: false };
     try {
@@ -2261,6 +2855,7 @@ async function handleWrite(input) {
       validFrom: memory.validFrom || memory.valid_from,
       validUntil: memory.validUntil || memory.valid_until
     }, settings);
+    const maintenance = maybeRunAutomaticMaintenance(db, settings);
     return {
       success: true,
       approved: note.reviewStatus === 'approved',
@@ -2268,6 +2863,7 @@ async function handleWrite(input) {
       id: note.id,
       databasePath: settings.databasePath,
       lifecycle,
+      maintenance,
       milvus
     };
   } finally {
@@ -2310,45 +2906,121 @@ async function handleRecordTurn(input) {
   const settings = normalizeSettings(input);
   const db = openStore(settings);
   try {
-    const now = asText(input.at || input.created || new Date().toISOString(), 80);
-    const sessionId = asText(input.sessionId || input.session_id || 'live2d-default', 120);
-    const turnId = asText(input.turnId || input.turn_id || `turn-${sha1(`${sessionId}:${now}:${input.input || ''}`).slice(0, 16)}`, 120);
-    const source = asText(input.source || 'live2d', 60);
-    const emotion = asText(input.emotion || '', 40);
-    const metadata = {
-      model: asText(input.model || '', 120),
-      mode: asText(input.mode || '', 80),
-      tags: normalizeTags(input.tags || [])
-    };
-    const rows = [
-      { role: 'user', content: asText(input.input || input.message || '', 2400) },
-      { role: 'assistant', content: asText(input.reply || input.response || '', 2400) }
-    ].filter((row) => row.content);
     const insert = db.prepare(`
       INSERT OR IGNORE INTO raw_messages (
-        id, session_id, turn_id, role, content, source, emotion, created, metadata_json
+        id, session_id, turn_id, role, content, source, emotion, created, metadata_json,
+        viewer_id
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
-    const ids = [];
-    for (const row of rows) {
-      const id = `raw-${sha1(`${sessionId}:${turnId}:${row.role}:${row.content}`).slice(0, 24)}`;
-      insert.run(id, sessionId, turnId, row.role, row.content, source, emotion, now, stableJson(metadata));
-      ids.push(id);
+    const turns = (Array.isArray(input.turns) ? input.turns : [input])
+      .filter((turn) => turn && typeof turn === 'object')
+      .slice(0, 200);
+    const affected = new Map();
+    const persisted = [];
+    let viewerProfilesUpdated = 0;
+
+    db.transaction(() => {
+      for (const turn of turns) {
+        const now = asText(turn.at || turn.created || new Date().toISOString(), 80);
+        const sessionId = asText(turn.sessionId || turn.session_id || 'live2d-default', 120);
+        const turnId = asText(
+          turn.turnId || turn.turn_id || `turn-${sha1(`${sessionId}:${now}:${turn.input || ''}`).slice(0, 16)}`,
+          120
+        );
+        const source = asText(turn.source || 'live2d', 60);
+        const emotion = asText(turn.emotion || '', 40);
+        const viewer = normalizeViewerIdentity(turn.viewer || {});
+        const metadata = {
+          model: asText(turn.model || '', 120),
+          mode: asText(turn.mode || '', 80),
+          tags: normalizeTags(turn.tags || []),
+          eventType: asText(turn.eventType || turn.messageType || turn.type || '', 40),
+          giftName: asText(turn.giftName || '', 120),
+          amount: Math.max(0, Number(turn.amount) || 0),
+          price: Math.max(0, Number(turn.price) || 0),
+          viewerIdentityKey: viewer?.identityKey || ''
+        };
+        const rows = [
+          { role: 'user', content: asText(turn.input || turn.message || '', 2400) },
+          { role: 'assistant', content: asText(turn.reply || turn.response || '', 2400) }
+        ].filter((row) => row.content);
+        const rawIds = [];
+        let recorded = 0;
+        for (const row of rows) {
+          const id = `raw-${sha1(`${sessionId}:${turnId}:${row.role}:${row.content}`).slice(0, 24)}`;
+          const result = insert.run(
+            id,
+            sessionId,
+            turnId,
+            row.role,
+            row.content,
+            source,
+            emotion,
+            now,
+            stableJson(metadata),
+            viewer?.id || ''
+          );
+          if (result.changes) {
+            rawIds.push(id);
+            recorded += 1;
+          }
+        }
+        if (recorded > 0) {
+          const key = `${sessionId}\u0000${viewer?.id || ''}`;
+          affected.set(key, { sessionId, viewerId: viewer?.id || '', at: now });
+          if (viewer && rows.some((row) => row.role === 'user')) {
+            upsertViewerProfile(db, viewer, { ...turn, sessionId, turnId, at: now });
+            viewerProfilesUpdated += 1;
+          }
+        }
+        persisted.push({ sessionId, turnId, rawIds, recorded, viewerId: viewer?.id || '' });
+      }
+    })();
+
+    const rollups = [];
+    if (settings.sessionRollupEnabled) {
+      for (const identity of affected.values()) {
+        const totalTurns = rawTurnIdsForIdentity(db, identity.sessionId, identity.viewerId).length;
+        const segmentCount = Math.ceil(totalTurns / SESSION_ROLLUP_TURNS);
+        const existingSegments = new Map(db.prepare(`
+          SELECT segment_index, turn_count, sealed
+          FROM memory_segments
+          WHERE session_id = ? AND viewer_id = ?
+        `).all(identity.sessionId, identity.viewerId).map((row) => [Number(row.segment_index), row]));
+        for (let segmentIndex = 0; segmentIndex < segmentCount; segmentIndex += 1) {
+          const rows = rawRowsForSegment(db, identity.sessionId, identity.viewerId, segmentIndex);
+          if (!rows.length) continue;
+          const turnCount = new Set(rows.map((row) => row.turn_id)).size;
+          const existing = existingSegments.get(segmentIndex);
+          const segment = archiveTranscriptSegment(db, identity.sessionId, identity.viewerId, segmentIndex, rows);
+          const shouldRefreshRollup = !existing || segment.sealed || turnCount % 4 === 0;
+          if (!shouldRefreshRollup) continue;
+          try {
+            const rollup = await upsertSessionRollupFromRawTurn(db, settings, {
+              ...identity,
+              segmentIndex
+            });
+            if (rollup) rollups.push(rollup);
+          } catch (_) {
+            // Raw rows and their compressed segment are already durable; consolidation can retry later.
+          }
+        }
+      }
     }
-    let rollup = null;
-    try {
-      rollup = await upsertSessionRollupFromRawTurn(db, settings, { ...input, sessionId, turnId, at: now });
-    } catch (_) {
-      rollup = null;
-    }
+    const first = persisted[0] || { sessionId: '', turnId: '', rawIds: [], recorded: 0 };
+    const maintenance = maybeRunAutomaticMaintenance(db, settings);
     return {
       success: true,
-      sessionId,
-      turnId,
-      rawIds: ids,
-      recorded: ids.length,
-      rollup,
+      sessionId: first.sessionId,
+      turnId: first.turnId,
+      rawIds: persisted.flatMap((turn) => turn.rawIds),
+      recorded: persisted.reduce((sum, turn) => sum + turn.recorded, 0),
+      turns: persisted,
+      viewerProfilesUpdated,
+      rollup: rollups[0] || null,
+      rollups,
+      maintenance,
       databasePath: settings.databasePath
     };
   } finally {
@@ -2367,8 +3039,34 @@ async function handleConsolidate(input) {
       notes = activeRows(db, false, MAX_MEMORY_ROWS);
     }
     const lifecycle = await ensureLifecycleForNotes(db, notes, settings);
+    const pendingSegments = db.prepare('SELECT session_id, viewer_id, segment_index FROM memory_segments WHERE sealed = 0 ORDER BY updated')
+      .all();
+    let rollupsRefreshed = 0;
+    for (const segment of pendingSegments) {
+      try {
+        const rollup = await upsertSessionRollupFromRawTurn(db, settings, {
+          sessionId: segment.session_id,
+          viewerId: segment.viewer_id,
+          segmentIndex: segment.segment_index
+        });
+        if (rollup) rollupsRefreshed += 1;
+      } catch (_) {
+        // The compressed source segment remains available for the next maintenance pass.
+      }
+    }
+    const vectorHealth = await auditAndRepairVectorIndex(db, settings, { repair: true });
     const gc = garbageCollectMemory(db, settings);
-    return { success: true, lifecycle, gc, databasePath: settings.databasePath };
+    db.pragma('optimize');
+    db.pragma('wal_checkpoint(PASSIVE)');
+    return {
+      success: true,
+      lifecycle,
+      rollupsRefreshed,
+      vectorHealth,
+      gc,
+      organization: memoryOrganizationStatus(db),
+      databasePath: settings.databasePath
+    };
   } finally {
     db.close();
   }
@@ -2379,12 +3077,27 @@ async function handleProfile(input) {
   const db = openStore(settings);
   try {
     const maxItems = Math.round(asNumber(input.maxItems || input.maxNotes, 80, 1, 500));
+    const requestedViewers = resolveViewerProfiles(db, input);
+    const requestedViewerIds = new Set(requestedViewers.map((viewer) => viewer.id));
+    const hasViewerFilter = viewerLookupValues(input).length > 0;
+    const viewers = hasViewerFilter
+      ? requestedViewers
+      : db.prepare('SELECT * FROM viewer_profiles ORDER BY last_seen DESC LIMIT ?')
+        .all(maxItems)
+        .map(rowToViewerProfile)
+        .filter(Boolean);
     const profile = db.prepare("SELECT * FROM user_profile WHERE status IN ('candidate', 'active') ORDER BY category, confidence DESC, updated DESC LIMIT ?")
       .all(maxItems)
       .map(rowToProfile)
-      .filter(Boolean);
-    const scenes = activeScenes(db).slice(0, maxItems).map((scene) => scenePublic(scene));
-    const anchors = activeAnchors(db, maxItems).map((anchor) => anchorPublic(anchor));
+      .filter(Boolean)
+      .filter((item) => !hasViewerFilter || !item.viewerId || requestedViewerIds.has(item.viewerId));
+    const scenes = activeScenes(db)
+      .filter((scene) => !hasViewerFilter || !scene.viewerId || requestedViewerIds.has(scene.viewerId))
+      .slice(0, maxItems)
+      .map((scene) => scenePublic(scene));
+    const anchors = activeAnchors(db, maxItems)
+      .filter((anchor) => !hasViewerFilter || !anchor.metadata?.viewerId || requestedViewerIds.has(anchor.metadata.viewerId))
+      .map((anchor) => anchorPublic(anchor));
     const conflicts = db.prepare("SELECT * FROM memory_conflicts WHERE status = 'active' ORDER BY severity DESC, updated DESC LIMIT ?")
       .all(maxItems)
       .map((row) => ({
@@ -2397,7 +3110,16 @@ async function handleProfile(input) {
         created: row.created,
         updated: row.updated
       }));
-    return { success: true, profile, scenes, anchors, conflicts, databasePath: settings.databasePath };
+    return {
+      success: true,
+      viewers,
+      profile,
+      scenes,
+      anchors,
+      conflicts,
+      organization: memoryOrganizationStatus(db),
+      databasePath: settings.databasePath
+    };
   } finally {
     db.close();
   }
@@ -2419,6 +3141,9 @@ async function handleTraces(input) {
         noteIds: readJsonValue(row.note_ids_json, []),
         isSufficient: Boolean(row.sufficient),
         missingInformation: readJsonValue(row.missing_json, []),
+        viewerIds: readJsonValue(row.viewer_ids_json, []),
+        embeddingSignature: row.embedding_signature || '',
+        vectorDegraded: Boolean(row.vector_degraded),
         created: row.created,
         context: readJsonValue(row.context_json, {})
       }));

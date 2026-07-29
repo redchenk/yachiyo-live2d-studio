@@ -968,19 +968,21 @@ function buildStreamingDirectRequestBody(settings, systemPrompt, history, messag
   };
 }
 
-function finishLive2DControlRequest(message, history, rawReply, sentenceEmitter = null) {
+function finishLive2DControlRequest(message, history, rawReply, sentenceEmitter = null, memoryContext = {}) {
   const parsed = parseLive2DControlPayload(rawReply);
   if (sentenceEmitter && sentenceEmitter.emittedCount < 1) {
     sentenceEmitter.flushReply(parsed.reply);
   }
   if (parsed.memoryWrites?.length) {
-    writePendingLive2DMemories(parsed.memoryWrites).catch(() => {});
+    writePendingLive2DMemories(parsed.memoryWrites, memoryContext).catch(() => {});
   }
+  const trustedViewers = Array.isArray(memoryContext.viewers) ? memoryContext.viewers.filter(Boolean) : [];
   recordLive2DSessionMemoryTurn({
     source: 'llm-control',
     input: message,
     reply: parsed.reply,
-    emotion: parsed.live2d?.emotion || parsed.live2d?.expression || parsed.raw?.emotion || 'neutral'
+    emotion: parsed.live2d?.emotion || parsed.live2d?.expression || parsed.raw?.emotion || 'neutral',
+    viewer: trustedViewers.length === 1 ? trustedViewers[0] : undefined
   });
   const nextHistory = [
     ...history,
@@ -1064,14 +1066,15 @@ export function clearLive2DLLMHistory() {
   writeJson(HISTORY_KEY, []);
 }
 
-export async function requestLive2DControl(message) {
+export async function requestLive2DControl(message, options = {}) {
   const settings = readRoomLLMSettings();
   if (!settings.apiKey || !settings.apiUrl) {
     throw new Error('Missing LLM settings. Configure LLM in Studio Settings first.');
   }
 
   const history = readLive2DLLMHistory();
-  const memoryPrompt = await buildLive2DMemoryPrompt(message);
+  const memoryContext = options.memoryContext || {};
+  const memoryPrompt = await buildLive2DMemoryPrompt(message, memoryContext);
   const visionContext = await buildLive2DVisionPrompt();
   const systemPrompt = [yachiyoCorePersonalityPrompt(), settings.systemPrompt, memoryPrompt, visionContext.prompt, live2DControlSystemPrompt()].filter(Boolean).join('\n\n');
   let rawReply = '';
@@ -1108,7 +1111,7 @@ export async function requestLive2DControl(message) {
     rawReply = pickReply(await response.json());
   }
 
-  return finishLive2DControlRequest(message, history, rawReply);
+  return finishLive2DControlRequest(message, history, rawReply, null, memoryContext);
 }
 
 export async function requestLive2DControlStream(message, handlers = {}) {
@@ -1118,7 +1121,8 @@ export async function requestLive2DControlStream(message, handlers = {}) {
   }
 
   const history = readLive2DLLMHistory();
-  const memoryPrompt = await buildLive2DMemoryPrompt(message);
+  const memoryContext = handlers.memoryContext || {};
+  const memoryPrompt = await buildLive2DMemoryPrompt(message, memoryContext);
   const visionContext = await buildLive2DVisionPrompt();
   const systemPrompt = [yachiyoCorePersonalityPrompt(), settings.systemPrompt, memoryPrompt, visionContext.prompt, live2DStreamingControlSystemPrompt()].filter(Boolean).join('\n\n');
   const sentenceEmitter = createReplySentenceEmitter(handlers);
@@ -1140,7 +1144,7 @@ export async function requestLive2DControlStream(message, handlers = {}) {
     });
     if (!response.ok) {
       if (response.status === 404 || response.status === 405) {
-        const fallback = await requestLive2DControl(message);
+        const fallback = await requestLive2DControl(message, { memoryContext });
         sentenceEmitter.flushReply(fallback.reply);
         handlers.onDone?.(fallback);
         return fallback;
@@ -1177,7 +1181,7 @@ export async function requestLive2DControlStream(message, handlers = {}) {
   }
 
   sentenceEmitter.pushRaw(rawReply, { flush: true });
-  const parsed = finishLive2DControlRequest(message, history, rawReply, sentenceEmitter);
+  const parsed = finishLive2DControlRequest(message, history, rawReply, sentenceEmitter, memoryContext);
   handlers.onDone?.(parsed);
   return parsed;
 }

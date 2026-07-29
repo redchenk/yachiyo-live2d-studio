@@ -9,8 +9,13 @@ const SESSION_MEMORY_LAST_SUMMARY_KEY = 'live2dMemoryLastSummaryAt';
 const SESSION_MEMORY_ID_KEY = 'live2dMemorySessionId';
 const SESSION_MEMORY_EVERY_TURNS = 10;
 const SESSION_MEMORY_MAX_BUFFER = 24;
+const MEMORY_OUTBOX_KEY = 'live2dMemoryDurableOutboxV1';
+const MEMORY_OUTBOX_MAX_ITEMS = 2000;
+const MEMORY_OUTBOX_BATCH_SIZE = 80;
 
 let sessionSummaryInFlight = false;
+let memoryOutboxFlushPromise = null;
+let memoryOutboxTimer = 0;
 
 const ALLOWED_MEMORY_TYPES = new Set([
   'profile',
@@ -50,6 +55,102 @@ function normalizeTags(value) {
     .map((tag) => String(tag || '').trim().replace(/^#/, '').toLowerCase())
     .filter(Boolean)
     .slice(0, 12);
+}
+
+function stablePayload(value) {
+  if (Array.isArray(value)) return `[${value.map(stablePayload).join(',')}]`;
+  if (!value || typeof value !== 'object') return JSON.stringify(value ?? null);
+  return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stablePayload(value[key])}`).join(',')}}`;
+}
+
+function compactHash(value) {
+  let hash = 2166136261;
+  const text = String(value || '');
+  for (let index = 0; index < text.length; index += 1) {
+    hash ^= text.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(36);
+}
+
+function trustedViewer(value = {}) {
+  if (!value || typeof value !== 'object') return null;
+  const platform = asText(value.platform || value.source || 'bilibili', 40).toLowerCase();
+  const userId = asText(value.userId || value.platformUserId || value.uid || value.id, 120);
+  const userName = asText(value.userName || value.displayName || value.username || value.name, 120);
+  if (!userId && !userName) return null;
+  return { platform, userId, userName };
+}
+
+function readMemoryOutbox() {
+  const items = readJson(MEMORY_OUTBOX_KEY, []);
+  return Array.isArray(items) ? items.filter((item) => item?.id && item?.route && item?.payload).slice(-MEMORY_OUTBOX_MAX_ITEMS) : [];
+}
+
+function writeMemoryOutbox(items) {
+  writeJson(MEMORY_OUTBOX_KEY, (Array.isArray(items) ? items : []).slice(-MEMORY_OUTBOX_MAX_ITEMS));
+}
+
+function enqueueMemoryOutbox(route, payload, explicitId = '') {
+  const id = asText(explicitId, 160) || `memory-${compactHash(`${route}:${stablePayload(payload)}`)}`;
+  const current = readMemoryOutbox();
+  if (!current.some((item) => item.id === id)) {
+    current.push({ id, route, payload, queuedAt: Date.now() });
+    writeMemoryOutbox(current);
+  }
+  scheduleMemoryOutboxFlush(180);
+  return id;
+}
+
+function scheduleMemoryOutboxFlush(delayMs = 1200) {
+  if (typeof window === 'undefined' || memoryOutboxTimer) return;
+  memoryOutboxTimer = window.setTimeout(() => {
+    memoryOutboxTimer = 0;
+    flushLive2DMemoryOutbox().catch(() => {});
+  }, Math.max(0, Number(delayMs) || 0));
+}
+
+export async function flushLive2DMemoryOutbox() {
+  if (memoryOutboxFlushPromise) return memoryOutboxFlushPromise;
+  memoryOutboxFlushPromise = (async () => {
+    const settings = readRoomMemorySettings();
+    if (!settings.enabled || settings.writeMode === 'off') return { flushed: 0, pending: readMemoryOutbox().length };
+    let flushed = 0;
+    while (true) {
+      const current = readMemoryOutbox();
+      if (!current.length) break;
+      const first = current[0];
+      const batch = first.route === '/api/memory/record-turn'
+        ? current.filter((item) => item.route === first.route).slice(0, MEMORY_OUTBOX_BATCH_SIZE)
+        : [first];
+      const body = first.route === '/api/memory/record-turn'
+        ? { ...memoryApiSettings(settings), turns: batch.map((item) => item.payload) }
+        : { ...memoryApiSettings(settings), ...first.payload };
+      try {
+        const response = await fetch(first.route, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+          keepalive: true
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok || !result.success) break;
+        const completedIds = new Set(batch.map((item) => item.id));
+        writeMemoryOutbox(readMemoryOutbox().filter((item) => !completedIds.has(item.id)));
+        flushed += completedIds.size;
+      } catch (_) {
+        break;
+      }
+    }
+    const pending = readMemoryOutbox().length;
+    if (pending) scheduleMemoryOutboxFlush(3000);
+    return { flushed, pending };
+  })();
+  try {
+    return await memoryOutboxFlushPromise;
+  } finally {
+    memoryOutboxFlushPromise = null;
+  }
 }
 
 function textKeywords(text) {
@@ -111,6 +212,7 @@ function memoryDataProviderReady(settings) {
 export async function searchLive2DMemory(inputText, options = {}) {
   const settings = readRoomMemorySettings();
   if (!memorySettingsReady(settings)) return [];
+  await flushLive2DMemoryOutbox().catch(() => ({ flushed: 0, pending: readMemoryOutbox().length }));
 
   const tags = [
     ...inferMemoryTags(inputText),
@@ -131,6 +233,8 @@ export async function searchLive2DMemory(inputText, options = {}) {
           keywords: textKeywords(inputText),
           tags,
           preferredTypes,
+          viewerIds: Array.isArray(options.viewerIds) ? options.viewerIds.map((id) => asText(id, 160)).filter(Boolean).slice(0, 8) : [],
+          viewers: Array.isArray(options.viewers) ? options.viewers.map(trustedViewer).filter(Boolean).slice(0, 8) : [],
           retrievalMode: settings.retrievalMode,
           maxNotes: Math.min(Number(options.maxNotes) || settings.maxNotesPerTurn, settings.maxNotesPerTurn)
         }
@@ -157,6 +261,17 @@ export function formatMemoryPrompt(notes = []) {
   }
   if (Array.isArray(recollection?.scenes) && recollection.scenes.length) {
     lines.push(`Scenes: ${recollection.scenes.slice(0, 3).map((scene) => asText(scene.title, 80)).filter(Boolean).join(' / ')}`);
+  }
+  if (Array.isArray(recollection?.viewers) && recollection.viewers.length) {
+    lines.push('Trusted viewer profiles for this turn:');
+    recollection.viewers.slice(0, 4).forEach((viewer) => {
+      const name = asText(viewer.displayName || viewer.platformUserId || 'viewer', 80);
+      const topics = Array.isArray(viewer.topics) ? viewer.topics.slice(-6).join(', ') : '';
+      const preferences = Array.isArray(viewer.preferences) ? viewer.preferences.slice(-3).join(' | ') : '';
+      lines.push(`- ${name}: ${asText(viewer.summary, 240)}`);
+      if (topics) lines.push(`  Topics: ${asText(topics, 180)}`);
+      if (preferences) lines.push(`  Preferences: ${asText(preferences, 240)}`);
+    });
   }
   usableNotes.forEach((note, index) => {
     const type = asText(note.type || 'memory', 32);
@@ -222,7 +337,9 @@ function sanitizeMemoryWrite(memory) {
       : [],
     importance: asNumber(memory.importance, 0.45),
     confidence: asNumber(memory.confidence, 0.65),
-    tags: normalizeTags(memory.tags)
+    tags: normalizeTags(memory.tags),
+    idempotencyKey: asText(memory.idempotencyKey || memory.idempotency_key, 300),
+    viewer: trustedViewer(memory.viewer || {})
   };
 }
 
@@ -233,7 +350,7 @@ export function sanitizeMemoryWrites(memoryWrites) {
     .slice(0, 5);
 }
 
-export async function writePendingLive2DMemories(memoryWrites = []) {
+export async function writePendingLive2DMemories(memoryWrites = [], options = {}) {
   const settings = readRoomMemorySettings();
   if (!settings.enabled || settings.writeMode === 'off') return [];
   if (settings.provider === 'obsidian' && !settings.vaultPath) return [];
@@ -247,7 +364,22 @@ export async function writePendingLive2DMemories(memoryWrites = []) {
   if (!memories.length) return [];
 
   const results = [];
-  for (const memory of memories) {
+  const contextViewers = (Array.isArray(options.viewers) ? options.viewers : [])
+    .map(trustedViewer)
+    .filter(Boolean);
+  const contextViewer = trustedViewer(options.viewer || {}) || (contextViewers.length === 1 ? contextViewers[0] : null);
+  for (const rawMemory of memories) {
+    const memory = {
+      ...rawMemory,
+      viewer: rawMemory.viewer || contextViewer || undefined,
+      idempotencyKey: rawMemory.idempotencyKey || `llm-${compactHash(stablePayload({
+        type: rawMemory.type,
+        title: rawMemory.title,
+        text: rawMemory.text,
+        sourceTurnIds: rawMemory.sourceTurnIds,
+        viewer: rawMemory.viewer || contextViewer
+      }))}`
+    };
     try {
       const response = await fetch('/api/memory/write', {
         method: 'POST',
@@ -259,9 +391,13 @@ export async function writePendingLive2DMemories(memoryWrites = []) {
         })
       });
       const result = await response.json().catch(() => ({}));
-      if (response.ok && result.success) results.push(result);
+      if (response.ok && result.success) {
+        results.push(result);
+      } else {
+        enqueueMemoryOutbox('/api/memory/write', { mode: settings.writeMode, memory }, `write-${memory.idempotencyKey}`);
+      }
     } catch (_) {
-      // Memory write must never interrupt live speech.
+      enqueueMemoryOutbox('/api/memory/write', { mode: settings.writeMode, memory }, `write-${memory.idempotencyKey}`);
     }
   }
   return results;
@@ -431,18 +567,35 @@ async function maybeWriteSessionSummary(buffer) {
 
 async function recordRawLive2DMemoryTurn(settings, turn) {
   if (!settings.enabled || !memoryDataProviderReady(settings)) return;
-  try {
-    await fetch('/api/memory/record-turn', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        ...memoryApiSettings(settings),
-        ...turn
-      })
-    });
-  } catch (_) {
-    // Raw log writes must never interrupt the live loop.
-  }
+  const durableId = asText(turn.turnId || turn.turn_id, 120) || `turn-${compactHash(stablePayload(turn))}`;
+  enqueueMemoryOutbox('/api/memory/record-turn', turn, `turn-${durableId}`);
+}
+
+export function recordLive2DViewerMemoryInteraction(turn = {}) {
+  const settings = readRoomMemorySettings();
+  if (!settings.enabled || settings.writeMode === 'off' || !settings.allowViewerMemory || !memoryDataProviderReady(settings)) return false;
+  const viewer = trustedViewer(turn.viewer || turn);
+  const input = asText(turn.input || turn.message || turn.text, 800);
+  if (!viewer || !input) return false;
+  const sessionId = readSessionMemoryId();
+  const sourceId = asText(turn.turnId || turn.messageId || turn.id, 120);
+  const turnId = sourceId
+    ? `viewer-${viewer.platform}-${sourceId}`
+    : `viewer-${compactHash(`${viewer.platform}:${viewer.userId || viewer.userName}:${turn.at || turn.timestamp || ''}:${input}`)}`;
+  recordRawLive2DMemoryTurn(settings, {
+    sessionId,
+    turnId,
+    at: turn.at || (Number(turn.timestamp) ? new Date(Number(turn.timestamp)).toISOString() : new Date().toISOString()),
+    source: asText(turn.source || viewer.platform || 'audience', 40),
+    input,
+    emotion: asText(turn.emotion || 'neutral', 32),
+    eventType: asText(turn.eventType || turn.messageType || turn.type || 'message', 40),
+    giftName: asText(turn.giftName, 120),
+    amount: Math.max(0, Number(turn.amount) || 0),
+    price: Math.max(0, Number(turn.price) || 0),
+    viewer
+  });
+  return true;
 }
 
 export function recordLive2DSessionMemoryTurn(turn = {}) {
@@ -461,7 +614,8 @@ export function recordLive2DSessionMemoryTurn(turn = {}) {
     source: asText(turn.source || 'live2d', 40),
     input,
     reply,
-    emotion: asText(turn.emotion || 'neutral', 32)
+    emotion: asText(turn.emotion || 'neutral', 32),
+    viewer: trustedViewer(turn.viewer || {}) || undefined
   });
   const buffer = readSessionMemoryBuffer();
   buffer.push({
@@ -572,4 +726,12 @@ export function deleteLive2DMemoryNote(path, settingsOverrides = {}) {
   return postMemoryAction('/api/memory/delete', {
     path
   }, settingsOverrides);
+}
+
+if (typeof window !== 'undefined') {
+  if (readMemoryOutbox().length) scheduleMemoryOutboxFlush(250);
+  window.addEventListener?.('online', () => scheduleMemoryOutboxFlush(0));
+  window.addEventListener?.('beforeunload', () => {
+    flushLive2DMemoryOutbox().catch(() => {});
+  });
 }

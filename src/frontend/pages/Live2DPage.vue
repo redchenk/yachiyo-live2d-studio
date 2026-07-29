@@ -65,6 +65,7 @@ import {
 import { createLive2DTurnPipeline } from '../services/room/live2dTurnPipeline';
 import { createLive2DSpeechPlayer } from '../services/room/live2dSpeech';
 import { cleanLive2DReply } from '../services/room/live2dText';
+import { recordLive2DViewerMemoryInteraction } from '../services/room/live2dMemory';
 import {
   behaviorActionComboPrompt,
   behaviorBodyActionButtons
@@ -1002,6 +1003,20 @@ function speak() {
   live2d.speak();
 }
 
+function memoryContextForAudience(audienceLines = []) {
+  const viewers = (Array.isArray(audienceLines) ? audienceLines : [])
+    .filter((line) => line?.userId || line?.userName)
+    .map((line) => ({
+      platform: line.source || 'bilibili',
+      userId: line.userId || '',
+      userName: line.userName || ''
+    }));
+  return {
+    viewerIds: viewers.map((viewer) => `${viewer.platform}:${viewer.userId || `name:${viewer.userName}`}`),
+    viewers
+  };
+}
+
 async function performLLMAct(message, source = 'manual', options = {}) {
   const value = String(message || '').trim();
   if (!value || llmState.value.loading) return null;
@@ -1012,7 +1027,9 @@ async function performLLMAct(message, source = 'manual', options = {}) {
     error: ''
   };
   try {
-    const result = await requestLive2DControl(value);
+    const result = await requestLive2DControl(value, {
+      memoryContext: memoryContextForAudience(options.audienceLines)
+    });
     if (result.live2d && options.dispatchLive2D !== false) dispatchRoomLive2D(result.live2d);
     const visibleReply = visibleYachiyoText(result.reply) || 'OK.';
     llmState.value = {
@@ -1072,6 +1089,7 @@ async function performStreamingLiveTurn(message, options = {}) {
 
   try {
     finalResult = await requestLive2DControlStream(value, {
+      memoryContext: memoryContextForAudience(options.audienceLines),
       onSentence: (sentence) => {
         const speechSentence = visibleYachiyoText(sentence.text);
         if (!speechSentence) return;
@@ -1558,6 +1576,19 @@ function handleBilibiliDanmakuEvent(event) {
   const message = event.detail || {};
   if (!['danmu', 'superchat', 'gift', 'guard'].includes(message.type)) return;
   if (!String(message.text || '').trim()) return;
+  recordLive2DViewerMemoryInteraction({
+    id: message.id,
+    source: 'bilibili',
+    platform: 'bilibili',
+    userId: message.userId,
+    userName: message.userName,
+    text: message.text,
+    eventType: message.type,
+    giftName: message.giftName,
+    amount: message.amount,
+    price: message.price,
+    timestamp: message.timestamp
+  });
   const existingIndex = bilibiliPendingMessages.findIndex((item) => item.id === message.id);
   if (existingIndex >= 0) bilibiliPendingMessages.splice(existingIndex, 1);
   bilibiliPendingMessages.push(message);
