@@ -2,6 +2,25 @@ function asCaption(value) {
   return String(value || '').replace(/[ \t]{2,}/g, ' ').trim();
 }
 
+export function createLive2DPreparedCaption(resolved, options = {}) {
+  const unavailableText = asCaption(options.unavailableText) || '（中文字幕暂不可用）';
+  let caption = '';
+  const ready = Promise.resolve(resolved)
+    .then((value) => {
+      caption = asCaption(value) || unavailableText;
+      return caption;
+    })
+    .catch(() => {
+      caption = unavailableText;
+      return caption;
+    });
+
+  return {
+    ready,
+    read: () => caption
+  };
+}
+
 function joinCaptionText(left, right) {
   const previous = asCaption(left);
   const next = asCaption(right);

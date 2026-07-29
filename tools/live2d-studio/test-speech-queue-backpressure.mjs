@@ -150,6 +150,51 @@ try {
   assert.equal(expiredResult, 'AbortError');
   assert.equal(expiredStarted, false, 'expired speech must never reach audio playback');
 
+  let releaseCaptionGate;
+  const captionGate = new Promise((resolve) => {
+    releaseCaptionGate = resolve;
+  });
+  let gatedSpeechStarted = false;
+  const audioCountBeforeGate = audios.length;
+  const gatedSpeech = player.enqueue('Japanese TTS source', {
+    queueGroup: 'live-reply',
+    priority: 100,
+    startGate: captionGate,
+    onStart: () => {
+      gatedSpeechStarted = true;
+    }
+  });
+  await waitFor(() => audios.length > audioCountBeforeGate, 'gated speech synthesis');
+  const gatedAudio = audios.at(-1);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(
+    gatedSpeechStarted,
+    false,
+    'speech must not start before its Chinese caption is ready'
+  );
+  assert.equal(gatedAudio.paused, true, 'prepared audio must remain paused behind the caption gate');
+
+  releaseCaptionGate('\u4e2d\u6587\u5b57\u5e55\u5df2\u5c31\u7eea');
+  await waitFor(() => gatedSpeechStarted, 'caption-gated speech playback');
+  assert.equal(gatedAudio.paused, false);
+  gatedAudio.finish();
+  await gatedSpeech;
+
+  let cancelledGateStarted = false;
+  const audioCountBeforeCancelledGate = audios.length;
+  const cancelledGateSpeech = player.enqueue('Cancelled gated TTS source', {
+    queueGroup: 'live-reply',
+    priority: 100,
+    startGate: new Promise(() => {}),
+    onStart: () => {
+      cancelledGateStarted = true;
+    }
+  }).catch((error) => error.name);
+  await waitFor(() => audios.length > audioCountBeforeCancelledGate, 'cancelled gated speech synthesis');
+  player.stop();
+  assert.equal(await cancelledGateSpeech, 'AbortError');
+  assert.equal(cancelledGateStarted, false, 'stopping must cancel caption-gated speech immediately');
+
   const synchronizedCaptions = [];
   const captionSynchronizer = createLive2DCaptionSynchronizer({
     holdMs: 0,

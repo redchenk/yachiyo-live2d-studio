@@ -706,8 +706,9 @@ export function createLive2DSpeechPlayer({ onState } = {}) {
       return false;
     }
     setState({ status: 'loading', error: '' });
+    let audio = null;
     try {
-      const audio = preparedAudioPromise
+      audio = preparedAudioPromise
         ? await preparedAudioPromise
         : await makeAudio(speechText, settings, options);
       if (!audio) return false;
@@ -715,7 +716,30 @@ export function createLive2DSpeechPlayer({ onState } = {}) {
         releaseAudio(audio);
         throw makeStopError();
       }
-      if (token !== queueToken) throw makeStopError();
+      if (token !== queueToken) {
+        releaseAudio(audio);
+        throw makeStopError();
+      }
+      if (options.startGate && typeof options.startGate.then === 'function') {
+        let rejectGateWait = null;
+        try {
+          await new Promise((resolve, reject) => {
+            rejectGateWait = reject;
+            currentReject = reject;
+            Promise.resolve(options.startGate).then(resolve, resolve);
+          });
+        } finally {
+          if (currentReject === rejectGateWait) currentReject = null;
+        }
+        if (Number(options.expiresAt || 0) > 0 && Date.now() > Number(options.expiresAt)) {
+          releaseAudio(audio);
+          throw makeStopError();
+        }
+        if (token !== queueToken) {
+          releaseAudio(audio);
+          throw makeStopError();
+        }
+      }
       currentAudio = audio;
       audio.preload = 'auto';
       let playbackStarted = false;
@@ -832,6 +856,7 @@ export function createLive2DSpeechPlayer({ onState } = {}) {
       if (currentAudio === audio) clearCurrentAudio();
       return true;
     } catch (error) {
+      if (audio && currentAudio !== audio) releaseAudio(audio);
       clearCurrentAudio();
       if (isStopError(error)) return false;
       setState({ status: 'error', error: error.message || 'TTS failed' });

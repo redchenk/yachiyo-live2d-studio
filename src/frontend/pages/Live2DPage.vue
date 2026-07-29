@@ -56,7 +56,8 @@ import {
 } from '../services/room/live2dBilibiliGiftAcknowledgementGate';
 import {
   createLive2DCaptionSynchronizer,
-  createLive2DOrderedCaptionTranscript
+  createLive2DOrderedCaptionTranscript,
+  createLive2DPreparedCaption
 } from '../services/room/live2dCaptionSynchronizer';
 import {
   createLive2DDirectorScheduler,
@@ -1078,6 +1079,8 @@ async function performStreamingLiveTurn(message, options = {}) {
   let queuedLive2DCount = 0;
   let dispatchedStreamLive2DCount = 0;
   const captionTranscript = createLive2DOrderedCaptionTranscript();
+  const preparedCaptionTranscript = createLive2DOrderedCaptionTranscript();
+  const captionPreparationPromises = [];
 
   streamingSpeechSession?.begin();
   dispatchCharacterState('thinking', { holdMs: 2400, attention: 0.82, arousal: 0.5 });
@@ -1095,18 +1098,21 @@ async function performStreamingLiveTurn(message, options = {}) {
         if (!speechSentence) return;
         const sentenceIndex = queuedSpeechCount;
         let captionToken = 0;
-        const captionPromise = translateLive2DReplyToChinese(speechSentence)
-          .then((caption) => visibleYachiyoText(caption))
-          .catch(() => speechSentence);
+        const preparedCaption = createLive2DPreparedCaption(
+          translateLive2DReplyToChinese(speechSentence)
+            .then((caption) => visibleYachiyoText(caption))
+        );
+        captionPreparationPromises.push(preparedCaption.ready.then((visibleSentence) => {
+          preparedCaptionTranscript.resolve(sentenceIndex, visibleSentence);
+          return visibleSentence;
+        }));
         const showCaption = (durationMs = 0) => {
+          const visibleSentence = preparedCaption.read();
           captionToken = speechCaptionSynchronizer.start({
-            fallback: speechSentence,
-            resolved: captionPromise
+            fallback: visibleSentence
           });
-          captionPromise.then((visibleSentence) => {
-            if (!visibleSentence) return;
-            streamedReply = captionTranscript.resolve(sentenceIndex, visibleSentence);
-            if (!streamedReply) return;
+          streamedReply = captionTranscript.resolve(sentenceIndex, visibleSentence);
+          if (streamedReply) {
             upsertLogLine(logId, 'yachiyo', streamedReply, {
               live2d: sentence.live2d,
               emotion: sentence.emotion,
@@ -1119,7 +1125,7 @@ async function performStreamingLiveTurn(message, options = {}) {
               raw: finalResult?.raw || null,
               live2d: sentence.live2d
             };
-          });
+          }
           if (sentence.live2d) {
             dispatchedStreamLive2DCount += 1;
             dispatchRoomLive2D(alignLive2DToSpeech(sentence.live2d, durationMs));
@@ -1146,6 +1152,7 @@ async function performStreamingLiveTurn(message, options = {}) {
           priority: 100,
           emotion: sentence.emotion,
           speechStyle: sentence.speechStyle,
+          startGate: preparedCaption.ready,
           onStart: ({ durationMs }) => showCaption(durationMs)
         }).catch((error) => {
           if (error?.name === 'AbortError') return;
@@ -1157,17 +1164,20 @@ async function performStreamingLiveTurn(message, options = {}) {
       }
     });
 
-    const visibleReply = queuedSpeechCount < 1
-      ? visibleYachiyoText(await translateLive2DReplyToChinese(finalResult.reply).catch(() => '')) || 'OK.'
-      : streamedReply;
+    let visibleReply = '';
+    if (queuedSpeechCount > 0) {
+      await Promise.all(captionPreparationPromises);
+      visibleReply = preparedCaptionTranscript.read() || streamedReply;
+    }
     if (queuedSpeechCount > 0 && finalResult.live2d && queuedLive2DCount < 1) {
       dispatchRoomLive2D(alignLive2DToSpeech(finalResult.live2d, Number(finalResult.live2d.durationMs) || 0));
     }
-    if (queuedSpeechCount < 1 && visibleReply) {
-      const finalSpeech = visibleYachiyoText(finalResult.reply) || visibleReply;
-      const finalCaptionPromise = translateLive2DReplyToChinese(finalSpeech)
-        .then((caption) => visibleYachiyoText(caption))
-        .catch(() => visibleReply);
+    if (queuedSpeechCount < 1) {
+      const finalSpeech = visibleYachiyoText(finalResult.reply);
+      const preparedCaption = createLive2DPreparedCaption(
+        translateLive2DReplyToChinese(finalSpeech)
+          .then((caption) => visibleYachiyoText(caption))
+      );
       let finalCaptionToken = 0;
       streamingSpeechSession?.queueLine();
       playbackPromises.push(speechPlayer.enqueue(finalSpeech, {
@@ -1175,14 +1185,14 @@ async function performStreamingLiveTurn(message, options = {}) {
         priority: 100,
         emotion: finalResult.live2d?.emotion || finalResult.live2d?.expression || 'neutral',
         speechStyle: finalResult.live2d?.speechStyle || null,
+        startGate: preparedCaption.ready,
         onStart: ({ durationMs }) => {
+          const caption = preparedCaption.read();
           finalCaptionToken = speechCaptionSynchronizer.start({
-            fallback: visibleReply || finalSpeech,
-            resolved: finalCaptionPromise
+            fallback: caption
           });
-          finalCaptionPromise.then((caption) => {
-            if (!caption) return;
-            streamedReply = caption;
+          streamedReply = caption;
+          if (caption) {
             upsertLogLine(logId, 'yachiyo', caption, {
               live2d: finalResult.live2d,
               streaming: false
@@ -1194,7 +1204,7 @@ async function performStreamingLiveTurn(message, options = {}) {
               raw: finalResult.raw,
               live2d: finalResult.live2d
             };
-          });
+          }
           if (finalResult.live2d) dispatchRoomLive2D(alignLive2DToSpeech(finalResult.live2d, durationMs));
           dispatchStreamingSpeechStart(durationMs, {
             emotion: finalResult.live2d?.emotion || finalResult.live2d?.expression || 'neutral'
@@ -1207,11 +1217,7 @@ async function performStreamingLiveTurn(message, options = {}) {
         speechCaptionSynchronizer.finish(finalCaptionToken);
         streamingSpeechSession?.lineSettled();
       }));
-    } else if (visibleReply) {
-      upsertLogLine(logId, 'yachiyo', visibleReply, {
-        live2d: finalResult.live2d,
-        streaming: true
-      });
+      visibleReply = await preparedCaption.ready;
     }
 
     llmState.value = {

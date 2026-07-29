@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import {
+  createLive2DPreparedCaption,
   createLive2DCaptionSynchronizer,
   createLive2DOrderedCaptionTranscript
 } from '../../src/frontend/services/room/live2dCaptionSynchronizer.js';
@@ -60,6 +61,28 @@ transcript.resolve(0, '第一句');
 assert.equal(transcript.read(), '第一句第二句');
 transcript.resolve(2, '第三句');
 assert.equal(transcript.read(), '第一句第二句第三句');
+
+const pendingChineseCaption = deferred();
+const preparedCaption = createLive2DPreparedCaption(pendingChineseCaption.promise, {
+  unavailableText: '\u4e2d\u6587\u5b57\u5e55\u6682\u4e0d\u53ef\u7528'
+});
+assert.equal(
+  preparedCaption.read(),
+  '',
+  'the Japanese speech source must never be exposed while Chinese translation is pending'
+);
+pendingChineseCaption.resolve('\u76f4\u63a5\u663e\u793a\u4e2d\u6587');
+assert.equal(await preparedCaption.ready, '\u76f4\u63a5\u663e\u793a\u4e2d\u6587');
+assert.equal(preparedCaption.read(), '\u76f4\u63a5\u663e\u793a\u4e2d\u6587');
+
+const unavailableCaption = createLive2DPreparedCaption(Promise.reject(new Error('translation failed')), {
+  unavailableText: '\u4e2d\u6587\u5b57\u5e55\u6682\u4e0d\u53ef\u7528'
+});
+assert.equal(
+  await unavailableCaption.ready,
+  '\u4e2d\u6587\u5b57\u5e55\u6682\u4e0d\u53ef\u7528',
+  'translation failures must use a Chinese-only caption instead of the Japanese speech source'
+);
 
 assert.deepEqual(changes, ['旧句', '当前句', '当前句中文', '']);
 console.log('live caption synchronizer checks passed');
