@@ -21,7 +21,10 @@ function ease(value) {
 function smoothBehaviorActionTimeline(actions = []) {
   let previousEnd = 0;
   let previousDuration = 0;
-  return actions.map((action, index) => {
+  let previousActionIndex = -1;
+  const timeline = [];
+
+  actions.forEach((action, index) => {
     const next = { ...action };
     const duration = Math.max(Number(next.durationMs) || 1000, 1);
     let delay = Math.max(0, Number(next.delayMs) || 0);
@@ -34,21 +37,53 @@ function smoothBehaviorActionTimeline(actions = []) {
 
       if (startsAtOrAfterPreviousEnd && gapMs <= 900) {
         delay = Math.min(delay, desiredDelay);
+
+        const outgoing = timeline[previousActionIndex];
+        const transitionMs = Math.max(0, previousEnd - delay);
+        const keepsNaturalEyeTiming = (
+          NATURAL_EYE_TIMING_ACTIONS.has(outgoing?.type) ||
+          NATURAL_EYE_TIMING_ACTIONS.has(next.type)
+        );
+        if (outgoing && transitionMs > 0 && !keepsNaturalEyeTiming) {
+          outgoing.transitionOutMs = Math.max(Number(outgoing.transitionOutMs) || 0, transitionMs);
+          next.transitionInMs = Math.max(Number(next.transitionInMs) || 0, transitionMs);
+        }
       }
     }
 
     next.delayMs = Math.round(delay);
     previousDuration = duration;
-    previousEnd = Math.max(previousEnd, next.delayMs + duration);
-    return next;
+    const nextEnd = next.delayMs + duration;
+    if (nextEnd >= previousEnd) {
+      previousEnd = nextEnd;
+      previousActionIndex = timeline.length;
+    }
+    timeline.push(next);
   });
+
+  return timeline;
 }
 
-export function behaviorActionEnvelope(progress) {
+export function behaviorActionEnvelope(progress, options = {}) {
   const t = clamp(progress, 0, 1, 0);
-  if (t < 0.28) return ease(t / 0.28);
-  if (t > 0.76) return ease((1 - t) / 0.24);
-  return 1;
+  const durationMs = Math.max(Number(options.durationMs) || 1, 1);
+  const transitionInMs = Number(options.transitionInMs) > 0
+    ? Math.min(Number(options.transitionInMs), durationMs * 0.48)
+    : durationMs * 0.28;
+  const transitionOutMs = Number(options.transitionOutMs) > 0
+    ? Math.min(Number(options.transitionOutMs), durationMs * 0.48)
+    : durationMs * 0.24;
+  const elapsedMs = t * durationMs;
+  const remainingMs = (1 - t) * durationMs;
+  let envelope = 1;
+
+  if (elapsedMs < transitionInMs) {
+    envelope = Math.min(envelope, ease(elapsedMs / transitionInMs));
+  }
+  if (remainingMs < transitionOutMs) {
+    envelope = Math.min(envelope, ease(remainingMs / transitionOutMs));
+  }
+  return envelope;
 }
 
 export function behaviorActionSideSign(action, fallback = 1) {
@@ -75,12 +110,18 @@ export function activeBehaviorSamples(actions, elapsedMs, options = {}) {
     const duration = Math.max(Number(action.durationMs) || 1000, 1);
     const progress = (elapsedMs - started) / duration;
     if (progress < 0 || progress > 1) return null;
-    const envelope = behaviorActionEnvelope(progress);
+    const envelope = behaviorActionEnvelope(progress, {
+      durationMs: duration,
+      transitionInMs: action.transitionInMs,
+      transitionOutMs: action.transitionOutMs
+    });
     const handoffBlendInMs = Math.max(Number(action.handoffBlendInMs) || 0, 0);
     const handoffFade = handoffBlendInMs > 0
       ? ease(clamp((elapsedMs - started) / handoffBlendInMs, 0, 1, 0))
       : 1;
-    const blendedEnvelope = envelope * handoffFade;
+    const blendedEnvelope = handoffBlendInMs > 0
+      ? Math.min(envelope, handoffFade)
+      : envelope;
     const amplitude = clamp(action.amplitude, 0.72, 1.36, 1);
     const tempo = clamp(action.tempo, 0.82, 1.22, 1);
     const phaseOffset = Number(action.phaseOffset) || 0;
