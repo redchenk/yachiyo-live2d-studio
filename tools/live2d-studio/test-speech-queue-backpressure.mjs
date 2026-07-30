@@ -96,13 +96,15 @@ try {
   } = await server.ssrLoadModule(
     '/src/frontend/services/room/live2dSpeech.js'
   );
-  assert.equal(adaptLive2DInterTurnPauseMs(240, 0), 240);
-  assert.equal(adaptLive2DInterTurnPauseMs(240, 2), 150);
+  assert.equal(adaptLive2DInterTurnPauseMs(3_200, 0), 3_200);
+  assert.equal(adaptLive2DInterTurnPauseMs(3_200, 1), 1_800);
+  assert.equal(adaptLive2DInterTurnPauseMs(3_200, 2), 1_500);
   assert.equal(
-    adaptLive2DInterTurnPauseMs(240, 4),
-    110,
-    'heavy reply backlog must keep the human pause short'
+    adaptLive2DInterTurnPauseMs(3_200, 4),
+    1_200,
+    'even a heavy reply backlog must preserve a human-perceptible pause'
   );
+  assert.equal(adaptLive2DInterTurnPauseMs(240, 4), 240);
   player = createLive2DSpeechPlayer();
 
   const firstAudience = player.enqueue('第一条弹幕', {

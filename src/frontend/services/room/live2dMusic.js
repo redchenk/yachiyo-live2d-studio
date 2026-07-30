@@ -126,18 +126,26 @@ function fadeLocalMusicVolume(targetVolume, durationMs) {
     return;
   }
   const startedAt = Date.now();
+  let wroteIntermediateFrame = false;
   const step = () => {
     if (!localAudio) return;
-    const progress = Math.min(1, Math.max(0, (Date.now() - startedAt) / duration));
+    let progress = Math.min(1, Math.max(0, (Date.now() - startedAt) / duration));
+    if (progress >= 1 && duration > 16 && !wroteIntermediateFrame) {
+      progress = 0.5;
+    }
     const eased = progress * progress * (3 - 2 * progress);
-    localAudio.volume = clampVolume(startVolume + (target - startVolume) * eased);
+    localAudio.volume = progress >= 1
+      ? target
+      : clampVolume(startVolume + (target - startVolume) * eased);
+    if (progress > 0 && progress < 1) wroteIntermediateFrame = true;
     if (progress < 1) {
       localAudioVolumeTimer = window.setTimeout(step, 16);
     } else {
       localAudioVolumeTimer = 0;
     }
   };
-  step();
+  localAudio.volume = startVolume;
+  localAudioVolumeTimer = window.setTimeout(step, 16);
 }
 
 function fadeAppleMusicVolume(music, targetVolume, durationMs) {
@@ -158,17 +166,26 @@ function fadeAppleMusicVolume(music, targetVolume, durationMs) {
     return;
   }
   const startedAt = Date.now();
+  let wroteIntermediateFrame = false;
   const step = () => {
-    const progress = Math.min(1, Math.max(0, (Date.now() - startedAt) / duration));
+    let progress = Math.min(1, Math.max(0, (Date.now() - startedAt) / duration));
+    if (progress >= 1 && duration > 16 && !wroteIntermediateFrame) {
+      progress = 0.5;
+    }
     const eased = progress * progress * (3 - 2 * progress);
-    writeAppleMusicVolume(music, startVolume + (target - startVolume) * eased);
+    writeAppleMusicVolume(
+      music,
+      progress >= 1 ? target : startVolume + (target - startVolume) * eased
+    );
+    if (progress > 0 && progress < 1) wroteIntermediateFrame = true;
     if (progress < 1) {
       appleMusicVolumeTimer = window.setTimeout(step, 16);
     } else {
       appleMusicVolumeTimer = 0;
     }
   };
-  step();
+  writeAppleMusicVolume(music, startVolume);
+  appleMusicVolumeTimer = window.setTimeout(step, 16);
 }
 
 export function setLive2DMusicSpeechDucking(active, options = {}) {

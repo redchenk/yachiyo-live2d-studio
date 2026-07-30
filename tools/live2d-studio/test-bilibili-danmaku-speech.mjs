@@ -23,6 +23,23 @@ try {
   assert.equal(defaults.autoStartDirector, true);
   assert.equal(defaults.readAloud, true);
   assert.equal(defaults.readUserName, true);
+  assert.equal(defaults.safetyFilterEnabled, true);
+  assert.equal(defaults.safetyLevel, 'balanced');
+  assert.equal(defaults.sensitiveWords, '');
+  assert.equal(defaults.maskMildLanguage, true);
+
+  const normalizedSafety = normalizeRoomBilibiliDanmakuSettings({
+    safetyLevel: 'STRICT',
+    sensitiveWords: '词条一\n词条二',
+    maskMildLanguage: false
+  });
+  assert.equal(normalizedSafety.safetyLevel, 'strict');
+  assert.equal(normalizedSafety.sensitiveWords, '词条一\n词条二');
+  assert.equal(normalizedSafety.maskMildLanguage, false);
+  assert.equal(
+    normalizeRoomBilibiliDanmakuSettings({ safetyLevel: 'unknown' }).safetyLevel,
+    'balanced'
+  );
 
   assert.equal(
     formatBilibiliDanmakuSpeech(

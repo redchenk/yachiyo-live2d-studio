@@ -231,6 +231,14 @@ onUnmounted(() => {
             <input v-model="settings.readUserName" type="checkbox">
             <span>朗读观众昵称</span>
           </label>
+          <label class="studio-check-row">
+            <input v-model="settings.safetyFilterEnabled" type="checkbox">
+            <span>过滤敏感弹幕</span>
+          </label>
+          <label class="studio-check-row">
+            <input v-model="settings.maskMildLanguage" type="checkbox">
+            <span>轻度不文明用语打码</span>
+          </label>
         </div>
         <div class="studio-music-settings-row">
           <label>
@@ -242,6 +250,25 @@ onUnmounted(() => {
             <input v-model="settings.platform" type="text" spellcheck="false">
           </label>
         </div>
+        <div class="studio-music-settings-row">
+          <label>
+            <span>敏感过滤等级</span>
+            <select v-model="settings.safetyLevel">
+              <option value="strict">严格</option>
+              <option value="balanced">均衡</option>
+              <option value="relaxed">宽松</option>
+            </select>
+          </label>
+        </div>
+        <label>
+          <span>自定义敏感词</span>
+          <textarea
+            v-model="settings.sensitiveWords"
+            rows="4"
+            spellcheck="false"
+            placeholder="每行一个词；命中后不会交给点歌、AI、TTS或观众记忆"
+          ></textarea>
+        </label>
         <p class="studio-danmaku-hint">
           请勿逐项拼接 Cookie。请在已登录的 B站页面打开开发者工具 → Network，刷新后选中 api.bilibili.com 请求，从 Request Headers 复制完整 Cookie 请求头值（不含 Cookie: 前缀）并整段粘贴。Cookie 只发送给本机代理；认证失败仍会匿名连接。
         </p>
@@ -268,6 +295,10 @@ onUnmounted(() => {
           <div>
             <span>弹幕数</span>
             <strong>{{ state.messageCount }}</strong>
+          </div>
+          <div>
+            <span>已过滤</span>
+            <strong>{{ state.filteredCount || 0 }}</strong>
           </div>
           <div>
             <span>关注数</span>

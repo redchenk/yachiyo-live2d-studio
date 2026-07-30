@@ -32,9 +32,9 @@ export function adaptLive2DInterTurnPauseMs(requestedMs, pendingReplyCount = 0) 
   const baseMs = Math.max(0, Math.round(Number(requestedMs) || 0));
   const pressure = Math.max(0, Math.round(Number(pendingReplyCount) || 0));
   if (!baseMs) return 0;
-  if (pressure >= 4) return Math.min(baseMs, 110);
-  if (pressure >= 2) return Math.min(baseMs, 150);
-  if (pressure >= 1) return Math.min(baseMs, 190);
+  if (pressure >= 4) return Math.min(baseMs, 1200);
+  if (pressure >= 2) return Math.min(baseMs, 1500);
+  if (pressure >= 1) return Math.min(baseMs, 1800);
   return baseMs;
 }
 

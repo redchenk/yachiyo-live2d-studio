@@ -203,6 +203,10 @@ export const DEFAULT_ROOM_BILIBILI_DANMAKU_SETTINGS = {
   readAloud: true,
   readUserName: true,
   maxForwardPerMinute: 12,
+  safetyFilterEnabled: true,
+  safetyLevel: 'balanced',
+  sensitiveWords: '',
+  maskMildLanguage: true,
   platform: 'web',
   uid: 0,
   key: '',
@@ -553,6 +557,9 @@ export function normalizeRoomMusicSettings(settings = {}) {
 export function normalizeRoomBilibiliDanmakuSettings(settings = {}) {
   const merged = { ...DEFAULT_ROOM_BILIBILI_DANMAKU_SETTINGS, ...(settings || {}) };
   const platform = asText(merged.platform).toLowerCase() || DEFAULT_ROOM_BILIBILI_DANMAKU_SETTINGS.platform;
+  const safetyLevel = ['strict', 'balanced', 'relaxed'].includes(asText(merged.safetyLevel).toLowerCase())
+    ? asText(merged.safetyLevel).toLowerCase()
+    : DEFAULT_ROOM_BILIBILI_DANMAKU_SETTINGS.safetyLevel;
   return {
     enabled: asBoolean(merged.enabled),
     roomId: asText(merged.roomId).replace(/[^\d]/g, ''),
@@ -567,6 +574,10 @@ export function normalizeRoomBilibiliDanmakuSettings(settings = {}) {
       0,
       120
     )),
+    safetyFilterEnabled: asBoolean(merged.safetyFilterEnabled),
+    safetyLevel,
+    sensitiveWords: String(merged.sensitiveWords || '').slice(0, 20_000),
+    maskMildLanguage: asBoolean(merged.maskMildLanguage),
     platform,
     uid: Math.round(asNumber(merged.uid, DEFAULT_ROOM_BILIBILI_DANMAKU_SETTINGS.uid, 0, Number.MAX_SAFE_INTEGER)),
     key: String(merged.key || '').trim(),

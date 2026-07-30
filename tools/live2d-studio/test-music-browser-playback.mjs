@@ -143,12 +143,45 @@ globalThis.Audio = class MockAudio {
   }
 };
 
-async function waitFor(predicate, label) {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    if (predicate()) return;
-    await new Promise((resolve) => setTimeout(resolve, 5));
-  }
-  throw new Error(`Timed out waiting for ${label}`);
+function installFakeWindowClock(startAt = 1_000) {
+  const realDateNow = Date.now;
+  const realWindowSetTimeout = window.setTimeout;
+  const realWindowClearTimeout = window.clearTimeout;
+  let fakeNow = startAt;
+  let nextTimerId = 1;
+  const timers = new Map();
+
+  Date.now = () => fakeNow;
+  window.setTimeout = (callback, delayMs = 0) => {
+    const timerId = nextTimerId;
+    nextTimerId += 1;
+    timers.set(timerId, {
+      callback,
+      dueAt: fakeNow + Math.max(0, Number(delayMs) || 0)
+    });
+    return timerId;
+  };
+  window.clearTimeout = (timerId) => {
+    timers.delete(timerId);
+  };
+
+  return {
+    advanceBy(durationMs) {
+      fakeNow += Math.max(0, Number(durationMs) || 0);
+      const dueTimers = [...timers.entries()]
+        .filter(([, timer]) => timer.dueAt <= fakeNow)
+        .sort((left, right) => left[1].dueAt - right[1].dueAt);
+      for (const [timerId, timer] of dueTimers) {
+        if (!timers.delete(timerId)) continue;
+        timer.callback();
+      }
+    },
+    restore() {
+      Date.now = realDateNow;
+      window.setTimeout = realWindowSetTimeout;
+      window.clearTimeout = realWindowClearTimeout;
+    }
+  };
 }
 
 const server = await createServer({
@@ -192,20 +225,26 @@ try {
   );
   assert.equal(latestAudio.volume, 1);
 
-  setLive2DMusicSpeechDucking(true, { fadeMs: 0 });
-  setLive2DMusicSpeechDucking(false, { fadeMs: 120 });
-  await waitFor(
-    () => latestAudio.volume > 0.08 && latestAudio.volume < 0.95,
-    'partial music volume recovery'
-  );
-  const partialRecoveryVolume = latestAudio.volume;
-  setLive2DMusicSpeechDucking(true, { fadeMs: 0 });
-  setLive2DMusicSpeechDucking(false, { fadeMs: 0 });
-  assert.equal(
-    latestAudio.volume,
-    1,
-    `re-entering speech during recovery must not ratchet base volume down to ${partialRecoveryVolume}`
-  );
+  const recoveryClock = installFakeWindowClock();
+  try {
+    setLive2DMusicSpeechDucking(true, { fadeMs: 0 });
+    setLive2DMusicSpeechDucking(false, { fadeMs: 120 });
+    recoveryClock.advanceBy(16);
+    assert.ok(
+      latestAudio.volume > 0.08 && latestAudio.volume < 0.95,
+      'music recovery must expose a deterministic intermediate volume'
+    );
+    const partialRecoveryVolume = latestAudio.volume;
+    setLive2DMusicSpeechDucking(true, { fadeMs: 0 });
+    setLive2DMusicSpeechDucking(false, { fadeMs: 0 });
+    assert.equal(
+      latestAudio.volume,
+      1,
+      `re-entering speech during recovery must not ratchet base volume down to ${partialRecoveryVolume}`
+    );
+  } finally {
+    recoveryClock.restore();
+  }
   assert.equal(appleMusic.volume, 1);
 
   for (let cycle = 0; cycle < 300; cycle += 1) {
@@ -221,19 +260,36 @@ try {
 
   latestAudio.volumeWrites.length = 0;
   appleVolumeWrites.length = 0;
-  setLive2DMusicSpeechDucking(true, { fadeMs: 90 });
-  assert.equal(latestAudio.volume, 1, 'local music fade must not jump on the first frame');
-  assert.equal(appleMusic.volume, 1, 'Apple Music fade must not jump on the first frame');
-  await waitFor(() => latestAudio.volume <= 0.08, 'smooth local music duck');
-  await waitFor(() => appleMusic.volume <= 0.08, 'smooth Apple Music duck');
-  assert.ok(
-    latestAudio.volumeWrites.some((value) => value > 0.08 && value < 1),
-    'local music duck must include intermediate volume steps'
-  );
-  assert.ok(
-    appleVolumeWrites.some((value) => value > 0.08 && value < 1),
-    'Apple Music duck must include intermediate volume steps'
-  );
+  const duckingClock = installFakeWindowClock();
+  try {
+    setLive2DMusicSpeechDucking(true, { fadeMs: 90 });
+    assert.equal(latestAudio.volume, 1, 'local music fade must not jump on the first frame');
+    assert.equal(appleMusic.volume, 1, 'Apple Music fade must not jump on the first frame');
+
+    duckingClock.advanceBy(120);
+    assert.ok(
+      latestAudio.volume > 0.08 && latestAudio.volume < 1,
+      'a delayed local music frame must still preserve a smooth transition'
+    );
+    assert.ok(
+      appleMusic.volume > 0.08 && appleMusic.volume < 1,
+      'a delayed Apple Music frame must still preserve a smooth transition'
+    );
+
+    duckingClock.advanceBy(16);
+    assert.equal(latestAudio.volume, 0.08, 'local music duck must reach its target');
+    assert.equal(appleMusic.volume, 0.08, 'Apple Music duck must reach its target');
+    assert.ok(
+      latestAudio.volumeWrites.some((value) => value > 0.08 && value < 1),
+      'local music duck must include intermediate volume steps'
+    );
+    assert.ok(
+      appleVolumeWrites.some((value) => value > 0.08 && value < 1),
+      'Apple Music duck must include intermediate volume steps'
+    );
+  } finally {
+    duckingClock.restore();
+  }
   setLive2DMusicSpeechDucking(false, { fadeMs: 0 });
 
   writeLive2DMusicQueueState({

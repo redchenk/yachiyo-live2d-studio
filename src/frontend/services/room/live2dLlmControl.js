@@ -699,6 +699,14 @@ function normalizeMemoryWritesFromPayload(data) {
   return sanitizeMemoryWrites(data?.memory_writes || data?.memoryWrites || []);
 }
 
+function normalizeAcknowledgedIndexes(data = {}) {
+  const raw = data?.acknowledgedIndexes ?? data?.acknowledged_indexes ?? [];
+  const values = Array.isArray(raw) ? raw : [raw];
+  return [...new Set(values
+    .map((value) => Math.round(Number(value)))
+    .filter((value) => Number.isFinite(value) && value >= 1 && value <= 20))];
+}
+
 function musicSourceWithProvider(source, provider) {
   if (!source) return null;
   return typeof source === 'object'
@@ -785,6 +793,7 @@ export function parseLive2DControlPayload(rawText) {
       reply: reply || 'OK.',
       live2d,
       music: normalizeMusicFromPayload(data),
+      acknowledgedIndexes: normalizeAcknowledgedIndexes(data),
       memoryWrites: normalizeMemoryWritesFromPayload(data),
       raw: data
     };
@@ -798,6 +807,7 @@ export function parseLive2DControlPayload(rawText) {
       reply,
       live2d: mergeBehaviorAndExplicitIntent(behaviorLive2D, inferredLive2D),
       music: null,
+      acknowledgedIndexes: [],
       memoryWrites: [],
       raw: rawText
     };
@@ -968,6 +978,14 @@ function buildStreamingDirectRequestBody(settings, systemPrompt, history, messag
   };
 }
 
+function throwIfLive2DRequestAborted(signal) {
+  if (!signal?.aborted) return;
+  if (signal.reason instanceof Error) throw signal.reason;
+  const error = new Error('LLM request aborted');
+  error.name = 'AbortError';
+  throw error;
+}
+
 function finishLive2DControlRequest(message, history, rawReply, sentenceEmitter = null, memoryContext = {}) {
   const parsed = parseLive2DControlPayload(rawReply);
   if (sentenceEmitter && sentenceEmitter.emittedCount < 1) {
@@ -999,7 +1017,7 @@ export function live2DControlSystemPrompt() {
     'Yachiyo is being tested as an autonomous AI VTuber streamer: keep her present, reactive, playful, and concise.',
     'Return exactly one JSON object. Do not use Markdown. Do not add prose outside JSON.',
     'JSON schema:',
-    `{"reply":"short visible reply","emotion":"${SEMANTIC_EMOTION_ID_LIST}","intensity":0.72,"actions":[{"type":"look_at_chat","duration":1.2},{"type":"smirk","duration":2.0},{"type":"head_tilt","side":"right","duration":1.5}],"interruptPolicy":{"mode":"blend","priority":4},"speech_style":{"speed":1.05,"pitch":0.08,"pause":"playful"},"music":null,"memory_writes":[]}`,
+    `{"reply":"short visible reply","acknowledgedIndexes":[],"emotion":"${SEMANTIC_EMOTION_ID_LIST}","intensity":0.72,"actions":[{"type":"look_at_chat","duration":1.2},{"type":"smirk","duration":2.0},{"type":"head_tilt","side":"right","duration":1.5}],"interruptPolicy":{"mode":"blend","priority":4},"speech_style":{"speed":1.05,"pitch":0.08,"pause":"playful"},"music":null,"memory_writes":[]}`,
     'The reply field must contain only natural dialogue. Never put stage directions, parenthesized action hints, asterisk actions, action labels, or pose descriptions in reply.',
     'The actions field is required and must contain at least 2 semantic actions. If the moment is calm, use look_at_chat + breathe.',
     'Actions must match the reply meaning and mood. Vary action combos between turns; do not repeat the same body action unless the dialogue specifically calls for it.',
@@ -1032,7 +1050,7 @@ export function live2DStreamingControlSystemPrompt() {
     'For TTS stability, do not use tiny fragments; the first VOICE should include at least one short phrase, not only a filler.',
     'VOICE: next natural Japanese clause or short sentence, normally about 18-32 Japanese characters.',
     'VOICE: combine tiny comma clauses instead of making every comma its own TTS chunk; prefer one stable phrase over many tiny fragments.',
-    `CONTROL: {"reply":"same Japanese spoken text without VOICE labels","emotion":"${SEMANTIC_EMOTION_ID_LIST}","intensity":0.72,"actions":[{"type":"look_at_chat","duration":1.2},{"type":"smirk","duration":2.0}],"interruptPolicy":{"mode":"blend","priority":4},"speech_style":{"speed":1.05,"pitch":0.08,"pause":"playful"},"music":null,"memory_writes":[]}`,
+    `CONTROL: {"reply":"same Japanese spoken text without VOICE labels","acknowledgedIndexes":[],"emotion":"${SEMANTIC_EMOTION_ID_LIST}","intensity":0.72,"actions":[{"type":"look_at_chat","duration":1.2},{"type":"smirk","duration":2.0}],"interruptPolicy":{"mode":"blend","priority":4},"speech_style":{"speed":1.05,"pitch":0.08,"pause":"playful"},"music":null,"memory_writes":[]}`,
     'Each BEAT must be a single-line JSON object and must appear immediately before the VOICE it controls.',
     'BEAT contains only semantic fields: emotion, intensity, actions, and speech_style. Keep it short so the first VOICE can start quickly.',
     'The VOICE lines must come before CONTROL. Emit the first BEAT and VOICE before planning the full answer. Do not wait for CONTROL before speaking.',
@@ -1072,10 +1090,14 @@ export async function requestLive2DControl(message, options = {}) {
     throw new Error('Missing LLM settings. Configure LLM in Studio Settings first.');
   }
 
+  const signal = options.signal;
+  throwIfLive2DRequestAborted(signal);
   const history = readLive2DLLMHistory();
   const memoryContext = options.memoryContext || {};
   const memoryPrompt = await buildLive2DMemoryPrompt(message, memoryContext);
+  throwIfLive2DRequestAborted(signal);
   const visionContext = await buildLive2DVisionPrompt();
+  throwIfLive2DRequestAborted(signal);
   const systemPrompt = [yachiyoCorePersonalityPrompt(), settings.systemPrompt, memoryPrompt, visionContext.prompt, live2DControlSystemPrompt()].filter(Boolean).join('\n\n');
   let rawReply = '';
 
@@ -1091,9 +1113,11 @@ export async function requestLive2DControl(message, options = {}) {
         model: settings.model,
         systemPrompt,
         vision: visionContext.payload
-      })
+      }),
+      signal
     });
     const result = await response.json().catch(() => ({}));
+    throwIfLive2DRequestAborted(signal);
     if (!response.ok || !result.success) throw new Error(result.message || `LLM ${response.status}`);
     rawReply = result.data?.reply || '';
   } else {
@@ -1105,12 +1129,15 @@ export async function requestLive2DControl(message, options = {}) {
         Authorization: `Bearer ${settings.apiKey}`,
         ...openRouterHeaders(apiUrl)
       },
-      body: JSON.stringify(buildDirectRequestBody({ ...settings, apiUrl }, systemPrompt, history, message, visionContext.payload))
+      body: JSON.stringify(buildDirectRequestBody({ ...settings, apiUrl }, systemPrompt, history, message, visionContext.payload)),
+      signal
     });
     if (!response.ok) throw new Error(`LLM ${response.status}`);
     rawReply = pickReply(await response.json());
+    throwIfLive2DRequestAborted(signal);
   }
 
+  throwIfLive2DRequestAborted(signal);
   return finishLive2DControlRequest(message, history, rawReply, null, memoryContext);
 }
 
@@ -1120,10 +1147,14 @@ export async function requestLive2DControlStream(message, handlers = {}) {
     throw new Error('Missing LLM settings. Configure LLM in Studio Settings first.');
   }
 
+  const signal = handlers.signal;
+  throwIfLive2DRequestAborted(signal);
   const history = readLive2DLLMHistory();
   const memoryContext = handlers.memoryContext || {};
   const memoryPrompt = await buildLive2DMemoryPrompt(message, memoryContext);
+  throwIfLive2DRequestAborted(signal);
   const visionContext = await buildLive2DVisionPrompt();
+  throwIfLive2DRequestAborted(signal);
   const systemPrompt = [yachiyoCorePersonalityPrompt(), settings.systemPrompt, memoryPrompt, visionContext.prompt, live2DStreamingControlSystemPrompt()].filter(Boolean).join('\n\n');
   const sentenceEmitter = createReplySentenceEmitter(handlers);
   let rawReply = '';
@@ -1140,11 +1171,13 @@ export async function requestLive2DControlStream(message, handlers = {}) {
         model: settings.model,
         systemPrompt,
         vision: visionContext.payload
-      })
+      }),
+      signal
     });
     if (!response.ok) {
       if (response.status === 404 || response.status === 405) {
-        const fallback = await requestLive2DControl(message, { memoryContext });
+        const fallback = await requestLive2DControl(message, { memoryContext, signal });
+        throwIfLive2DRequestAborted(signal);
         sentenceEmitter.flushReply(fallback.reply);
         handlers.onDone?.(fallback);
         return fallback;
@@ -1154,10 +1187,13 @@ export async function requestLive2DControlStream(message, handlers = {}) {
     }
     rawReply = await readStreamingTextResponse(response, {
       onText: (delta, accumulated) => {
+        if (signal?.aborted) return;
         sentenceEmitter.pushRaw(accumulated);
         handlers.onDelta?.({ delta, raw: accumulated });
       },
-      onEvent: (event) => handlers.onEvent?.(event)
+      onEvent: (event) => {
+        if (!signal?.aborted) handlers.onEvent?.(event);
+      }
     });
   } else {
     const apiUrl = normalizeOpenAIUrl(settings.apiUrl, settings.model, settings.provider);
@@ -1168,20 +1204,27 @@ export async function requestLive2DControlStream(message, handlers = {}) {
         Authorization: `Bearer ${settings.apiKey}`,
         ...openRouterHeaders(apiUrl)
       },
-      body: JSON.stringify(buildStreamingDirectRequestBody({ ...settings, apiUrl }, systemPrompt, history, message, visionContext.payload))
+      body: JSON.stringify(buildStreamingDirectRequestBody({ ...settings, apiUrl }, systemPrompt, history, message, visionContext.payload)),
+      signal
     });
     if (!response.ok) throw new Error(`LLM ${response.status}`);
     rawReply = await readStreamingTextResponse(response, {
       onText: (delta, accumulated) => {
+        if (signal?.aborted) return;
         sentenceEmitter.pushRaw(accumulated);
         handlers.onDelta?.({ delta, raw: accumulated });
       },
-      onEvent: (event) => handlers.onEvent?.(event)
+      onEvent: (event) => {
+        if (!signal?.aborted) handlers.onEvent?.(event);
+      }
     });
   }
 
+  throwIfLive2DRequestAborted(signal);
   sentenceEmitter.pushRaw(rawReply, { flush: true });
+  throwIfLive2DRequestAborted(signal);
   const parsed = finishLive2DControlRequest(message, history, rawReply, sentenceEmitter, memoryContext);
+  throwIfLive2DRequestAborted(signal);
   handlers.onDone?.(parsed);
   return parsed;
 }

@@ -200,13 +200,16 @@ try {
       query: 'Cloud 9 Beach Bunny',
       storefront: 'us'
     },
+    acknowledgedIndexes: [2, 1, 2, 0, 99],
     memory_writes: []
   })}`);
 
   assert.equal(parsed.music.action, 'play');
   assert.equal(parsed.music.query, 'Cloud 9 Beach Bunny');
   assert.equal(parsed.music.storefront, 'us');
+  assert.deepEqual(parsed.acknowledgedIndexes, [2, 1]);
   assert.equal(parsed.memoryWrites.length, 0);
+  assert.ok(live2DControlSystemPrompt().includes('"acknowledgedIndexes":[]'));
   assert.ok(live2DControlSystemPrompt().includes('"music":null'));
   assert.ok(live2DControlSystemPrompt().includes('music JSON'));
   assert.ok(live2DControlSystemPrompt().includes('\u6211\u8981\u542c'));

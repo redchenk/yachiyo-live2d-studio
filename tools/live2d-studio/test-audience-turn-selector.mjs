@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
 import {
   enqueueLive2DAudienceEntry,
+  ensureLive2DAudienceNamesInSpeech,
   formatLive2DAudiencePromptEntry,
   requeueLive2DAudienceTurn,
+  resolveLive2DAudienceAcknowledgements,
   selectLive2DBilibiliMessages,
   selectLive2DAudienceTurn
 } from '../../src/frontend/services/room/live2dAudienceTurnSelector.js';
@@ -37,9 +39,14 @@ const spam = enqueueLive2DAudienceEntry(queue, '啊啊啊啊啊啊啊啊啊啊�
 assert.equal(spam.accepted, false);
 assert.equal(spam.reason, 'empty-or-spam');
 
-const turn = selectLive2DAudienceTurn(queue, { limit: 3, now });
-assert.deepEqual(turn.selected.map((entry) => entry.id), ['sc', 'mention', 'question']);
-assert.deepEqual(turn.remaining.map((entry) => entry.id), ['plain']);
+const turn = selectLive2DAudienceTurn(queue, {
+  limit: 3,
+  replyCount: 2,
+  rng: () => 0.4,
+  now
+});
+assert.deepEqual(turn.selected.map((entry) => entry.id), ['sc', 'mention']);
+assert.deepEqual(turn.remaining.map((entry) => entry.id), ['plain', 'question']);
 
 const musicRequest = enqueueLive2DAudienceEntry([], '我要听ray', {
   source: 'bilibili',
@@ -50,7 +57,10 @@ const ordinaryMessage = enqueueLive2DAudienceEntry([], '今天挺开心', {
   bilibili: { id: 'ordinary-message', userId: 'ordinary-viewer', userName: '普通观众' }
 }, { now }).entry;
 assert.equal(
-  selectLive2DAudienceTurn([ordinaryMessage, musicRequest], { limit: 1, now }).selected[0].id,
+  selectLive2DAudienceTurn(
+    [ordinaryMessage, musicRequest],
+    { limit: 1, replyCount: 1, rng: () => 0.99, now }
+  ).selected[0].id,
   'music-request'
 );
 
@@ -67,11 +77,38 @@ for (const [id, text, userId] of [
     { now }
   ).queue;
 }
-const fairTurn = selectLive2DAudienceTurn(sameViewerQueue, { limit: 2, now });
+const fairTurn = selectLive2DAudienceTurn(sameViewerQueue, {
+  limit: 2,
+  replyCount: 2,
+  rng: () => 0,
+  now
+});
 assert.equal(new Set(fairTurn.selected.map((entry) => entry.userId)).size, 2);
+assert.equal(fairTurn.remaining.length, 1);
+
+const zeroIdViewerQueue = [
+  enqueueLive2DAudienceEntry([], 'anonymous viewer one', {
+    source: 'bilibili',
+    bilibili: { id: 'zero-id-a', userId: '0', userName: 'Anonymous A' }
+  }, { now }).entry,
+  enqueueLive2DAudienceEntry([], 'anonymous viewer two', {
+    source: 'bilibili',
+    bilibili: { id: 'zero-id-b', userId: 0, userName: 'Anonymous B' }
+  }, { now }).entry
+];
+const zeroIdViewerTurn = selectLive2DAudienceTurn(zeroIdViewerQueue, {
+  limit: 2,
+  replyCount: 2,
+  rng: () => 0,
+  now
+});
+assert.deepEqual(
+  new Set(zeroIdViewerTurn.selected.map((entry) => entry.id)),
+  new Set(['zero-id-a', 'zero-id-b'])
+);
 
 const restored = requeueLive2DAudienceTurn(turn.remaining, turn.selected);
-assert.deepEqual(restored.map((entry) => entry.id), ['sc', 'mention', 'question', 'plain']);
+assert.deepEqual(restored.map((entry) => entry.id), ['sc', 'mention', 'plain', 'question']);
 
 const promptLine = formatLive2DAudiencePromptEntry(turn.selected[0]);
 assert.match(promptLine, /"type":"superchat"/);
@@ -144,5 +181,220 @@ const expiredPaid = enqueueLive2DAudienceEntry([], '[SC] 太久以前的醒目�
 const expiredPaidTurn = selectLive2DAudienceTurn([expiredPaid], { limit: 1, now });
 assert.deepEqual(expiredPaidTurn.selected, []);
 assert.deepEqual(expiredPaidTurn.discarded.map((entry) => entry.id), ['expired-paid']);
+
+function sequenceRng(values) {
+  let index = 0;
+  return () => values[Math.min(index++, values.length - 1)];
+}
+
+const randomCountQueue = [
+  enqueueLive2DAudienceEntry([], 'random count a', {
+    source: 'bilibili',
+    bilibili: { id: 'random-a', userId: 'random-a' }
+  }, { now }).entry,
+  enqueueLive2DAudienceEntry([], 'random count b', {
+    source: 'bilibili',
+    bilibili: { id: 'random-b', userId: 'random-b' }
+  }, { now }).entry,
+  enqueueLive2DAudienceEntry([], 'random count c', {
+    source: 'bilibili',
+    bilibili: { id: 'random-c', userId: 'random-c' }
+  }, { now }).entry
+];
+const singleViewerTurn = selectLive2DAudienceTurn(randomCountQueue, {
+  limit: 9,
+  rng: sequenceRng([0.2, 0.5]),
+  now
+});
+assert.equal(singleViewerTurn.selected.length, 1);
+assert.equal(singleViewerTurn.remaining.length, 2);
+
+const twoViewerTurn = selectLive2DAudienceTurn(randomCountQueue, {
+  limit: 9,
+  rng: sequenceRng([0.9, 0.1, 0.9]),
+  now
+});
+assert.equal(twoViewerTurn.selected.length, 2);
+assert.equal(new Set(twoViewerTurn.selected.map((entry) => entry.userId)).size, 2);
+assert.equal(twoViewerTurn.remaining.length, 1);
+
+const firstMessageEntry = enqueueLive2DAudienceEntry([], 'same weight a', {
+  source: 'bilibili',
+  bilibili: { id: 'first-message', userId: 'first-viewer' }
+}, { now }).entry;
+const regularMessageEntry = enqueueLive2DAudienceEntry([], 'same weight b', {
+  source: 'bilibili',
+  bilibili: { id: 'regular-message', userId: 'regular-viewer' }
+}, { now }).entry;
+const firstMessageTurn = selectLive2DAudienceTurn(
+  [firstMessageEntry, regularMessageEntry],
+  {
+    limit: 1,
+    replyCount: 1,
+    rng: () => 0.6,
+    viewerState: new Map([
+      ['first-viewer', { messageCount: 1 }],
+      ['regular-viewer', { messageCount: 8 }]
+    ]),
+    now
+  }
+);
+assert.equal(firstMessageTurn.selected[0].id, 'first-message');
+
+const waitingEntry = enqueueLive2DAudienceEntry([], 'waiting one', {
+  source: 'bilibili',
+  bilibili: {
+    id: 'waiting-message',
+    userId: 'waiting-viewer',
+    timestamp: now - 15_000
+  }
+}, { now }).entry;
+const freshEntry = enqueueLive2DAudienceEntry([], 'waiting two', {
+  source: 'bilibili',
+  bilibili: {
+    id: 'fresh-message',
+    userId: 'fresh-viewer',
+    timestamp: now
+  }
+}, { now }).entry;
+const waitingTurn = selectLive2DAudienceTurn([waitingEntry, freshEntry], {
+  limit: 1,
+  replyCount: 1,
+  rng: () => 0.55,
+  now
+});
+assert.equal(waitingTurn.selected[0].id, 'waiting-message');
+
+const coolingEntry = enqueueLive2DAudienceEntry([], 'cooling viewer', {
+  source: 'bilibili',
+  bilibili: { id: 'cooling-message', userId: 'cooling-viewer' }
+}, { now }).entry;
+const readyEntry = enqueueLive2DAudienceEntry([], 'ready viewer', {
+  source: 'bilibili',
+  bilibili: { id: 'ready-message', userId: 'ready-viewer' }
+}, { now }).entry;
+const cooldownTurn = selectLive2DAudienceTurn([coolingEntry, readyEntry], {
+  limit: 2,
+  replyCount: 2,
+  rng: () => 0,
+  viewerState: {
+    'cooling-viewer': { lastRepliedAt: now - 1_000 },
+    'ready-viewer': { lastRepliedAt: now - 120_000 }
+  },
+  now
+});
+assert.deepEqual(cooldownTurn.selected.map((entry) => entry.id), ['ready-message']);
+assert.deepEqual(cooldownTurn.remaining.map((entry) => entry.id), ['cooling-message']);
+
+const deterministicPaidTurn = selectLive2DAudienceTurn([
+  enqueueLive2DAudienceEntry([], 'small gift', {
+    source: 'bilibili',
+    bilibili: {
+      id: 'paid-gift',
+      type: 'gift',
+      userId: 'gift-user',
+      price: 1
+    }
+  }, { now }).entry,
+  enqueueLive2DAudienceEntry([], 'important superchat', {
+    source: 'bilibili',
+    bilibili: {
+      id: 'paid-superchat',
+      type: 'superchat',
+      userId: 'sc-user',
+      price: 30
+    }
+  }, { now }).entry,
+  firstMessageEntry
+], {
+  limit: 9,
+  rng: () => 0,
+  now
+});
+assert.deepEqual(
+  deterministicPaidTurn.selected.map((entry) => entry.id),
+  ['paid-superchat', 'paid-gift']
+);
+
+const allBurstMessages = selectLive2DBilibiliMessages([
+  { id: 'batch-a', type: 'danmu', userId: 'batch-a', text: 'batch a', timestamp: now },
+  { id: 'batch-b', type: 'danmu', userId: 'batch-b', text: 'batch b', timestamp: now },
+  { id: 'batch-c', type: 'danmu', userId: 'batch-c', text: 'batch c', timestamp: now }
+], {
+  limit: 3,
+  rng: () => 0,
+  now
+});
+assert.equal(allBurstMessages.length, 3);
+assert.deepEqual(new Set(allBurstMessages.map((message) => message.id)), new Set([
+  'batch-a',
+  'batch-b',
+  'batch-c'
+]));
+
+const sameViewerBurstMessages = selectLive2DBilibiliMessages([
+  { id: 'same-batch-a', type: 'danmu', userId: 'same-batch-user', text: 'batch one', timestamp: now },
+  { id: 'same-batch-b', type: 'danmu', userId: 'same-batch-user', text: 'batch two', timestamp: now }
+], {
+  limit: 2,
+  rng: () => 0,
+  now
+});
+assert.equal(sameViewerBurstMessages.length, 2);
+
+const firstMessageOrderedBurst = selectLive2DBilibiliMessages([
+  { id: 'batch-regular', type: 'danmu', userId: 'regular-user', text: 'regular', timestamp: now },
+  {
+    id: 'batch-first',
+    type: 'danmu',
+    userId: 'first-user',
+    text: 'first',
+    isFirstMessage: true,
+    timestamp: now
+  }
+], {
+  limit: 2,
+  rng: () => 0.4,
+  now
+});
+assert.equal(
+  firstMessageOrderedBurst[0].id,
+  'batch-first',
+  'first-message weighting must apply before the global rate gate'
+);
+
+const acknowledgementAudience = [
+  { id: 'ack-a', userName: 'A' },
+  { id: 'ack-b', userName: 'B' }
+];
+const explicitAcknowledgements = resolveLive2DAudienceAcknowledgements(
+  acknowledgementAudience,
+  [2, 2, 99]
+);
+assert.deepEqual(explicitAcknowledgements.acknowledged.map((entry) => entry.id), ['ack-b']);
+assert.deepEqual(explicitAcknowledgements.unacknowledged.map((entry) => entry.id), ['ack-a']);
+assert.equal(explicitAcknowledgements.usedFallback, false);
+
+const fallbackAcknowledgements = resolveLive2DAudienceAcknowledgements(
+  acknowledgementAudience,
+  []
+);
+assert.deepEqual(fallbackAcknowledgements.acknowledged.map((entry) => entry.id), ['ack-a']);
+assert.deepEqual(fallbackAcknowledgements.unacknowledged.map((entry) => entry.id), ['ack-b']);
+assert.equal(fallbackAcknowledgements.usedFallback, true);
+
+assert.equal(
+  ensureLive2DAudienceNamesInSpeech('今晚也要开心哦。', [
+    { userName: '小明' },
+    { userName: '阿雨' }
+  ]),
+  '小明、阿雨，今晚也要开心哦。'
+);
+assert.equal(
+  ensureLive2DAudienceNamesInSpeech('小明，点歌已经排上啦。', [
+    { userName: '小明' }
+  ]),
+  '小明，点歌已经排上啦。'
+);
 
 console.log('audience turn selector checks passed');

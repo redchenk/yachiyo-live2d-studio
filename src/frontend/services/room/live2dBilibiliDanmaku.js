@@ -3,6 +3,7 @@ import {
   normalizeRoomBilibiliDanmakuSettings,
   readRoomBilibiliDanmakuSettings
 } from './roomSettings.js';
+import { filterLive2DAudienceMessage } from './live2dAudienceSafetyFilter.js';
 
 export const BILIBILI_DANMAKU_EVENT = 'tsukuyomi:bilibili-danmaku';
 export const BILIBILI_DANMAKU_STATE_EVENT = 'tsukuyomi:bilibili-danmaku-state';
@@ -30,6 +31,7 @@ let state = {
   authWarning: '',
   authFailureStage: '',
   authFailureCode: 0,
+  filteredCount: 0,
   error: '',
   startedAt: 0,
   updatedAt: 0
@@ -296,18 +298,66 @@ function normalizeIncomingMessage(raw, type) {
   };
 }
 
-function pushIncomingMessage(message, { broadcast = true } = {}) {
+function filterIncomingMessage(message) {
+  const filtered = filterLive2DAudienceMessage(message, activeSettings);
+  if (filtered.dropped) {
+    if (!['superchat', 'gift', 'guard'].includes(message?.type)) {
+      return { message: null, filtered };
+    }
+    return {
+      filtered,
+      message: {
+        ...message,
+        userName: filtered.safeUserName,
+        text: '[内容已过滤]',
+        giftName: message?.type === 'superchat' ? '' : '[内容已过滤]',
+        safetyFiltered: true,
+        safetyReason: filtered.reason
+      }
+    };
+  }
+  return {
+    filtered,
+    message: {
+      ...message,
+      userName: filtered.safeUserName,
+      text: filtered.safeText,
+      giftName: ['gift', 'guard'].includes(message?.type)
+        ? filtered.safeText
+        : String(message?.giftName || '').trim(),
+      safetyFiltered: filtered.masked,
+      safetyReason: filtered.reason
+    }
+  };
+}
+
+function pushIncomingMessage(message, { broadcast = true, applySafetyFilter = true } = {}) {
   if (!message?.text && message?.type !== 'gift' && message?.type !== 'guard') return null;
+  const safety = applySafetyFilter
+    ? filterIncomingMessage(message)
+    : { message, filtered: null };
+  const safeMessage = safety.message;
+  if (!safeMessage) {
+    scheduleMessageState({
+      messageCount: state.messageCount + 1,
+      filteredCount: state.filteredCount + 1,
+      actualRoomId: message.actualRoomId || state.actualRoomId
+    });
+    return null;
+  }
   messages = [
-    message,
-    ...messages.filter((item) => item.id !== message.id)
+    safeMessage,
+    ...messages.filter((item) => item.id !== safeMessage.id)
   ].slice(0, MESSAGE_LIMIT);
   scheduleMessageState({
     messageCount: state.messageCount + 1,
-    actualRoomId: message.actualRoomId || state.actualRoomId
+    filteredCount: state.filteredCount + (
+      safety.filtered?.masked || safety.filtered?.dropped ? 1 : 0
+    ),
+    actualRoomId: safeMessage.actualRoomId || state.actualRoomId
   });
-  if (broadcast) dispatch(BILIBILI_DANMAKU_EVENT, message);
-  return message;
+  if (broadcast) dispatch(BILIBILI_DANMAKU_EVENT, safeMessage);
+  return safeMessage;
 }
 
 function pushRuntimeLine(type, text, raw = null) {
@@ -326,7 +376,7 @@ function pushRuntimeLine(type, text, raw = null) {
     amount: 0,
     giftName: '',
     timestamp: Date.now()
-  }, { broadcast: false });
+  }, { broadcast: false, applySafetyFilter: false });
 }
 
 function createHandler(runId) {
@@ -422,7 +472,7 @@ export function readBilibiliDanmakuSnapshot() {
 
 export function clearBilibiliDanmakuMessages() {
   messages = [];
-  updateState({ messageCount: 0 });
+  updateState({ messageCount: 0, filteredCount: 0 });
   return readBilibiliDanmakuSnapshot();
 }
 
