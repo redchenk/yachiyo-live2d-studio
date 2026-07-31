@@ -75,23 +75,14 @@ pendingChineseCaption.resolve('\u76f4\u63a5\u663e\u793a\u4e2d\u6587');
 assert.equal(await preparedCaption.ready, '\u76f4\u63a5\u663e\u793a\u4e2d\u6587');
 assert.equal(preparedCaption.read(), '\u76f4\u63a5\u663e\u793a\u4e2d\u6587');
 
-const emptyCaption = createLive2DPreparedCaption(Promise.resolve(''), {
-  unavailableText: '\u4e2d\u6587\u5b57\u5e55\u6682\u4e0d\u53ef\u7528'
-});
-await assert.rejects(
-  emptyCaption.ready,
-  'an empty translation must keep the caption unavailable instead of resolving a playable placeholder'
-);
-assert.equal(emptyCaption.read(), '', 'an unavailable caption must not expose placeholder text');
-
 const unavailableCaption = createLive2DPreparedCaption(Promise.reject(new Error('translation failed')), {
   unavailableText: '\u4e2d\u6587\u5b57\u5e55\u6682\u4e0d\u53ef\u7528'
 });
-await assert.rejects(
-  unavailableCaption.ready,
-  'a failed translation must keep the caption gate rejected instead of resolving a playable placeholder'
+assert.equal(
+  await unavailableCaption.ready,
+  '\u4e2d\u6587\u5b57\u5e55\u6682\u4e0d\u53ef\u7528',
+  'translation failures must use a Chinese-only caption instead of the Japanese speech source'
 );
-assert.equal(unavailableCaption.read(), '', 'a failed caption must not expose placeholder text');
 
 assert.deepEqual(changes, ['旧句', '当前句', '当前句中文', '']);
 console.log('live caption synchronizer checks passed');

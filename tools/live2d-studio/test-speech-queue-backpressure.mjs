@@ -11,7 +11,6 @@ const store = new Map([
 ]);
 const started = [];
 const audios = [];
-const playbackEvents = [];
 
 globalThis.localStorage = {
   getItem(key) {
@@ -53,13 +52,10 @@ globalThis.Audio = class MockAudio {
     this.currentTime = 0;
     this.paused = true;
     this.ended = false;
-    this.playCalls = 0;
     audios.push(this);
   }
 
   play() {
-    this.playCalls += 1;
-    playbackEvents.push('audio-play');
     this.paused = false;
     this.onplay?.();
     queueMicrotask(() => this.onplaying?.());
@@ -171,14 +167,12 @@ try {
     releaseCaptionGate = resolve;
   });
   let gatedSpeechStarted = false;
-  playbackEvents.length = 0;
   const audioCountBeforeGate = audios.length;
   const gatedSpeech = player.enqueue('Japanese TTS source', {
     queueGroup: 'live-reply',
     priority: 100,
     startGate: captionGate,
     onStart: () => {
-      playbackEvents.push('caption-published');
       gatedSpeechStarted = true;
     }
   });
@@ -195,80 +189,8 @@ try {
   releaseCaptionGate('\u4e2d\u6587\u5b57\u5e55\u5df2\u5c31\u7eea');
   await waitFor(() => gatedSpeechStarted, 'caption-gated speech playback');
   assert.equal(gatedAudio.paused, false);
-  const captionPublishedAt = playbackEvents.indexOf('caption-published');
-  const audioPlayedAt = playbackEvents.indexOf('audio-play');
-  const captionPublishedBeforeAudio = (
-    captionPublishedAt >= 0 &&
-    audioPlayedAt >= 0 &&
-    captionPublishedAt < audioPlayedAt
-  );
   gatedAudio.finish();
   await gatedSpeech;
-
-  let rejectUnavailableCaption;
-  const unavailableCaptionGate = new Promise((_resolve, reject) => {
-    rejectUnavailableCaption = reject;
-  });
-  let unavailableCaptionStarted = false;
-  let unavailableCaptionSettled = false;
-  const audioCountBeforeUnavailableCaption = audios.length;
-  const unavailableCaptionSpeech = player.enqueue('Speech without a usable caption', {
-    queueGroup: 'live-reply',
-    priority: 100,
-    startGate: unavailableCaptionGate,
-    onStart: () => {
-      unavailableCaptionStarted = true;
-    }
-  }).then(
-    () => 'resolved',
-    (error) => error?.name || 'rejected'
-  ).finally(() => {
-    unavailableCaptionSettled = true;
-  });
-  await waitFor(
-    () => audios.length > audioCountBeforeUnavailableCaption,
-    'speech synthesis behind an unavailable caption gate'
-  );
-  const unavailableCaptionAudio = audios.at(-1);
-  await new Promise((resolve) => setTimeout(resolve, 0));
-  rejectUnavailableCaption(new Error('Chinese caption unavailable'));
-  await waitFor(
-    () => unavailableCaptionSettled || unavailableCaptionAudio.playCalls > 0,
-    'rejected caption gate settlement'
-  );
-  if (unavailableCaptionAudio.playCalls > 0 && !unavailableCaptionAudio.ended) {
-    unavailableCaptionAudio.finish();
-  }
-  await unavailableCaptionSpeech;
-
-  let recoveredAfterUnavailableCaption = false;
-  const recoverySpeech = player.enqueue('Speech after a rejected caption gate', {
-    queueGroup: 'live-reply',
-    priority: 100,
-    onStart: () => {
-      recoveredAfterUnavailableCaption = true;
-    }
-  });
-  await waitFor(() => recoveredAfterUnavailableCaption, 'speech after rejected caption gate');
-  const recoveryAudio = audios.at(-1);
-  recoveryAudio.finish();
-  await recoverySpeech;
-
-  assert.deepEqual(
-    {
-      captionPublishedBeforeAudio,
-      unavailableCaptionPlayCalls: unavailableCaptionAudio.playCalls,
-      unavailableCaptionStarted,
-      recoveredAfterUnavailableCaption
-    },
-    {
-      captionPublishedBeforeAudio: true,
-      unavailableCaptionPlayCalls: 0,
-      unavailableCaptionStarted: false,
-      recoveredAfterUnavailableCaption: true
-    },
-    'captions must be published before playback, and a rejected caption gate must skip only its own line'
-  );
 
   let cancelledGateStarted = false;
   const audioCountBeforeCancelledGate = audios.length;

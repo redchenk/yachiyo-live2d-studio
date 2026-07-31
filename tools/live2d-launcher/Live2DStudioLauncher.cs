@@ -172,15 +172,6 @@ internal static class Live2DStudioLauncher
 
     internal static string FindNodeDirectory(string repoRoot)
     {
-        foreach (var candidate in FindNodeDirectories(repoRoot))
-        {
-            return candidate;
-        }
-        return string.Empty;
-    }
-
-    internal static IEnumerable<string> FindNodeDirectories(string repoRoot)
-    {
         var candidates = new[]
         {
             Path.GetFullPath(Path.Combine(repoRoot, "tools", "node-v22.11.0-win-x64")),
@@ -188,36 +179,26 @@ internal static class Live2DStudioLauncher
             Path.GetFullPath(Path.Combine(repoRoot, "..", ".codex_tmp", "node-v20.19.0-win-x64")),
             Path.GetFullPath(Path.Combine(repoRoot, "..", ".codex_tmp", "node-v22.11.0-win-x64"))
         };
-        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var candidate in candidates)
         {
-            var fullPath = Path.GetFullPath(candidate).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-            if (seen.Add(fullPath) && File.Exists(Path.Combine(fullPath, "node.exe")) && File.Exists(Path.Combine(fullPath, "npm.cmd")))
+            if (File.Exists(Path.Combine(candidate, "node.exe")) && File.Exists(Path.Combine(candidate, "npm.cmd")))
             {
-                yield return fullPath;
+                return candidate;
             }
         }
 
         var pathValue = Environment.GetEnvironmentVariable("PATH") ?? string.Empty;
         foreach (var pathEntry in pathValue.Split(new[] { Path.PathSeparator }, StringSplitOptions.RemoveEmptyEntries))
         {
-            var trimmed = pathEntry.Trim('"').TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-            if (string.IsNullOrWhiteSpace(trimmed)) continue;
-            string fullPath;
-            try
+            var trimmed = pathEntry.Trim('"');
+            if (File.Exists(Path.Combine(trimmed, "node.exe")) && File.Exists(Path.Combine(trimmed, "npm.cmd")))
             {
-                fullPath = Path.GetFullPath(trimmed);
-            }
-            catch
-            {
-                continue;
-            }
-            if (seen.Add(fullPath) && File.Exists(Path.Combine(fullPath, "node.exe")) && File.Exists(Path.Combine(fullPath, "npm.cmd")))
-            {
-                yield return fullPath;
+                return trimmed;
             }
         }
+
+        return string.Empty;
     }
 }
 
@@ -3518,17 +3499,16 @@ internal static class DesktopApiProxy
         lock (MemoryDataServiceLock)
         {
             if (ProbeMemoryDataService()) return;
-            TryStopIncompatibleOwnedMemoryDataService();
             if (memoryDataServiceProcess != null && !memoryDataServiceProcess.HasExited)
             {
                 WaitForMemoryDataService();
                 return;
             }
 
-            var nodeDir = FindCompatibleMemoryNodeDirectory();
+            var nodeDir = Live2DStudioLauncher.FindNodeDirectory(repoRoot);
             if (string.IsNullOrWhiteSpace(nodeDir))
             {
-                throw new InvalidOperationException("No installed Node.js runtime can load this build of better-sqlite3. Run npm install with the same Node.js runtime used by the Studio.");
+                throw new InvalidOperationException("Node.js is required for SQLite/Milvus memory provider.");
             }
             var nodeExe = Path.Combine(nodeDir, "node.exe");
             var script = Path.Combine(repoRoot, "tools", "memory", "memory-data-service.mjs");
@@ -3700,47 +3680,7 @@ internal static class DesktopApiProxy
         throw new InvalidOperationException("Memory data service did not become ready.");
     }
 
-    private static string FindCompatibleMemoryNodeDirectory()
-    {
-        var probeScript = Path.Combine(repoRoot, "tools", "memory", "check-memory-runtime.mjs");
-        if (!File.Exists(probeScript))
-        {
-            throw new InvalidOperationException("Memory runtime probe script is missing.");
-        }
-
-        foreach (var nodeDir in Live2DStudioLauncher.FindNodeDirectories(repoRoot))
-        {
-            var start = new ProcessStartInfo
-            {
-                FileName = Path.Combine(nodeDir, "node.exe"),
-                Arguments = QuoteArgument(probeScript),
-                WorkingDirectory = repoRoot,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                RedirectStandardError = true,
-                RedirectStandardOutput = true
-            };
-            try
-            {
-                using (var process = Process.Start(start))
-                {
-                    if (!process.WaitForExit(5000))
-                    {
-                        try { process.Kill(); } catch { }
-                        continue;
-                    }
-                    if (process.ExitCode == 0) return nodeDir;
-                }
-            }
-            catch
-            {
-                // Try the next Node.js candidate; native addon ABI compatibility is runtime-specific.
-            }
-        }
-        return string.Empty;
-    }
-
-    private static Dictionary<string, object> ReadMemoryDataServiceHealth()
+    private static bool ProbeMemoryDataService()
     {
         try
         {
@@ -3749,52 +3689,14 @@ internal static class DesktopApiProxy
             request.Timeout = 500;
             request.ReadWriteTimeout = 500;
             using (var response = (HttpWebResponse)request.GetResponse())
-            using (var reader = new StreamReader(response.GetResponseStream() ?? Stream.Null, Encoding.UTF8))
             {
-                if ((int)response.StatusCode < 200 || (int)response.StatusCode >= 300) return null;
-                return Json.DeserializeObject(reader.ReadToEnd()) as Dictionary<string, object>;
+                return (int)response.StatusCode >= 200 && (int)response.StatusCode < 300;
             }
-        }
-        catch
-        {
-            return null;
-        }
-    }
-
-    private static bool IsOwnedMemoryDataService(Dictionary<string, object> health)
-    {
-        if (health == null || !string.Equals(GetString(health, "service"), "yachiyo-memory-data", StringComparison.OrdinalIgnoreCase)) return false;
-        var reportedRoot = GetString(health, "repoRoot");
-        if (string.IsNullOrWhiteSpace(reportedRoot)) return false;
-        try
-        {
-            return string.Equals(
-                Path.GetFullPath(reportedRoot).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
-                Path.GetFullPath(repoRoot).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
-                StringComparison.OrdinalIgnoreCase);
         }
         catch
         {
             return false;
         }
-    }
-
-    private static void TryStopIncompatibleOwnedMemoryDataService()
-    {
-        var health = ReadMemoryDataServiceHealth();
-        if (!IsOwnedMemoryDataService(health) || GetBoolean(health, "sqliteReady", false)) return;
-        TryRequestMemoryDataServiceShutdown();
-        for (var i = 0; i < 20; i++)
-        {
-            Thread.Sleep(100);
-            if (ReadMemoryDataServiceHealth() == null) return;
-        }
-    }
-
-    private static bool ProbeMemoryDataService()
-    {
-        var health = ReadMemoryDataServiceHealth();
-        return IsOwnedMemoryDataService(health) && GetBoolean(health, "sqliteReady", false);
     }
 
     public static StudioApiResponse MemorySearch(byte[] body)
