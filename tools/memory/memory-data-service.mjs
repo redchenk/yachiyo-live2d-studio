@@ -35,6 +35,30 @@ const args = parseArgs(process.argv.slice(2));
 const port = Number(args.port || process.env.YACHIYO_MEMORY_PORT || DEFAULT_PORT);
 const repoRoot = path.resolve(args.repoRoot || args['repo-root'] || process.env.YACHIYO_REPO_ROOT || defaultRepoRoot);
 
+function probeSqliteRuntime() {
+  let database = null;
+  try {
+    database = new Database(':memory:');
+    const row = database.prepare('SELECT 1 AS ready').get();
+    if (Number(row?.ready) !== 1) throw new Error('SQLite probe query returned an unexpected result.');
+    return { ready: true, error: '' };
+  } catch (error) {
+    return { ready: false, error: error?.message || String(error || 'SQLite runtime probe failed.') };
+  } finally {
+    try {
+      database?.close();
+    } catch (_) {
+      // The in-memory probe owns no durable data.
+    }
+  }
+}
+
+const sqliteRuntime = probeSqliteRuntime();
+if (!sqliteRuntime.ready) {
+  process.stderr.write(`Yachiyo memory data service cannot load SQLite: ${sqliteRuntime.error}\n`);
+  process.exit(1);
+}
+
 function parseArgs(argv) {
   const result = {};
   for (let index = 0; index < argv.length; index += 1) {
@@ -3260,6 +3284,9 @@ const server = http.createServer(async (req, res) => {
         success: true,
         service: 'yachiyo-memory-data',
         repoRoot,
+        sqliteReady: sqliteRuntime.ready,
+        nodeVersion: process.version,
+        nodeModulesAbi: process.versions.modules || '',
         managedMilvus: {
           autostart: asBoolean(process.env.YACHIYO_MEMORY_AUTOSTART_MANAGED_MILVUS),
           error: managedMilvusStartupError

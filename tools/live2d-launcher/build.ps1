@@ -104,4 +104,30 @@ Copy-Dependency $webViewCore (Join-Path $repoRoot 'Microsoft.Web.WebView2.Core.d
 Copy-Dependency $webViewWinForms (Join-Path $repoRoot 'Microsoft.Web.WebView2.WinForms.dll')
 Copy-Dependency $webViewLoader (Join-Path $repoRoot 'WebView2Loader.dll')
 
-Write-Host "Built $output"
+$memoryRuntimeProbe = Join-Path $repoRoot 'tools\memory\check-memory-runtime.mjs'
+$nodeDirectories = @(
+    (Join-Path $repoRoot 'tools\node-v22.11.0-win-x64'),
+    (Join-Path (Split-Path -Parent $repoRoot) 'tools\node-v22.11.0-win-x64'),
+    (Join-Path (Split-Path -Parent $repoRoot) '.codex_tmp\node-v20.19.0-win-x64'),
+    (Join-Path (Split-Path -Parent $repoRoot) '.codex_tmp\node-v22.11.0-win-x64')
+)
+$nodeDirectories += (($env:PATH -split [IO.Path]::PathSeparator) | ForEach-Object { $_.Trim('"') })
+$compatibleMemoryNode = $null
+foreach ($nodeDirectory in @($nodeDirectories | Where-Object { $_ } | Select-Object -Unique)) {
+    $nodeCandidate = Join-Path $nodeDirectory 'node.exe'
+    if (-not (Test-Path -LiteralPath $nodeCandidate)) { continue }
+    $probeErrorPreference = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    & $nodeCandidate $memoryRuntimeProbe 2>$null | Out-Null
+    $probeExitCode = $LASTEXITCODE
+    $ErrorActionPreference = $probeErrorPreference
+    if ($probeExitCode -eq 0) {
+        $compatibleMemoryNode = $nodeCandidate
+        break
+    }
+}
+if (-not $compatibleMemoryNode) {
+    throw 'No Node.js runtime can load better-sqlite3. Run npm install with the Node.js version that will launch the memory sidecar.'
+}
+
+Write-Host "Built $output (memory runtime: $compatibleMemoryNode)"

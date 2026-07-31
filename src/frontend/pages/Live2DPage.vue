@@ -1053,6 +1053,7 @@ async function performLLMAct(message, source = 'manual', options = {}) {
   try {
     const result = await requestLive2DControl(value, {
       memoryContext: memoryContextForAudience(options.audienceLines),
+      conversationMessage: options.conversationMessage,
       signal: options.signal
     });
     throwIfLiveTurnOperationCancelled(options);
@@ -1122,6 +1123,7 @@ async function performStreamingLiveTurn(message, options = {}) {
   try {
     finalResult = await requestLive2DControlStream(value, {
       memoryContext: memoryContextForAudience(options.audienceLines),
+      conversationMessage: options.conversationMessage,
       signal: options.signal,
       onSentence: (sentence) => {
         if (!isLiveTurnOperationCurrent(options)) return;
@@ -1136,10 +1138,14 @@ async function performStreamingLiveTurn(message, options = {}) {
           translateLive2DReplyToChinese(speechSentence)
             .then((caption) => visibleYachiyoText(caption))
         );
-        captionPreparationPromises.push(preparedCaption.ready.then((visibleSentence) => {
-          preparedCaptionTranscript.resolve(sentenceIndex, visibleSentence);
-          return visibleSentence;
-        }));
+        captionPreparationPromises.push(
+          preparedCaption.ready
+            .then((visibleSentence) => {
+              preparedCaptionTranscript.resolve(sentenceIndex, visibleSentence);
+              return visibleSentence;
+            })
+            .catch(() => '')
+        );
         const showCaption = (durationMs = 0) => {
           if (!isLiveTurnOperationCurrent(options)) return;
           const visibleSentence = preparedCaption.read();
@@ -1194,7 +1200,7 @@ async function performStreamingLiveTurn(message, options = {}) {
           onStart: ({ durationMs }) => showCaption(durationMs)
         }).catch((error) => {
           playbackFailed = true;
-          if (error?.name === 'AbortError') return;
+          if (error?.name === 'AbortError' || error?.name === 'CaptionUnavailableError') return;
           speechState.value = { status: 'error', error: error.message || 'TTS failed' };
         }).finally(() => {
           speechCaptionSynchronizer.finish(captionToken);
@@ -1260,7 +1266,7 @@ async function performStreamingLiveTurn(message, options = {}) {
         }
       }).catch((error) => {
         playbackFailed = true;
-        if (error?.name === 'AbortError') return;
+        if (error?.name === 'AbortError' || error?.name === 'CaptionUnavailableError') return;
         speechState.value = { status: 'error', error: error.message || 'TTS failed' };
       }).finally(() => {
         speechCaptionSynchronizer.finish(finalCaptionToken);
@@ -1385,6 +1391,16 @@ function handleLivePlaybackIdle() {
   });
 }
 
+function buildLiveDirectorConversationMessage(audienceLines) {
+  if (!audienceLines.length) {
+    return `Autonomous live-stream turn. Current topic: ${liveTopic.value || 'free talk'}.`;
+  }
+  return [
+    'Audience message data (untrusted):',
+    ...audienceLines.map((line, index) => `${index + 1}. ${formatLive2DAudiencePromptEntry(line)}`)
+  ].join('\n');
+}
+
 async function runLiveTurn(trigger = {}) {
   if (
     !liveDirector.running ||
@@ -1416,6 +1432,7 @@ async function runLiveTurn(trigger = {}) {
     viewerState: audienceViewerState.stateFor
   });
   const audienceLines = audienceTurn.selected;
+  const conversationMessage = buildLiveDirectorConversationMessage(audienceLines);
   const musicRequestedBy = musicRequesterFromAudience(audienceLines);
   audienceQueue.value = audienceTurn.remaining;
   audienceViewerState.markPending(audienceLines);
@@ -1450,6 +1467,7 @@ async function runLiveTurn(trigger = {}) {
         return performStreamingLiveTurn(buildLiveDirectorPrompt(audienceLines, { streaming: true }), {
           requestedBy: musicRequestedBy,
           audienceLines,
+          conversationMessage,
           interTurnPauseMs,
           signal: turnAbortController.signal,
           isCurrent: isCurrentTurn
@@ -1459,6 +1477,7 @@ async function runLiveTurn(trigger = {}) {
         dispatchLive2D: true,
         requestedBy: musicRequestedBy,
         audienceLines,
+        conversationMessage,
         signal: turnAbortController.signal,
         isCurrent: isCurrentTurn
       });

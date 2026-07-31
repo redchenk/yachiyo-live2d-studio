@@ -1,12 +1,14 @@
-const STAGE_DIRECTION_LABEL_PATTERN = /^\s*(?:动作|動作|表情|姿势|姿勢|肢体|肢體|语气|語氣|Action|Expression|Pose|Motion|Body)\s*[:：]/iu;
-const STAGE_DIRECTION_WORD_PATTERN = /(?:点头|點頭|颔首|頷首|摇头|搖頭|摆头|擺頭|靠近|凑近|湊近|贴近|貼近|前倾|前傾|后仰|後仰|左倾|左傾|右倾|右傾|摇摆|搖擺|晃动|晃動|轻晃|輕晃|蹦|跳|弹|彈|强调|強調|重音|拍|拍手|鼓掌|笑|微笑|害羞|脸红|臉紅|哭|流泪|流淚|眨眼|眨眼睛|清嗓|清了清嗓子|清喉咙|清了清喉咙|咳嗽|咳咳|干咳|輕咳|轻咳|clears?(?:\s|-|_)?(?:her|his|their)?(?:\s|-|_)?throat|cough(?:s|ing)?|nods?|nodding|shake(?:s|ing)?(?:\s|-|_)?head|lean(?:s|ing)?(?:\s|-|_)?(?:in|forward|left|right)?|sways?|swaying|bounces?|bouncing|emphasizes?|accent|hits?|tilts?(?:\s|-|_)?head|wink(?:s|ing)?|smiles?|smiling|blush(?:es|ing)?|cries|crying|tears|うなず|頷|首を振|近づ|ゆら|跳ね|咳払い)/iu;
+const STAGE_DIRECTION_LABEL_PATTERN = /^\s*(?:动作|動作|行动|行動|表情|姿势|姿勢|肢体|肢體|语气|語氣|旁白|舞台指示|演出指示|Action(?:s)?|Expression|Pose|Motion|Body|Stage(?:\s+Direction)?|Narration|BEAT|EMOTION_BEAT|ACTION_BEAT|CONTROL|LIVE2D_CONTROL|speech_style|interruptPolicy)\s*[:：]/iu;
+const STAGE_DIRECTION_WORD_PATTERN = /(?:歪头|歪頭|侧头|側頭|点头|點頭|颔首|頷首|摇头|搖頭|摆头|擺頭|靠近|凑近|湊近|贴近|貼近|前倾|前傾|后仰|後仰|左倾|左傾|右倾|右傾|侧身|側身|看向|望向|转身|轉身|挥手|揮手|摇摆|搖擺|晃动|晃動|轻晃|輕晃|蹦|跳|弹|彈|强调|強調|重音|拍|拍手|鼓掌|轻笑|輕笑|偷笑|大笑|微笑|害羞|脸红|臉紅|哭|流泪|流淚|眨眼|眨眼睛|清嗓|清了清嗓子|清喉咙|清了清喉咙|咳嗽|咳咳|干咳|輕咳|轻咳|giggles?|giggling|laughs?|laughing|looks?(?:\s+to)?(?:\s+the)?\s+(?:side|left|right|camera|chat)|glances?|turns?|waves?|waving|clears?(?:\s|-|_)?(?:her|his|their)?(?:\s|-|_)?throat|cough(?:s|ing)?|nods?|nodding|shake(?:s|ing)?(?:\s|-|_)?head|lean(?:s|ing)?(?:\s|-|_)?(?:in|forward|left|right)?|sways?|swaying|bounces?|bouncing|emphasizes?|accent|hits?|tilts?(?:\s|-|_)?head|wink(?:s|ing)?|smiles?|smiling|blush(?:es|ing)?|cries|crying|tears|首をかしげ|首を傾げ|首を傾け|うなず|頷|首を振|近づ|見つめ|横を見る|振り向|手を振|微笑|笑(?:う|い|って)|ゆら|跳ね|咳払い)/iu;
 const WRAPPED_CUE_PATTERN = /([（(【\[])\s*([^()（）【】\[\]\n]{1,80})\s*([）)】\]])/gu;
 const ITALIC_CUE_PATTERN = /(^|[\s\n])[*_]\s*([^*_\n]{1,80})\s*[*_](?=$|[\s\n,.!?;:，。！？；：])/gu;
 const LEADING_CUE_PATTERN = /^\s*([^，。！？,.!?;:、\n]{1,36})\s*[，。！？,.!?;:、-]\s*/u;
 const CUE_CLAUSE_SEPARATOR_PATTERN = /([，。！？,.!?;:、-]+)/u;
-const INLINE_STAGE_CUE_START_PATTERN = /^(?:我|她|他|八千代|yachiyo|角色|模型)?\s*(?:轻轻地?|微微|稍微|缓缓|慢慢|快速|用力|开心地?|害羞地?|认真地?|俏皮地?|gently|softly|slightly|slowly|quickly|playfully)?\s*(?:点头|點頭|颔首|頷首|摇头|搖頭|摆头|擺頭|靠近|凑近|湊近|贴近|貼近|前倾|前傾|后仰|後仰|左倾|左傾|右倾|右傾|摇摆|搖擺|晃动|晃動|轻晃|輕晃|蹦|跳|弹|彈|强调|強調|重音|眨眼|眨眼睛|微笑|害羞|脸红|臉紅|哭|流泪|流淚|清嗓|清了清嗓子|清喉咙|清了清喉咙|咳嗽|咳咳|干咳|輕咳|轻咳|clears?(?:\s|-|_)?(?:her|his|their)?(?:\s|-|_)?throat|cough(?:s|ing)?|nods?|nodding|shake(?:s|ing)?(?:\s|-|_)?head|lean(?:s|ing)?(?:\s|-|_)?(?:in|forward|left|right)?|sways?|swaying|bounces?|bouncing|emphasizes?|accent|hits?|tilts?(?:\s|-|_)?head|wink(?:s|ing)?|smiles?|smiling|blush(?:es|ing)?|cries|crying|tears)/iu;
+const INLINE_STAGE_CUE_START_PATTERN = /^(?:我|她|他|八千代|yachiyo|角色|模型)?\s*(?:轻轻地?|微微|稍微|缓缓|慢慢|快速|用力|开心地?|害羞地?|认真地?|俏皮地?|そっと|ゆっくり|少し|gently|softly|slightly|slowly|quickly|playfully)?\s*(?:歪头|歪頭|侧头|側頭|点头|點頭|颔首|頷首|摇头|搖頭|摆头|擺頭|靠近|凑近|湊近|贴近|貼近|前倾|前傾|后仰|後仰|左倾|左傾|右倾|右傾|侧身|側身|看向|望向|转身|轉身|挥手|揮手|摇摆|搖擺|晃动|晃動|轻晃|輕晃|蹦|跳|弹|彈|强调|強調|重音|眨眼|眨眼睛|微笑|害羞|脸红|臉紅|哭|流泪|流淚|清嗓|清了清嗓子|清喉咙|清了清喉咙|咳嗽|咳咳|干咳|輕咳|轻咳|giggles?|giggling|laughs?|laughing|looks?(?:\s+to)?(?:\s+the)?\s+(?:side|left|right|camera|chat)|glances?|turns?|waves?|waving|clears?(?:\s|-|_)?(?:her|his|their)?(?:\s|-|_)?throat|cough(?:s|ing)?|nods?|nodding|shake(?:s|ing)?(?:\s|-|_)?head|lean(?:s|ing)?(?:\s|-|_)?(?:in|forward|left|right)?|sways?|swaying|bounces?|bouncing|emphasizes?|accent|hits?|tilts?(?:\s|-|_)?head|wink(?:s|ing)?|smiles?|smiling|blush(?:es|ing)?|cries|crying|tears|首をかしげ|首を傾げ|首を傾け|うなず|頷|首を振|近づ|見つめ|横を見る|振り向|手を振|微笑|笑(?:う|い|って)|ゆら|跳ね|咳払い)/iu;
 
-const LIVE2D_CONTROL_JSON_FIELD_PATTERN = /"(?:reply|text|message|live2d|act|pose|motion|emotion|expression|expressionMix|bodyPose|parameters|sequence|durationMs|intensity)"\s*:/i;
+const LIVE2D_CONTROL_JSON_FIELD_PATTERN = /"(?:reply|text|message|live2d|act|pose|motion|emotion|expression|expressionMix|bodyPose|parameters|parameterTargets|sequence|durationMs|intensity|actions|behaviorActions|speech_style|speechStyle|interruptPolicy|memory_writes|acknowledgedIndexes)"\s*:/i;
+const CONTROL_PROTOCOL_LINE_PATTERN = /^\s*(?:BEAT|EMOTION_BEAT|ACTION_BEAT|CONTROL|JSON|LIVE2D_CONTROL|actions?|behaviorActions?|speech_style|speechStyle|interruptPolicy|live2d|parameters?|parameterTargets?)\s*[:：]/iu;
+const SEMANTIC_ACTION_ID_PATTERN = /\b(?:look_at_chat|head_tilt|lean_in|shake_head|ear_wiggle|ear_perk|tongue_out|closed_smile|closed_eyes|tear_drop|watery_eyes|breathe|bounce|sway|smirk|blink|wink|nod|wave|emphasis|shiver)\b/iu;
 
 function normalizeStageText(text) {
   return String(text || '').replace(/<think>[\s\S]*?<\/think>/gi, '');
@@ -63,7 +65,10 @@ export function readLive2DJsonStringField(text, fieldName) {
 
 export function stripLive2DControlJson(text) {
   const value = unwrapJsonFence(normalizeStageText(text));
-  if (!value.trim() || !LIVE2D_CONTROL_JSON_FIELD_PATTERN.test(value)) return value;
+  if (!value.trim()) return value;
+
+  const startsLikeJson = /^[\s`]*(?:\{|\[\s*(?:\{|"))/u.test(String(text || ''));
+  if (!startsLikeJson && !LIVE2D_CONTROL_JSON_FIELD_PATTERN.test(value)) return value;
 
   const reply =
     readLive2DJsonStringField(value, 'reply') ||
@@ -71,8 +76,7 @@ export function stripLive2DControlJson(text) {
     readLive2DJsonStringField(value, 'message');
   if (reply) return reply;
 
-  const startsLikeJson = /^[\s`]*[{[]/.test(String(text || ''));
-  return startsLikeJson || /"\s*(?:live2d|parameters|bodyPose|expressionMix)\s*"\s*:/i.test(value)
+  return startsLikeJson || LIVE2D_CONTROL_JSON_FIELD_PATTERN.test(value)
     ? ''
     : value;
 }
@@ -95,7 +99,7 @@ function stripStageLabelLine(line) {
 function stripLeadingCue(line) {
   const value = String(line || '').trimStart();
   const leading = value.match(LEADING_CUE_PATTERN);
-  if (!leading || !isStageDirection(leading[1])) return line;
+  if (!leading || !isInlineStageCue(leading[1])) return line;
   return value.slice(leading[0].length).trimStart();
 }
 
@@ -120,7 +124,15 @@ function stripInlineCueClauses(line) {
 }
 
 function stripPureCueLine(line) {
-  return isInlineStageCue(line) ? '' : line;
+  const value = String(line || '').trim();
+  if (!value) return '';
+  if (CONTROL_PROTOCOL_LINE_PATTERN.test(value)) return '';
+  if (isInlineStageCue(value)) return '';
+  const actionIds = value.match(new RegExp(SEMANTIC_ACTION_ID_PATTERN.source, 'giu')) || [];
+  const actionRemainder = value
+    .replace(new RegExp(SEMANTIC_ACTION_ID_PATTERN.source, 'giu'), '')
+    .replace(/[\s,./|+&;:：，。！？!?'"`~()（）\[\]【】_-]+/gu, '');
+  return actionIds.length > 0 && !actionRemainder ? '' : line;
 }
 
 export function extractLive2DStageDirections(text) {

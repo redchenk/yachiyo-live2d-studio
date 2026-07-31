@@ -2,17 +2,25 @@ function asCaption(value) {
   return String(value || '').replace(/[ \t]{2,}/g, ' ').trim();
 }
 
-export function createLive2DPreparedCaption(resolved, options = {}) {
-  const unavailableText = asCaption(options.unavailableText) || '（中文字幕暂不可用）';
+export function createLive2DPreparedCaption(resolved) {
   let caption = '';
   const ready = Promise.resolve(resolved)
     .then((value) => {
-      caption = asCaption(value) || unavailableText;
+      caption = asCaption(value);
+      if (!caption) {
+        const error = new Error('Chinese caption unavailable');
+        error.name = 'CaptionUnavailableError';
+        throw error;
+      }
       return caption;
     })
-    .catch(() => {
-      caption = unavailableText;
-      return caption;
+    .catch((error) => {
+      caption = '';
+      if (error?.name === 'CaptionUnavailableError') throw error;
+      const unavailable = new Error('Chinese caption unavailable');
+      unavailable.name = 'CaptionUnavailableError';
+      unavailable.cause = error;
+      throw unavailable;
     });
 
   return {

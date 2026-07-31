@@ -225,16 +225,7 @@ function japaneseTtsTranslatorPrompt(options = {}) {
   ].join('\n');
 }
 
-async function translateForJapaneseTts(text, options = {}) {
-  const source = cleanTtsText(text);
-  if (!source) return '';
-  if (detectTextLang(source) === 'ja') return source;
-  const settings = readRoomLLMSettings();
-  if (!settings.apiKey || !settings.apiUrl) {
-    throw new Error('请先在 Studio Settings 里配置 LLM，用于把 GPT-SoVITS 文本翻译成日文后再播放。');
-  }
-
-  const systemPrompt = japaneseTtsTranslatorPrompt(options);
+async function requestJapaneseTtsTranslation(source, settings, systemPrompt) {
   if (settings.useProxy) {
     const response = await fetchWithTimeout('/api/chat', {
       method: 'POST',
@@ -281,6 +272,33 @@ async function translateForJapaneseTts(text, options = {}) {
   }, LLM_TRANSLATION_TIMEOUT_MS, 'Japanese TTS translation');
   if (!response.ok) throw new Error(`日文翻译失败：LLM ${response.status}`);
   return cleanTtsText(pickReply(await response.json()));
+}
+
+async function translateForJapaneseTts(text, options = {}) {
+  const source = cleanTtsText(text);
+  const sourceLanguage = detectTextLang(source);
+  const fallback = { text: source, textLang: sourceLanguage };
+  if (!source || sourceLanguage === 'ja') return fallback;
+
+  const settings = readRoomLLMSettings();
+  if (!settings.apiKey || !settings.apiUrl) return fallback;
+
+  const systemPrompt = japaneseTtsTranslatorPrompt(options);
+  try {
+    let translated = await requestJapaneseTtsTranslation(source, settings, systemPrompt);
+    if (!translated) {
+      translated = await requestJapaneseTtsTranslation(source, settings, systemPrompt);
+    }
+    if (translated) {
+      return {
+        text: translated,
+        textLang: detectTextLang(translated)
+      };
+    }
+  } catch (_) {
+    // A translation service failure must not make an otherwise speakable line disappear.
+  }
+  return fallback;
 }
 
 function pickSplitMethod(text) {
@@ -408,7 +426,7 @@ export function createLive2DSpeechPlayer({ onState } = {}) {
       await new Promise((resolve, reject) => {
         rejectGateWait = reject;
         currentReject = reject;
-        Promise.resolve(gate).then(resolve, resolve);
+        Promise.resolve(gate).then(resolve, reject);
       });
     } finally {
       if (currentReject === rejectGateWait) currentReject = null;
@@ -669,12 +687,13 @@ export function createLive2DSpeechPlayer({ onState } = {}) {
   async function makeAudio(text, settings, options = {}) {
     const directLocalGptSovits = isDirectLocalGptSovits(settings);
     if (directLocalGptSovits) {
-      const ttsText = await translateForJapaneseTts(text, options);
-      if (!ttsText) throw new Error('日文翻译结果为空，已取消语音播放。');
+      const translatedLine = await translateForJapaneseTts(text, options);
+      const ttsText = translatedLine.text;
+      if (!ttsText) return null;
       await ensureGptSovitsWeights(settings);
       const audio = createFastAudioFromUrl(buildGptSovitsAudioUrl(ttsText, {
         ...settings,
-        textLang: 'ja',
+        textLang: translatedLine.textLang,
         promptLang: settings.promptLang || 'ja'
       }), ttsText);
       audio.dataset.speechText = ttsText;
@@ -789,26 +808,27 @@ export function createLive2DSpeechPlayer({ onState } = {}) {
       audio.preload = 'auto';
       let playbackStarted = false;
       let mouthLoopStarted = false;
+      const mouthText = audio.dataset.speechText || speechText;
+      const notifyPlaybackStart = () => {
+        if (playbackStarted) return;
+        playbackStarted = true;
+        const durationMs = Number.isFinite(audio.duration) && audio.duration > 0
+          ? Math.round(audio.duration * 1000)
+          : estimateSpeechDurationMs(mouthText);
+        try {
+          options.onStart?.({ audio, speechText, mouthText, durationMs });
+        } catch (_) {
+          // Keep speech playback alive even if a caller-side animation hook fails.
+        }
+        try {
+          onPlaybackStart?.();
+        } catch (_) {
+          // Queue preloading is best-effort and should not interrupt speech.
+        }
+      };
       const startMouth = () => {
         if (currentAudio !== audio || audio.ended) return;
         setState({ status: 'playing', error: '' });
-        const mouthText = audio.dataset.speechText || speechText;
-        if (!playbackStarted) {
-          playbackStarted = true;
-          const durationMs = Number.isFinite(audio.duration) && audio.duration > 0
-            ? Math.round(audio.duration * 1000)
-            : 0;
-          try {
-            options.onStart?.({ audio, speechText, mouthText, durationMs });
-          } catch (_) {
-            // Keep speech playback alive even if a caller-side animation hook fails.
-          }
-          try {
-            onPlaybackStart?.();
-          } catch (_) {
-            // Queue preloading is best-effort and should not interrupt speech.
-          }
-        }
         if (mouthLoopStarted) return;
         mouthLoopStarted = true;
         if (audio.dataset.mouthMode === 'envelope') startEnvelopeMouth(mouthText, audio);
@@ -890,6 +910,7 @@ export function createLive2DSpeechPlayer({ onState } = {}) {
         audio.onabort = () => fail(makeStopError());
         audio.onended = finish;
         audio.onerror = () => fail(new Error('Audio playback failed'));
+        notifyPlaybackStart();
         audio.play()
           .then(() => {
             if (settled) return;
