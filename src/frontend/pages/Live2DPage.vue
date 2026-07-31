@@ -1107,7 +1107,8 @@ async function performStreamingLiveTurn(message, options = {}) {
   let queuedSpeechCount = 0;
   let queuedLive2DCount = 0;
   let dispatchedStreamLive2DCount = 0;
-  let playbackFailed = false;
+  let readyCaptionCount = 0;
+  let playedSpeechCount = 0;
   const captionTranscript = createLive2DOrderedCaptionTranscript();
   const preparedCaptionTranscript = createLive2DOrderedCaptionTranscript();
   const captionPreparationPromises = [];
@@ -1133,14 +1134,21 @@ async function performStreamingLiveTurn(message, options = {}) {
           : rawSpeechSentence;
         if (!speechSentence) return;
         const sentenceIndex = queuedSpeechCount;
+        const rawPairedCaption = visibleYachiyoText(sentence.caption);
+        const pairedCaption = sentenceIndex === 0
+          ? ensureLive2DAudienceNamesInSpeech(rawPairedCaption, options.audienceLines)
+          : rawPairedCaption;
         let captionToken = 0;
         const preparedCaption = createLive2DPreparedCaption(
-          translateLive2DReplyToChinese(speechSentence)
-            .then((caption) => visibleYachiyoText(caption))
+          (pairedCaption
+            ? Promise.resolve(pairedCaption)
+            : translateLive2DReplyToChinese(speechSentence, { signal: options.signal })
+                .then((caption) => visibleYachiyoText(caption)))
         );
         captionPreparationPromises.push(
           preparedCaption.ready
             .then((visibleSentence) => {
+              readyCaptionCount += 1;
               preparedCaptionTranscript.resolve(sentenceIndex, visibleSentence);
               return visibleSentence;
             })
@@ -1198,8 +1206,9 @@ async function performStreamingLiveTurn(message, options = {}) {
           speechStyle: sentence.speechStyle,
           startGate: preparedCaption.ready,
           onStart: ({ durationMs }) => showCaption(durationMs)
+        }).then(() => {
+          playedSpeechCount += 1;
         }).catch((error) => {
-          playbackFailed = true;
           if (error?.name === 'AbortError' || error?.name === 'CaptionUnavailableError') return;
           speechState.value = { status: 'error', error: error.message || 'TTS failed' };
         }).finally(() => {
@@ -1221,14 +1230,20 @@ async function performStreamingLiveTurn(message, options = {}) {
     if (queuedSpeechCount > 0 && finalResult.live2d && queuedLive2DCount < 1) {
       dispatchRoomLive2D(alignLive2DToSpeech(finalResult.live2d, Number(finalResult.live2d.durationMs) || 0));
     }
-    if (queuedSpeechCount < 1) {
+    if (queuedSpeechCount < 1 || readyCaptionCount < 1) {
       const finalSpeech = ensureLive2DAudienceNamesInSpeech(
         visibleYachiyoText(finalResult.reply),
         options.audienceLines
       );
+      const finalPairedCaption = ensureLive2DAudienceNamesInSpeech(
+        visibleYachiyoText(finalResult.caption),
+        options.audienceLines
+      );
       const preparedCaption = createLive2DPreparedCaption(
-        translateLive2DReplyToChinese(finalSpeech)
-          .then((caption) => visibleYachiyoText(caption))
+        (finalPairedCaption
+          ? Promise.resolve(finalPairedCaption)
+          : translateLive2DReplyToChinese(finalSpeech, { signal: options.signal })
+              .then((caption) => visibleYachiyoText(caption)))
       );
       let finalCaptionToken = 0;
       streamingSpeechSession?.queueLine();
@@ -1264,8 +1279,9 @@ async function performStreamingLiveTurn(message, options = {}) {
             emotion: finalResult.live2d?.emotion || finalResult.live2d?.expression || 'neutral'
           });
         }
+      }).then(() => {
+        playedSpeechCount += 1;
       }).catch((error) => {
-        playbackFailed = true;
         if (error?.name === 'AbortError' || error?.name === 'CaptionUnavailableError') return;
         speechState.value = { status: 'error', error: error.message || 'TTS failed' };
       }).finally(() => {
@@ -1306,7 +1322,7 @@ async function performStreamingLiveTurn(message, options = {}) {
         dispatchRoomLive2D(alignLive2DToSpeech(finalResult.live2d, Number(finalResult.live2d.durationMs) || 0));
       }
       return {
-        played: playbackPromises.length > 0 && !playbackFailed
+        played: playedSpeechCount > 0
       };
     });
     return { ...finalResult, reply: visibleReply, playbackDone };

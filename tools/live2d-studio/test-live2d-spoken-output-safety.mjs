@@ -86,6 +86,10 @@ const controlOnlyCases = [
     input: 'BEAT: {"emotion":"happy","actions":[{"type":"head_tilt"}]}'
   },
   {
+    name: 'CAPTION protocol record',
+    input: 'CAPTION: 晚上好呀。'
+  },
+  {
     name: 'pure action control JSON',
     input: '{"actions":[{"type":"look_at_chat"},{"type":"head_tilt"}],"speech_style":{"pause":"soft"}}'
   }
