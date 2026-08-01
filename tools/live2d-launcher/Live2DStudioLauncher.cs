@@ -200,6 +200,72 @@ internal static class Live2DStudioLauncher
 
         return string.Empty;
     }
+
+    internal static string FindMemoryNodeExecutable(string repoRoot)
+    {
+        var candidates = new List<string>();
+        var pathValue = Environment.GetEnvironmentVariable("PATH") ?? string.Empty;
+        foreach (var pathEntry in pathValue.Split(new[] { Path.PathSeparator }, StringSplitOptions.RemoveEmptyEntries))
+        {
+            candidates.Add(Path.Combine(pathEntry.Trim('"'), "node.exe"));
+        }
+
+        var preferredDirectory = FindNodeDirectory(repoRoot);
+        if (!string.IsNullOrWhiteSpace(preferredDirectory))
+        {
+            candidates.Add(Path.Combine(preferredDirectory, "node.exe"));
+        }
+
+        candidates.Add(Path.GetFullPath(Path.Combine(repoRoot, "tools", "node-v22.11.0-win-x64", "node.exe")));
+        candidates.Add(Path.GetFullPath(Path.Combine(repoRoot, "..", "tools", "node-v22.11.0-win-x64", "node.exe")));
+
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var candidate in candidates)
+        {
+            string fullPath;
+            try
+            {
+                fullPath = Path.GetFullPath(candidate);
+            }
+            catch
+            {
+                continue;
+            }
+            if (!seen.Add(fullPath) || !File.Exists(fullPath)) continue;
+            if (CanLoadMemoryNativeModule(fullPath, repoRoot)) return fullPath;
+        }
+        return string.Empty;
+    }
+
+    private static bool CanLoadMemoryNativeModule(string nodeExe, string repoRoot)
+    {
+        try
+        {
+            var start = new ProcessStartInfo
+            {
+                FileName = nodeExe,
+                Arguments = "-e \"const Database=require('better-sqlite3'); const db=new Database(':memory:'); db.prepare('SELECT 1').get(); db.close()\"",
+                WorkingDirectory = repoRoot,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardError = true,
+                RedirectStandardOutput = true
+            };
+            using (var process = Process.Start(start))
+            {
+                if (!process.WaitForExit(8000))
+                {
+                    try { process.Kill(); } catch { }
+                    return false;
+                }
+                return process.ExitCode == 0;
+            }
+        }
+        catch
+        {
+            return false;
+        }
+    }
 }
 
 internal sealed class StudioWindow : Form
@@ -997,7 +1063,6 @@ internal static class DesktopApiProxy
             try
             {
                 EnsureMemoryDataServiceStarted();
-                TryStartManagedMilvus();
             }
             catch
             {
@@ -3505,12 +3570,47 @@ internal static class DesktopApiProxy
                 return;
             }
 
-            var nodeDir = Live2DStudioLauncher.FindNodeDirectory(repoRoot);
-            if (string.IsNullOrWhiteSpace(nodeDir))
+            // A launcher crash can leave this checkout's older sidecar bound to the fixed port.
+            // Never stop a healthy sidecar owned by another checkout (or an unrelated service).
+            var listenerKind = ProbeMemoryDataServiceListener();
+            if (listenerKind == MemoryDataServiceListenerKind.ForeignProject)
             {
-                throw new InvalidOperationException("Node.js is required for SQLite/Milvus memory provider.");
+                throw new InvalidOperationException(
+                    "Memory data service port " + MemoryDataServicePort + " is already used by another Yachiyo project instance. " +
+                    "Close that project before starting this one."
+                );
             }
-            var nodeExe = Path.Combine(nodeDir, "node.exe");
+            if (listenerKind == MemoryDataServiceListenerKind.Unrelated)
+            {
+                throw new InvalidOperationException(
+                    "Memory data service port " + MemoryDataServicePort + " is already used by another application. " +
+                    "Close that application or free the port before restarting Yachiyo."
+                );
+            }
+            if (listenerKind == MemoryDataServiceListenerKind.OwnedByCurrentProject)
+            {
+                TryRequestMemoryDataServiceShutdown();
+                for (var i = 0; i < 40 && ProbeMemoryDataServiceListener() != MemoryDataServiceListenerKind.None; i++)
+                {
+                    Thread.Sleep(125);
+                }
+                if (ProbeMemoryDataServiceListener() != MemoryDataServiceListenerKind.None)
+                {
+                    throw new InvalidOperationException(
+                        "An unhealthy memory data service is already using port " + MemoryDataServicePort + ". " +
+                        "Close the stale node process and restart the app."
+                    );
+                }
+            }
+
+            var nodeExe = Live2DStudioLauncher.FindMemoryNodeExecutable(repoRoot);
+            if (string.IsNullOrWhiteSpace(nodeExe))
+            {
+                throw new InvalidOperationException(
+                    "No installed Node.js runtime can load this project's better-sqlite3 native module. " +
+                    "Run npm install with the Node.js version used by the launcher, then restart the app."
+                );
+            }
             var script = Path.Combine(repoRoot, "tools", "memory", "memory-data-service.mjs");
             if (!File.Exists(script))
             {
@@ -3528,7 +3628,7 @@ internal static class DesktopApiProxy
             start.EnvironmentVariables["YACHIYO_REPO_ROOT"] = repoRoot;
             start.EnvironmentVariables["YACHIYO_MEMORY_AUTOSTART_MANAGED_MILVUS"] = "1";
             start.EnvironmentVariables["YACHIYO_MEMORY_MILVUS_URL"] = "http://127.0.0.1:19530";
-            start.EnvironmentVariables["YACHIYO_MEMORY_MILVUS_IMAGE"] = "milvusdb/milvus:latest";
+            start.EnvironmentVariables["YACHIYO_MEMORY_MILVUS_IMAGE"] = "milvusdb/milvus:v2.6.13";
             start.EnvironmentVariables["YACHIYO_PERSONA_CORPUS_PATH"] = Path.GetFullPath(Path.Combine(repoRoot, "..", "yachiyo_novel_detailed_corpus.txt"));
             memoryDataServiceProcess = Process.Start(start);
             WaitForMemoryDataService();
@@ -3547,7 +3647,7 @@ internal static class DesktopApiProxy
             { "milvusManaged", true },
             { "milvusUrl", "http://127.0.0.1:19530" },
             { "milvusCollection", "yachiyo_memory" },
-            { "milvusImage", "milvusdb/milvus:latest" },
+            { "milvusImage", "milvusdb/milvus:v2.6.13" },
             { "embeddingDimension", 384 },
             { "retrievalMode", "hybrid" },
             { "writeMode", "auto-approved" },
@@ -3583,7 +3683,7 @@ internal static class DesktopApiProxy
         {
             PostBytes(
                 "http://127.0.0.1:" + MemoryDataServicePort + "/api/memory/shutdown",
-                Json.Serialize(new Dictionary<string, object> { { "stopMilvus", true } }),
+                Json.Serialize(new Dictionary<string, object> { { "stopMilvus", false } }),
                 new Dictionary<string, string>(),
                 30000);
         }
@@ -3690,12 +3790,73 @@ internal static class DesktopApiProxy
             request.ReadWriteTimeout = 500;
             using (var response = (HttpWebResponse)request.GetResponse())
             {
-                return (int)response.StatusCode >= 200 && (int)response.StatusCode < 300;
+                if ((int)response.StatusCode < 200 || (int)response.StatusCode >= 300) return false;
+                using (var reader = new StreamReader(response.GetResponseStream() ?? Stream.Null, Encoding.UTF8))
+                {
+                    var body = reader.ReadToEnd();
+                    var health = Json.DeserializeObject(body) as Dictionary<string, object>;
+                    if (health == null || !GetBoolean(health, "sqliteReady", false)) return false;
+                    if (!string.Equals(GetString(health, "service"), "yachiyo-memory-data", StringComparison.Ordinal)) return false;
+                    var reportedRoot = GetString(health, "repoRoot");
+                    if (string.IsNullOrWhiteSpace(reportedRoot)) return false;
+                    var expectedRoot = Path.GetFullPath(repoRoot).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+                    var actualRoot = Path.GetFullPath(reportedRoot).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+                    return string.Equals(expectedRoot, actualRoot, StringComparison.OrdinalIgnoreCase);
+                }
             }
         }
         catch
         {
             return false;
+        }
+    }
+
+    private enum MemoryDataServiceListenerKind
+    {
+        None,
+        OwnedByCurrentProject,
+        ForeignProject,
+        Unrelated
+    }
+
+    private static MemoryDataServiceListenerKind ProbeMemoryDataServiceListener()
+    {
+        try
+        {
+            var request = (HttpWebRequest)WebRequest.Create("http://127.0.0.1:" + MemoryDataServicePort + "/healthz");
+            request.Method = "GET";
+            request.Timeout = 500;
+            request.ReadWriteTimeout = 500;
+            using (var response = (HttpWebResponse)request.GetResponse())
+            {
+                if ((int)response.StatusCode < 200 || (int)response.StatusCode >= 300)
+                {
+                    return MemoryDataServiceListenerKind.None;
+                }
+                using (var reader = new StreamReader(response.GetResponseStream() ?? Stream.Null, Encoding.UTF8))
+                {
+                    var health = Json.DeserializeObject(reader.ReadToEnd()) as Dictionary<string, object>;
+                    if (health == null ||
+                        !string.Equals(GetString(health, "service"), "yachiyo-memory-data", StringComparison.Ordinal))
+                    {
+                        return MemoryDataServiceListenerKind.Unrelated;
+                    }
+                    var reportedRoot = GetString(health, "repoRoot");
+                    if (string.IsNullOrWhiteSpace(reportedRoot))
+                    {
+                        return MemoryDataServiceListenerKind.Unrelated;
+                    }
+                    var expectedRoot = Path.GetFullPath(repoRoot).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+                    var actualRoot = Path.GetFullPath(reportedRoot).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+                    return string.Equals(expectedRoot, actualRoot, StringComparison.OrdinalIgnoreCase)
+                        ? MemoryDataServiceListenerKind.OwnedByCurrentProject
+                        : MemoryDataServiceListenerKind.ForeignProject;
+                }
+            }
+        }
+        catch
+        {
+            return MemoryDataServiceListenerKind.None;
         }
     }
 

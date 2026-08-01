@@ -5,13 +5,19 @@ import http from 'node:http';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
-import { gzipSync } from 'node:zlib';
+import { gunzipSync, gzipSync } from 'node:zlib';
 import Database from 'better-sqlite3';
+import {
+  DEFAULT_MANAGED_MILVUS_IMAGE,
+  decideManagedMilvusStartupAction,
+  isSafeManagedMilvusVolumeName,
+  managedMilvusVolumeBaseName
+} from './managed-milvus-policy.mjs';
 
 const DEFAULT_PORT = 3299;
 const DEFAULT_COLLECTION = 'yachiyo_memory';
 const DEFAULT_DIMENSION = 384;
-const DEFAULT_MILVUS_IMAGE = 'milvusdb/milvus:latest';
+const DEFAULT_MILVUS_IMAGE = DEFAULT_MANAGED_MILVUS_IMAGE;
 const DEFAULT_MILVUS_URL = 'http://127.0.0.1:19530';
 const DEFAULT_PERSONA_CORPUS_FILE = 'yachiyo_novel_detailed_corpus.txt';
 const MANAGED_MILVUS_CONTAINER = 'yachiyo-milvus-standalone';
@@ -19,6 +25,10 @@ const MAX_MEMORY_ROWS = 50000;
 const MAX_NOTE_BYTES = 256 * 1024;
 const MAX_WRITE_CHARS = 2400;
 const DOCKER_DAEMON_WAIT_MS = 120000;
+const MILVUS_REQUEST_TIMEOUT_MS = 5000;
+const EMBEDDING_REQUEST_TIMEOUT_MS = 5000;
+const MILVUS_STARTUP_WAIT_MS = 180000;
+const MANAGED_MILVUS_STATE_FILE = 'managed-milvus-state.json';
 const SESSION_ROLLUP_MAX_MESSAGES = 24;
 const SESSION_ROLLUP_TURNS = 12;
 const DEFAULT_GC_ARCHIVE_DAYS = 30;
@@ -27,6 +37,15 @@ const DEFAULT_RAW_RETENTION_DAYS = 120;
 const execFileAsync = promisify(execFile);
 let managedMilvusPromise = null;
 let managedMilvusStartupError = '';
+let managedMilvusRetryTimer = null;
+let memoryServiceShuttingDown = false;
+let managedMilvusStatus = {
+  phase: 'idle',
+  ready: false,
+  attempts: 0,
+  recoveryAttempts: 0,
+  updatedAt: new Date().toISOString()
+};
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const defaultRepoRoot = path.resolve(scriptDir, '..', '..');
@@ -124,6 +143,23 @@ function readJsonValue(value, fallback) {
 
 function stableJson(value) {
   return JSON.stringify(value ?? null);
+}
+
+function updateManagedMilvusStatus(patch = {}) {
+  managedMilvusStatus = {
+    ...managedMilvusStatus,
+    ...(patch || {}),
+    updatedAt: new Date().toISOString()
+  };
+  return managedMilvusStatus;
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function conciseError(error) {
+  return asText(error?.message || error, 1200);
 }
 
 function normalizeTags(value) {
@@ -386,6 +422,8 @@ function migrateStore(db) {
   ensureColumn(db, 'mem_scenes', 'vector_dimension INTEGER NOT NULL DEFAULT 0');
   ensureColumn(db, 'raw_messages', "viewer_id TEXT NOT NULL DEFAULT ''");
   ensureColumn(db, 'raw_messages', "compacted_at TEXT NOT NULL DEFAULT ''");
+  ensureColumn(db, 'raw_messages', 'ingest_sequence INTEGER NOT NULL DEFAULT 0');
+  ensureColumn(db, 'raw_messages', 'segment_index INTEGER NOT NULL DEFAULT 0');
   ensureColumn(db, 'user_profile', "viewer_id TEXT NOT NULL DEFAULT ''");
   ensureColumn(db, 'retrieval_traces', "viewer_ids_json TEXT NOT NULL DEFAULT '[]'");
   ensureColumn(db, 'retrieval_traces', "embedding_signature TEXT NOT NULL DEFAULT ''");
@@ -464,7 +502,129 @@ function migrateStore(db) {
     CREATE INDEX IF NOT EXISTS idx_mem_scenes_viewer ON mem_scenes(viewer_id, status, updated DESC);
     CREATE INDEX IF NOT EXISTS idx_raw_messages_viewer ON raw_messages(viewer_id, session_id, created);
     CREATE INDEX IF NOT EXISTS idx_user_profile_viewer ON user_profile(viewer_id, category, status);
+
+    CREATE TABLE IF NOT EXISTS memory_ingest_cursors (
+      session_id TEXT NOT NULL,
+      viewer_id TEXT NOT NULL DEFAULT '',
+      next_sequence INTEGER NOT NULL DEFAULT 0,
+      created TEXT NOT NULL DEFAULT '',
+      updated TEXT NOT NULL DEFAULT '',
+      PRIMARY KEY (session_id, viewer_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_raw_messages_segment
+      ON raw_messages(session_id, viewer_id, segment_index, ingest_sequence);
   `);
+  ensureColumn(db, 'memory_segments', "rollup_hash TEXT NOT NULL DEFAULT ''");
+  ensureColumn(db, 'memory_segments', "rollup_error TEXT NOT NULL DEFAULT ''");
+  migrateRawSegmentSequences(db);
+}
+
+function migrateRawSegmentSequences(db) {
+  const migrationKey = 'raw_segment_sequence_v2';
+  const migrated = db.prepare('SELECT value FROM memory_meta WHERE key = ?').get(migrationKey);
+  const now = new Date().toISOString();
+  if (!migrated) {
+    db.transaction(() => {
+      const identityKey = (sessionId, viewerId) => `${sessionId}\u0000${viewerId}`;
+      const turnKey = (sessionId, viewerId, turnId) => `${identityKey(sessionId, viewerId)}\u0000${turnId}`;
+      const segmentBounds = new Map();
+      const archivedAssignments = new Map();
+      const segments = db.prepare(`
+        SELECT session_id, viewer_id, segment_index, turn_count, sealed, transcript_gzip
+        FROM memory_segments ORDER BY session_id, viewer_id, segment_index
+      `).all();
+      for (const segment of segments) {
+        const segmentIndex = Math.max(0, Number(segment.segment_index) || 0);
+        const turnCount = Math.min(SESSION_ROLLUP_TURNS, Math.max(0, Number(segment.turn_count) || 0));
+        const lowerBound = segmentIndex * SESSION_ROLLUP_TURNS +
+          (segment.sealed ? SESSION_ROLLUP_TURNS : turnCount);
+        const key = identityKey(segment.session_id, segment.viewer_id);
+        segmentBounds.set(key, Math.max(segmentBounds.get(key) || 0, lowerBound));
+        try {
+          const transcript = gunzipSync(segment.transcript_gzip).toString('utf8');
+          const turnIds = [];
+          const seenTurnIds = new Set();
+          for (const line of transcript.split('\n')) {
+            if (!line) continue;
+            const turnId = asText(JSON.parse(line)?.turnId, 120);
+            if (!turnId || seenTurnIds.has(turnId)) continue;
+            seenTurnIds.add(turnId);
+            turnIds.push(turnId);
+            if (turnIds.length >= SESSION_ROLLUP_TURNS) break;
+          }
+          turnIds.forEach((turnId, ordinal) => {
+            const keyForTurn = turnKey(segment.session_id, segment.viewer_id, turnId);
+            const assignment = {
+              ingestSequence: segmentIndex * SESSION_ROLLUP_TURNS + ordinal,
+              segmentIndex
+            };
+            const previous = archivedAssignments.get(keyForTurn);
+            if (!archivedAssignments.has(keyForTurn)) archivedAssignments.set(keyForTurn, assignment);
+            else if (previous &&
+              (previous.ingestSequence !== assignment.ingestSequence || previous.segmentIndex !== segmentIndex)) {
+              // Conflicting archives are ambiguous. Treat this turn as unmapped and place it after
+              // every durable segment instead of risking reuse of historical membership.
+              archivedAssignments.set(keyForTurn, null);
+            }
+          });
+        } catch (_) {
+          // Segment metadata still supplies a conservative cursor bound when its archive is damaged.
+        }
+      }
+
+      const rows = db.prepare(`
+        SELECT session_id, viewer_id, turn_id, MIN(created) AS first_created, MIN(rowid) AS first_rowid
+        FROM raw_messages
+        GROUP BY session_id, viewer_id, turn_id
+        ORDER BY session_id, viewer_id, first_created, first_rowid, turn_id
+      `).all();
+      const updateRows = db.prepare(`
+        UPDATE raw_messages SET ingest_sequence = ?, segment_index = ?
+        WHERE session_id = ? AND viewer_id = ? AND turn_id = ?
+      `);
+      const upsertCursor = db.prepare(`
+        INSERT INTO memory_ingest_cursors (session_id, viewer_id, next_sequence, created, updated)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(session_id, viewer_id) DO UPDATE SET
+          next_sequence = MAX(memory_ingest_cursors.next_sequence, excluded.next_sequence),
+          updated = excluded.updated
+      `);
+      const durableBounds = new Map(segmentBounds);
+      for (const cursor of db.prepare(`
+        SELECT session_id, viewer_id, next_sequence FROM memory_ingest_cursors
+      `).all()) {
+        const key = identityKey(cursor.session_id, cursor.viewer_id);
+        durableBounds.set(key, Math.max(durableBounds.get(key) || 0, Number(cursor.next_sequence) || 0));
+      }
+      const nextUnmappedSequence = new Map(durableBounds);
+      const cursorBounds = new Map(durableBounds);
+      for (const row of rows) {
+        const key = identityKey(row.session_id, row.viewer_id);
+        const archived = archivedAssignments.get(turnKey(row.session_id, row.viewer_id, row.turn_id));
+        let ingestSequence;
+        let segmentIndex;
+        if (archived) {
+          ingestSequence = archived.ingestSequence;
+          segmentIndex = archived.segmentIndex;
+        } else {
+          ingestSequence = Math.max(0, nextUnmappedSequence.get(key) || 0);
+          segmentIndex = Math.floor(ingestSequence / SESSION_ROLLUP_TURNS);
+          nextUnmappedSequence.set(key, ingestSequence + 1);
+        }
+        updateRows.run(ingestSequence, segmentIndex, row.session_id, row.viewer_id, row.turn_id);
+        cursorBounds.set(key, Math.max(cursorBounds.get(key) || 0, ingestSequence + 1));
+      }
+      for (const [key, lowerBound] of cursorBounds) {
+        const [sessionId, viewerId] = key.split('\u0000');
+        upsertCursor.run(sessionId, viewerId, lowerBound, now, now);
+      }
+      db.prepare(`
+        INSERT INTO memory_meta (key, value, updated) VALUES (?, '1', ?)
+        ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated = excluded.updated
+      `).run(migrationKey, now);
+    })();
+  }
+
 }
 
 function stripMarkdown(markdown) {
@@ -708,6 +868,9 @@ async function embeddingForDetailed(text, settings) {
       provider: 'hash'
     };
   }
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), EMBEDDING_REQUEST_TIMEOUT_MS);
+  timeout.unref?.();
   try {
     const response = await fetch(settings.embeddingApiUrl, {
       method: 'POST',
@@ -719,7 +882,8 @@ async function embeddingForDetailed(text, settings) {
         model: settings.embeddingModel,
         input: String(text || '').slice(0, 8000),
         dimensions: settings.embeddingDimension
-      })
+      }),
+      signal: controller.signal
     });
     if (!response.ok) throw new Error(`embedding ${response.status}`);
     const payload = await response.json();
@@ -739,6 +903,8 @@ async function embeddingForDetailed(text, settings) {
       provider: 'hash',
       error: error.message || 'Embedding API unavailable.'
     };
+  } finally {
+    clearTimeout(timeout);
   }
 }
 
@@ -898,6 +1064,20 @@ function activeRows(db, includeDisabled = false, limit = MAX_MEMORY_ROWS) {
   return db.prepare(`SELECT * FROM memories WHERE ${where} ORDER BY source, type, title LIMIT ?`).all(limit)
     .map(rowToNote)
     .filter(Boolean);
+}
+
+function viewerScopedRows(db, viewerIds = new Set(), includeDisabled = false, limit = MAX_MEMORY_ROWS) {
+  const ids = [...new Set(viewerIds || [])].map((id) => asText(id, 120)).filter(Boolean);
+  const activeWhere = includeDisabled ? 'deleted = 0' : 'deleted = 0 AND disabled = 0';
+  const viewerWhere = ids.length
+    ? `(viewer_id = '' OR viewer_id IN (${ids.map(() => '?').join(', ')}))`
+    : `viewer_id = ''`;
+  return db.prepare(`
+    SELECT * FROM memories
+    WHERE ${activeWhere} AND ${viewerWhere}
+    ORDER BY CASE WHEN viewer_id != '' THEN 0 ELSE 1 END, updated DESC, id
+    LIMIT ?
+  `).all(...ids, limit).map(rowToNote).filter(Boolean);
 }
 
 function normalizeFactList(value, fallbackText = '') {
@@ -1392,9 +1572,37 @@ function activeCells(db) {
     .filter(Boolean);
 }
 
+function viewerScopedCells(db, viewerIds = new Set(), limit = MAX_MEMORY_ROWS) {
+  const ids = [...new Set(viewerIds || [])].map((id) => asText(id, 120)).filter(Boolean);
+  const viewerWhere = ids.length
+    ? `(viewer_id = '' OR viewer_id IN (${ids.map(() => '?').join(', ')}))`
+    : `viewer_id = ''`;
+  return db.prepare(`
+    SELECT * FROM mem_cells
+    WHERE status IN ('active', 'candidate') AND ${viewerWhere}
+    ORDER BY CASE WHEN viewer_id != '' THEN 0 ELSE 1 END, updated DESC, id
+    LIMIT ?
+  `).all(...ids, limit).map(rowToCell).filter(Boolean);
+}
+
+function viewerScopedScenes(db, viewerIds = new Set(), limit = MAX_MEMORY_ROWS) {
+  const ids = [...new Set(viewerIds || [])].map((id) => asText(id, 120)).filter(Boolean);
+  const viewerWhere = ids.length
+    ? `(viewer_id = '' OR viewer_id IN (${ids.map(() => '?').join(', ')}))`
+    : `viewer_id = ''`;
+  return db.prepare(`
+    SELECT * FROM mem_scenes
+    WHERE status = 'active' AND ${viewerWhere}
+    ORDER BY CASE WHEN viewer_id != '' THEN 0 ELSE 1 END, updated DESC, id
+    LIMIT ?
+  `).all(...ids, limit).map(rowToScene).filter(Boolean);
+}
+
 function chooseSceneForCell(db, cell) {
   const keywords = cellKeywords(cell);
-  const scenes = activeScenes(db).filter((scene) => scene.viewerId === (cell.viewerId || ''));
+  const sceneViewerIds = cell.viewerId ? new Set([cell.viewerId]) : new Set();
+  const scenes = viewerScopedScenes(db, sceneViewerIds)
+    .filter((scene) => scene.viewerId === (cell.viewerId || ''));
   let best = null;
   for (const scene of scenes) {
     const vectorScore = embeddingsCompatible(
@@ -1527,8 +1735,10 @@ function detectConflictsForCell(db, cell) {
   if (!looksNegativeConstraint(text)) return [];
   const keywords = cellKeywords(cell).filter((item) => item.length >= 3);
   if (!keywords.length) return [];
-  const candidates = activeCells(db)
+  const conflictViewerIds = cell.viewerId ? new Set([cell.viewerId]) : new Set();
+  const candidates = viewerScopedCells(db, conflictViewerIds)
     .filter((other) => other.id !== cell.id && other.status === 'active')
+    .filter((other) => (other.viewerId || '') === (cell.viewerId || ''))
     .filter((other) => keywordOverlapScore(keywords, cellKeywords(other)) >= 0.18)
     .slice(0, 3);
   const conflicts = [];
@@ -1644,9 +1854,25 @@ async function repairVectorItems(items, batchSize, prepare, store) {
 async function auditAndRepairVectorIndex(db, settings, options = {}) {
   const repair = options.repair !== false;
   const expectedSignature = configuredEmbeddingSignature(settings);
-  const notes = activeRows(db, true, MAX_MEMORY_ROWS);
-  const cells = db.prepare('SELECT * FROM mem_cells ORDER BY updated DESC LIMIT ?')
-    .all(MAX_MEMORY_ROWS)
+  const notes = db.prepare(`
+    SELECT * FROM memories WHERE deleted = 0
+    ORDER BY CASE
+      WHEN embedding_signature != ? OR vector_dimension != ? OR length(vector_json) < 4 THEN 0
+      ELSE 1
+    END, updated DESC
+    LIMIT ?
+  `).all(expectedSignature, settings.embeddingDimension, MAX_MEMORY_ROWS)
+    .map(rowToNote)
+    .filter(Boolean);
+  const cells = db.prepare(`
+    SELECT * FROM mem_cells WHERE status != 'forgotten'
+    ORDER BY CASE
+      WHEN embedding_signature != ? OR vector_dimension != ? OR length(vector_json) < 4 THEN 0
+      ELSE 1
+    END, updated DESC
+    LIMIT ?
+  `)
+    .all(expectedSignature, settings.embeddingDimension, MAX_MEMORY_ROWS)
     .map(rowToCell)
     .filter(Boolean);
   const invalidNoteRows = notes.filter((note) => (
@@ -1836,20 +2062,31 @@ function milvusHostPort(settings, fallback = 19530) {
   }
 }
 
-async function rawMilvusRequest(settings, apiPath, body) {
-  const response = await fetch(`${settings.milvusUrl}${apiPath}`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(settings.milvusToken ? { Authorization: `Bearer ${settings.milvusToken}` } : {})
-    },
-    body: JSON.stringify(body || {})
-  });
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok || payload.code && payload.code !== 0) {
-    throw new Error(payload.message || payload.msg || `Milvus ${response.status}`);
+async function rawMilvusRequest(settings, apiPath, body, timeoutMs = MILVUS_REQUEST_TIMEOUT_MS) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), Math.max(250, Number(timeoutMs) || MILVUS_REQUEST_TIMEOUT_MS));
+  timeout.unref?.();
+  try {
+    const response = await fetch(`${settings.milvusUrl}${apiPath}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(settings.milvusToken ? { Authorization: `Bearer ${settings.milvusToken}` } : {})
+      },
+      body: JSON.stringify(body || {}),
+      signal: controller.signal
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok || payload.code && payload.code !== 0) {
+      throw new Error(payload.message || payload.msg || `Milvus ${response.status}`);
+    }
+    return payload;
+  } catch (error) {
+    if (error?.name === 'AbortError') throw new Error(`Milvus request timed out after ${timeoutMs}ms.`);
+    throw error;
+  } finally {
+    clearTimeout(timeout);
   }
-  return payload;
 }
 
 async function milvusRequest(settings, apiPath, body) {
@@ -1858,9 +2095,9 @@ async function milvusRequest(settings, apiPath, body) {
   return rawMilvusRequest(settings, apiPath, body);
 }
 
-async function isMilvusReady(settings) {
+async function isMilvusReady(settings, timeoutMs = 2000) {
   try {
-    await rawMilvusRequest(settings, '/v2/vectordb/collections/list', {});
+    await rawMilvusRequest(settings, '/v2/vectordb/collections/list', {}, timeoutMs);
     return true;
   } catch (_) {
     return false;
@@ -1868,7 +2105,9 @@ async function isMilvusReady(settings) {
 }
 
 async function runDocker(args, timeout = 60000) {
-  return execFileAsync('docker', args, {
+  const executable = process.env.YACHIYO_MEMORY_DOCKER_CLI || 'docker';
+  const script = asText(process.env.YACHIYO_MEMORY_DOCKER_CLI_SCRIPT || '', 2000);
+  return execFileAsync(executable, script ? [script, ...args] : args, {
     timeout,
     windowsHide: true,
     maxBuffer: 1024 * 1024
@@ -1934,28 +2173,220 @@ async function ensureDockerDaemon() {
   throw new Error('Docker is required for managed Milvus, but Docker is not running or is not installed.');
 }
 
+function managedMilvusStatePath() {
+  return path.join(appDataDir(), MANAGED_MILVUS_STATE_FILE);
+}
+
+function probeSqliteRuntime() {
+  try {
+    const db = new Database(':memory:');
+    try {
+      db.prepare('SELECT 1 AS ready').get();
+    } finally {
+      db.close();
+    }
+    const databasePath = defaultDatabasePath();
+    let integrity = 'new';
+    if (fs.existsSync(databasePath)) {
+      const durable = new Database(databasePath, { readonly: true, fileMustExist: true });
+      try {
+        integrity = String(durable.pragma('quick_check', { simple: true }) || '').toLowerCase();
+      } finally {
+        durable.close();
+      }
+      if (integrity !== 'ok') throw new Error(`SQLite quick_check failed: ${integrity || 'unknown'}`);
+    }
+    return { ready: true, error: '', integrity, databasePath };
+  } catch (error) {
+    return { ready: false, error: conciseError(error), integrity: 'error', databasePath: defaultDatabasePath() };
+  }
+}
+
+const sqliteRuntimeHealth = probeSqliteRuntime();
+
+function managedMilvusVolumePath(volumeName) {
+  if (!isSafeManagedMilvusVolumeName(volumeName)) throw new Error('Unsafe managed Milvus volume name.');
+  const root = path.resolve(appDataDir());
+  const resolved = path.resolve(root, volumeName);
+  if (path.dirname(resolved).toLowerCase() !== root.toLowerCase()) {
+    throw new Error('Managed Milvus volume must stay inside the memory data directory.');
+  }
+  return resolved;
+}
+
+function readManagedMilvusVolumeState(settings) {
+  const fallbackName = managedMilvusVolumeBaseName(settings.milvusImage || DEFAULT_MILVUS_IMAGE);
+  try {
+    const parsed = JSON.parse(fs.readFileSync(managedMilvusStatePath(), 'utf8'));
+    if (parsed?.image === settings.milvusImage && isSafeManagedMilvusVolumeName(parsed.volumeName)) {
+      return {
+        image: parsed.image,
+        volumeName: parsed.volumeName,
+        volumePath: managedMilvusVolumePath(parsed.volumeName),
+        recoveryGeneration: Math.max(0, Number(parsed.recoveryGeneration) || 0)
+      };
+    }
+  } catch (_) {
+    // A missing or invalid state file safely falls back to a new version-scoped index directory.
+  }
+  return {
+    image: settings.milvusImage,
+    volumeName: fallbackName,
+    volumePath: managedMilvusVolumePath(fallbackName),
+    recoveryGeneration: 0
+  };
+}
+
+function persistManagedMilvusVolumeState(state) {
+  if (!isSafeManagedMilvusVolumeName(state?.volumeName)) throw new Error('Unsafe managed Milvus volume state.');
+  fs.mkdirSync(appDataDir(), { recursive: true });
+  const target = managedMilvusStatePath();
+  const temporary = `${target}.tmp-${process.pid}`;
+  fs.writeFileSync(temporary, `${JSON.stringify({
+    image: state.image,
+    volumeName: state.volumeName,
+    recoveryGeneration: Math.max(0, Number(state.recoveryGeneration) || 0),
+    updatedAt: new Date().toISOString()
+  }, null, 2)}\n`, 'utf8');
+  fs.renameSync(temporary, target);
+}
+
+function createRecoveryVolumeState(settings, previousState) {
+  const stamp = new Date().toISOString().replace(/[^0-9a-z]/gi, '').toLowerCase();
+  const suffix = crypto.randomBytes(3).toString('hex');
+  const volumeName = `${managedMilvusVolumeBaseName(settings.milvusImage)}-recovery-${stamp}-${suffix}`;
+  const state = {
+    image: settings.milvusImage,
+    volumeName,
+    volumePath: managedMilvusVolumePath(volumeName),
+    recoveryGeneration: Math.max(0, Number(previousState?.recoveryGeneration) || 0) + 1
+  };
+  persistManagedMilvusVolumeState(state);
+  return state;
+}
+
 async function inspectManagedMilvusContainer() {
   try {
     const inspect = await runDocker(['inspect', MANAGED_MILVUS_CONTAINER], 8000);
     const info = JSON.parse(inspect.stdout || '[]')?.[0];
-    const env = Array.isArray(info?.Config?.Env) ? info.Config.Env : [];
-    const mounts = Array.isArray(info?.Mounts) ? info.Mounts : [];
+    if (!info) throw new Error('Docker inspect returned no container data.');
+    const env = Array.isArray(info.Config?.Env) ? info.Config.Env : [];
+    const mounts = Array.isArray(info.Mounts) ? info.Mounts : [];
+    const dataMount = mounts.find((mount) => mount?.Destination === '/var/lib/milvus');
+    const portBindings = info.NetworkSettings?.Ports?.['19530/tcp'] || [];
     return {
-      exists: Boolean(info),
-      running: Boolean(info?.State?.Running),
+      exists: true,
+      running: Boolean(info.State?.Running || info.State?.Restarting),
+      restarting: Boolean(info.State?.Restarting),
+      status: asText(info.State?.Status || '', 40),
+      exitCode: Number(info.State?.ExitCode) || 0,
+      oomKilled: Boolean(info.State?.OOMKilled),
+      error: asText(info.State?.Error || '', 500),
+      health: asText(info.State?.Health?.Status || '', 40),
+      restartCount: Number(info.RestartCount) || 0,
+      image: asText(info.Config?.Image || '', 240),
+      imageId: asText(info.Image || '', 240),
+      volumePath: asText(dataMount?.Source || '', 1000),
+      hostPorts: portBindings.map((binding) => Number(binding?.HostPort) || 0).filter(Boolean),
       embeddedEtcd: env.includes('ETCD_USE_EMBED=true') &&
         mounts.some((mount) => mount?.Destination === '/milvus/configs/embedEtcd.yaml')
     };
-  } catch (_) {
-    return { exists: false, running: false, embeddedEtcd: false };
+  } catch (error) {
+    const detail = `${error?.message || ''}\n${error?.stderr || ''}`;
+    if (/no such (?:object|container)/iu.test(detail)) {
+      return { exists: false, running: false, status: 'missing', embeddedEtcd: false };
+    }
+    throw new Error(`Unable to inspect managed Milvus container: ${conciseError(detail)}`);
   }
 }
 
+async function managedMilvusLogTail() {
+  try {
+    const result = await runDocker(['logs', '--tail', '200', MANAGED_MILVUS_CONTAINER], 15000);
+    return asText(`${result.stdout || ''}\n${result.stderr || ''}`, 8000);
+  } catch (error) {
+    return asText(error?.stderr || error?.message || '', 2000);
+  }
+}
+
+function managedMilvusContainerMatches(container, settings, volumeState, hostPort) {
+  if (!container?.exists || !container.embeddedEtcd) return false;
+  const expectedVolume = path.resolve(volumeState.volumePath).toLowerCase();
+  const actualVolume = container.volumePath ? path.resolve(container.volumePath).toLowerCase() : '';
+  return container.image === settings.milvusImage &&
+    actualVolume === expectedVolume &&
+    container.hostPorts.includes(hostPort);
+}
+
+async function removeManagedMilvusContainer(container) {
+  if (!container?.exists) return;
+  if (container.running) await runDocker(['stop', MANAGED_MILVUS_CONTAINER], 120000);
+  await runDocker(['rm', MANAGED_MILVUS_CONTAINER], 120000);
+}
+
+async function createManagedMilvusContainer(settings, volumeState, hostPort, healthPort) {
+  fs.mkdirSync(volumeState.volumePath, { recursive: true });
+  const { embedEtcdPath, userConfigPath } = ensureManagedMilvusConfigFiles(volumeState.volumePath);
+  persistManagedMilvusVolumeState(volumeState);
+  await runDocker([
+    'run',
+    '-d',
+    '--name',
+    MANAGED_MILVUS_CONTAINER,
+    '--restart',
+    'on-failure:2',
+    '--security-opt',
+    'seccomp:unconfined',
+    '-e',
+    'ETCD_USE_EMBED=true',
+    '-e',
+    'ETCD_DATA_DIR=/var/lib/milvus/etcd',
+    '-e',
+    'ETCD_CONFIG_PATH=/milvus/configs/embedEtcd.yaml',
+    '-e',
+    'COMMON_STORAGETYPE=local',
+    '-e',
+    'DEPLOY_MODE=STANDALONE',
+    '-p',
+    `${hostPort}:19530`,
+    '-p',
+    `${healthPort}:9091`,
+    '-v',
+    `${volumeState.volumePath}:/var/lib/milvus`,
+    '-v',
+    `${embedEtcdPath}:/milvus/configs/embedEtcd.yaml`,
+    '-v',
+    `${userConfigPath}:/milvus/configs/user.yaml`,
+    '--health-cmd',
+    'curl -f http://localhost:9091/healthz',
+    '--health-interval',
+    '15s',
+    '--health-start-period',
+    '60s',
+    '--health-timeout',
+    '10s',
+    '--health-retries',
+    '3',
+    settings.milvusImage || DEFAULT_MILVUS_IMAGE,
+    'milvus',
+    'run',
+    'standalone'
+  ], 10 * 60 * 1000);
+}
+
 async function ensureManagedMilvus(settings) {
-  if (!settings.milvusEnabled || !settings.milvusManaged) return;
-  if (await isMilvusReady(settings)) return;
+  if (!settings.milvusEnabled || !settings.milvusManaged) return { ready: false, managed: false };
+  if (await isMilvusReady(settings, 1000)) {
+    updateManagedMilvusStatus({ phase: 'ready', ready: true, error: '' });
+    return { ready: true, managed: true, recoveryAttempts: 0 };
+  }
   if (managedMilvusPromise) return managedMilvusPromise;
   managedMilvusPromise = startManagedMilvus(settings)
+    .catch((error) => {
+      managedMilvusStartupError = conciseError(error);
+      updateManagedMilvusStatus({ phase: 'degraded', ready: false, error: managedMilvusStartupError });
+      throw error;
+    })
     .finally(() => {
       managedMilvusPromise = null;
     });
@@ -1963,73 +2394,129 @@ async function ensureManagedMilvus(settings) {
 }
 
 async function startManagedMilvus(settings) {
+  updateManagedMilvusStatus({ phase: 'docker-waiting', ready: false, error: '' });
   await ensureDockerDaemon();
   const hostPort = milvusHostPort(settings, 19530);
   const healthPort = hostPort === 9091 ? 9092 : 9091;
-  const volumePath = path.join(appDataDir(), 'managed-milvus');
-  fs.mkdirSync(volumePath, { recursive: true });
-  const { embedEtcdPath, userConfigPath } = ensureManagedMilvusConfigFiles(volumePath);
+  let volumeState = readManagedMilvusVolumeState(settings);
+  fs.mkdirSync(volumeState.volumePath, { recursive: true });
+  ensureManagedMilvusConfigFiles(volumeState.volumePath);
 
   let container = await inspectManagedMilvusContainer();
-  if (container.exists && !container.embeddedEtcd) {
-    if (container.running) await runDocker(['stop', MANAGED_MILVUS_CONTAINER], 120000);
-    await runDocker(['rm', MANAGED_MILVUS_CONTAINER], 120000);
-    container = { exists: false, running: false, embeddedEtcd: true };
+  if (container.exists && !managedMilvusContainerMatches(container, settings, volumeState, hostPort)) {
+    updateManagedMilvusStatus({
+      phase: 'container-replacing',
+      ready: false,
+      previousImage: container.image,
+      previousVolumePath: container.volumePath
+    });
+    await removeManagedMilvusContainer(container);
+    container = { exists: false, running: false, status: 'missing' };
   }
 
-  if (container.exists && !container.running) {
+  if (!container.exists) {
+    updateManagedMilvusStatus({ phase: 'container-creating', volumePath: volumeState.volumePath, image: settings.milvusImage });
+    await createManagedMilvusContainer(settings, volumeState, hostPort, healthPort);
+  } else if (!container.running) {
+    updateManagedMilvusStatus({ phase: 'container-starting', volumePath: volumeState.volumePath, image: settings.milvusImage });
     await runDocker(['start', MANAGED_MILVUS_CONTAINER], 120000);
-  } else if (!container.exists) {
-    await runDocker([
-      'run',
-      '-d',
-      '--name',
-      MANAGED_MILVUS_CONTAINER,
-      '--security-opt',
-      'seccomp:unconfined',
-      '-e',
-      'ETCD_USE_EMBED=true',
-      '-e',
-      'ETCD_DATA_DIR=/var/lib/milvus/etcd',
-      '-e',
-      'ETCD_CONFIG_PATH=/milvus/configs/embedEtcd.yaml',
-      '-e',
-      'COMMON_STORAGETYPE=local',
-      '-e',
-      'DEPLOY_MODE=STANDALONE',
-      '-p',
-      `${hostPort}:19530`,
-      '-p',
-      `${healthPort}:9091`,
-      '-v',
-      `${volumePath}:/var/lib/milvus`,
-      '-v',
-      `${embedEtcdPath}:/milvus/configs/embedEtcd.yaml`,
-      '-v',
-      `${userConfigPath}:/milvus/configs/user.yaml`,
-      '--health-cmd',
-      'curl -f http://localhost:9091/healthz',
-      '--health-interval',
-      '30s',
-      '--health-start-period',
-      '90s',
-      '--health-timeout',
-      '20s',
-      '--health-retries',
-      '3',
-      settings.milvusImage || DEFAULT_MILVUS_IMAGE,
-      'milvus',
-      'run',
-      'standalone'
-    ], 10 * 60 * 1000);
   }
 
   const startedAt = Date.now();
-  while (Date.now() - startedAt < 90000) {
-    if (await isMilvusReady(settings)) return;
-    await new Promise((resolve) => setTimeout(resolve, 1500));
+  let restartAttempts = 0;
+  let recoveryAttempts = 0;
+  let lastLogs = '';
+  while (Date.now() - startedAt < MILVUS_STARTUP_WAIT_MS) {
+    if (await isMilvusReady(settings, 2500)) {
+      managedMilvusStartupError = '';
+      updateManagedMilvusStatus({
+        phase: 'ready',
+        ready: true,
+        error: '',
+        attempts: restartAttempts,
+        recoveryAttempts,
+        volumePath: volumeState.volumePath,
+        image: settings.milvusImage
+      });
+      return { ready: true, managed: true, volumePath: volumeState.volumePath, recoveryAttempts };
+    }
+
+    container = await inspectManagedMilvusContainer();
+    if (!container.running) lastLogs = await managedMilvusLogTail();
+    const decision = decideManagedMilvusStartupAction({
+      ready: false,
+      container,
+      logs: lastLogs,
+      restartAttempts,
+      recoveryAttempts: recoveryAttempts > 0 || volumeState.recoveryGeneration >= 3 ? 1 : 0
+    });
+
+    if (decision.action === 'create') {
+      updateManagedMilvusStatus({
+        phase: 'container-recreating',
+        ready: false,
+        attempts: restartAttempts,
+        recoveryAttempts,
+        reason: decision.reason,
+        volumePath: volumeState.volumePath
+      });
+      await createManagedMilvusContainer(settings, volumeState, hostPort, healthPort);
+      await sleep(1000);
+      continue;
+    }
+    if (decision.action === 'wait') {
+      updateManagedMilvusStatus({
+        phase: container.restarting ? 'container-restarting' : 'milvus-probing',
+        ready: false,
+        container,
+        attempts: restartAttempts,
+        recoveryAttempts
+      });
+      await sleep(1500);
+      continue;
+    }
+    if (decision.action === 'restart') {
+      restartAttempts += 1;
+      updateManagedMilvusStatus({
+        phase: 'container-retrying',
+        ready: false,
+        container,
+        attempts: restartAttempts,
+        recoveryAttempts,
+        reason: decision.reason
+      });
+      await sleep(Math.min(6000, 750 * 2 ** (restartAttempts - 1)));
+      await runDocker(['start', MANAGED_MILVUS_CONTAINER], 120000);
+      continue;
+    }
+    if (decision.action === 'quarantine-index') {
+      recoveryAttempts += 1;
+      updateManagedMilvusStatus({
+        phase: 'index-recovering',
+        ready: false,
+        container,
+        attempts: restartAttempts,
+        recoveryAttempts,
+        reason: decision.reason,
+        preservedVolumePath: volumeState.volumePath,
+        logTail: asText(lastLogs, 2000)
+      });
+      await removeManagedMilvusContainer(container);
+      volumeState = createRecoveryVolumeState(settings, volumeState);
+      await createManagedMilvusContainer(settings, volumeState, hostPort, healthPort);
+      restartAttempts = 0;
+      continue;
+    }
+    throw new Error([
+      `Managed Milvus entered degraded mode (${decision.reason}).`,
+      `Container status=${container.status || 'unknown'} exitCode=${container.exitCode || 0} oomKilled=${Boolean(container.oomKilled)}.`,
+      lastLogs ? `Log tail: ${asText(lastLogs, 2000)}` : ''
+    ].filter(Boolean).join(' '));
   }
-  throw new Error('Managed Milvus container started but did not become ready.');
+  container = await inspectManagedMilvusContainer();
+  lastLogs = await managedMilvusLogTail();
+  throw new Error(`Managed Milvus did not become ready in ${Math.round(MILVUS_STARTUP_WAIT_MS / 1000)}s. ` +
+    `Container status=${container.status || 'unknown'} exitCode=${container.exitCode || 0}. ${asText(lastLogs, 2000)}`);
 }
 
 async function stopManagedMilvusContainer() {
@@ -2050,6 +2537,7 @@ async function stopManagedMilvusContainer() {
   if (!exists) return { enabled: true, stopped: false, exists: false };
   if (!running) return { enabled: true, stopped: false, exists: true, running: false };
   await runDocker(['stop', MANAGED_MILVUS_CONTAINER], 120000);
+  updateManagedMilvusStatus({ phase: 'stopped', ready: false, error: '' });
   return { enabled: true, stopped: true, exists: true, running: false };
 }
 
@@ -2068,16 +2556,49 @@ function managedMilvusSettings(input = {}) {
 
 async function handleManagedMilvusStart(input = {}) {
   const settings = managedMilvusSettings(input);
-  await ensureManagedMilvus(settings);
-  const collection = await ensureMilvusCollection(settings);
+  const startup = await ensureManagedMilvus(settings);
+  const db = openStore(settings);
+  let milvus;
+  try {
+    const notes = activeRows(db, false, MAX_MEMORY_ROWS);
+    milvus = await syncMilvus(settings, notes);
+  } finally {
+    db.close();
+  }
   managedMilvusStartupError = '';
+  updateManagedMilvusStatus({ phase: 'ready', ready: true, error: '', synced: milvus.synced || 0 });
   return {
     success: true,
     managed: true,
     url: settings.milvusUrl,
     image: settings.milvusImage,
-    collection
+    collection: { enabled: true, collection: settings.milvusCollection },
+    startup,
+    synced: milvus.synced || 0
   };
+}
+
+function scheduleManagedMilvusAutostart(attempt = 0) {
+  if (memoryServiceShuttingDown) return;
+  handleManagedMilvusStart({})
+    .catch((error) => {
+      managedMilvusStartupError = conciseError(error) || 'Managed Milvus failed to start.';
+      process.stderr.write(`Managed Milvus startup attempt ${attempt + 1} failed: ${managedMilvusStartupError}\n`);
+      if (attempt >= 3 || memoryServiceShuttingDown) return;
+      const delayMs = [10000, 30000, 60000][Math.min(attempt, 2)];
+      updateManagedMilvusStatus({
+        phase: 'retry-wait',
+        ready: false,
+        error: managedMilvusStartupError,
+        retryAttempt: attempt + 1,
+        nextRetryAt: new Date(Date.now() + delayMs).toISOString()
+      });
+      managedMilvusRetryTimer = setTimeout(() => {
+        managedMilvusRetryTimer = null;
+        scheduleManagedMilvusAutostart(attempt + 1);
+      }, delayMs);
+      managedMilvusRetryTimer.unref?.();
+    });
 }
 
 async function ensureMilvusCollection(settings) {
@@ -2142,6 +2663,10 @@ function readMilvusHits(payload) {
 async function searchMilvus(settings, queryVector, limit) {
   if (!settings.milvusEnabled || !queryVector?.length) return new Map();
   try {
+    if (settings.milvusManaged && !(await isMilvusReady(settings, 750))) {
+      ensureManagedMilvus(settings).catch(() => {});
+      return new Map();
+    }
     await ensureMilvusCollection(settings);
     const payload = await milvusRequest(settings, '/v2/vectordb/entities/search', {
       collectionName: settings.milvusCollection,
@@ -2286,11 +2811,19 @@ function markRecalled(db, target) {
 
 function relevantProfileRows(db, queryText, limit = 6, viewerIds = new Set()) {
   const queryKeywords = textKeywords(queryText);
-  return db.prepare("SELECT * FROM user_profile WHERE status IN ('active', 'candidate') ORDER BY confidence DESC, updated DESC LIMIT ?")
-    .all(80)
+  const ids = [...new Set(viewerIds || [])].map((id) => asText(id, 120)).filter(Boolean);
+  const viewerWhere = ids.length
+    ? `(viewer_id = '' OR viewer_id IN (${ids.map(() => '?').join(', ')}))`
+    : `viewer_id = ''`;
+  return db.prepare(`
+    SELECT * FROM user_profile
+    WHERE status IN ('active', 'candidate') AND ${viewerWhere}
+    ORDER BY CASE WHEN viewer_id != '' THEN 0 ELSE 1 END, confidence DESC, updated DESC
+    LIMIT ?
+  `)
+    .all(...ids, Math.max(80, limit * 4))
     .map(rowToProfile)
     .filter(Boolean)
-    .filter((profile) => !profile.viewerId || viewerIds.has(profile.viewerId))
     .map((profile) => {
       const haystack = `${profile.category} ${profile.name} ${profile.value}`.toLowerCase();
       const score = keywordOverlapScore(queryKeywords, textKeywords(haystack)) + Number(profile.confidence || 0) * 0.36;
@@ -2358,13 +2891,13 @@ async function buildRecollection(db, settings, input, legacyNotes, providedQuery
   const queryEmbedding = providedQueryEmbedding || await embeddingForDetailed(queryText, settings);
   const viewers = resolveViewerProfiles(db, input);
   const viewerIds = new Set(viewers.map((viewer) => viewer.id));
-  let cells = activeCells(db).filter((cell) => !cell.viewerId || viewerIds.has(cell.viewerId));
+  let cells = viewerScopedCells(db, viewerIds);
   if (!cells.length) {
-    const notes = activeRows(db, false, MAX_MEMORY_ROWS);
+    const notes = viewerScopedRows(db, viewerIds, false, MAX_MEMORY_ROWS);
     await ensureLifecycleForNotes(db, notes, settings);
-    cells = activeCells(db).filter((cell) => !cell.viewerId || viewerIds.has(cell.viewerId));
+    cells = viewerScopedCells(db, viewerIds);
   }
-  const scenes = activeScenes(db).filter((scene) => !scene.viewerId || viewerIds.has(scene.viewerId));
+  const scenes = viewerScopedScenes(db, viewerIds);
   const allowedCellIds = new Set(cells.map((cell) => cell.id));
   const queryKeywords = normalizeTags([...(query.keywords || []), ...textKeywords(queryText), ...(query.tags || [])]);
   const anchorScores = activeAnchors(db)
@@ -2441,27 +2974,38 @@ function looksUnsafeMemoryText(text) {
   return /api[_ -]?key|token|password|passwd|secret|bearer\s+[a-z0-9._-]+|sk-[a-z0-9]{16,}|身份证|证件号|真实地址|住址|电话|手机号/iu.test(text || '');
 }
 
-function rawTurnIdsForIdentity(db, sessionId, viewerId = '') {
-  return db.prepare(`
-    SELECT turn_id, MIN(created) AS first_created
-    FROM raw_messages
-    WHERE session_id = ? AND viewer_id = ?
-    GROUP BY turn_id
-    ORDER BY first_created, turn_id
-  `).all(sessionId, viewerId).map((row) => row.turn_id).filter(Boolean);
-}
-
 function rawRowsForSegment(db, sessionId, viewerId, segmentIndex) {
-  const turnIds = rawTurnIdsForIdentity(db, sessionId, viewerId)
-    .slice(segmentIndex * SESSION_ROLLUP_TURNS, (segmentIndex + 1) * SESSION_ROLLUP_TURNS);
-  if (!turnIds.length) return [];
-  const placeholders = turnIds.map(() => '?').join(', ');
   return db.prepare(`
     SELECT * FROM raw_messages
-    WHERE session_id = ? AND viewer_id = ? AND turn_id IN (${placeholders})
-    ORDER BY created, CASE role WHEN 'user' THEN 0 ELSE 1 END, id
+    WHERE session_id = ? AND viewer_id = ? AND segment_index = ?
+    ORDER BY ingest_sequence, CASE role WHEN 'user' THEN 0 ELSE 1 END, id
     LIMIT ?
-  `).all(sessionId, viewerId, ...turnIds, SESSION_ROLLUP_MAX_MESSAGES);
+  `).all(sessionId, viewerId, segmentIndex, SESSION_ROLLUP_MAX_MESSAGES);
+}
+
+function archivedRowsForSegment(db, sessionId, viewerId, segmentIndex) {
+  const row = db.prepare(`
+    SELECT transcript_gzip FROM memory_segments
+    WHERE session_id = ? AND viewer_id = ? AND segment_index = ?
+  `).get(sessionId, viewerId, segmentIndex);
+  if (!row?.transcript_gzip) return [];
+  try {
+    return gunzipSync(row.transcript_gzip).toString('utf8').split('\n').filter(Boolean).map((line) => {
+      const item = JSON.parse(line);
+      return {
+        id: asText(item.id, 160),
+        turn_id: asText(item.turnId, 120),
+        role: asText(item.role, 40),
+        content: asText(item.content, 2400),
+        source: asText(item.source, 60),
+        emotion: asText(item.emotion, 40),
+        created: asText(item.created, 80),
+        metadata_json: stableJson(item.metadata || {})
+      };
+    });
+  } catch (_) {
+    return [];
+  }
 }
 
 function compactRawMessage(row) {
@@ -2493,7 +3037,7 @@ function archiveTranscriptSegment(db, sessionId, viewerId, segmentIndex, rows) {
       id, session_id, viewer_id, segment_index, first_turn_id, last_turn_id,
       turn_count, message_count, transcript_gzip, content_hash, sealed, created, updated
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ON CONFLICT(id) DO UPDATE SET
+    ON CONFLICT(session_id, viewer_id, segment_index) DO UPDATE SET
       first_turn_id = excluded.first_turn_id,
       last_turn_id = excluded.last_turn_id,
       turn_count = excluded.turn_count,
@@ -2510,7 +3054,16 @@ function archiveTranscriptSegment(db, sessionId, viewerId, segmentIndex, rows) {
     db.prepare(`UPDATE raw_messages SET compacted_at = ? WHERE id IN (${placeholders})`)
       .run(now, ...rows.map((row) => row.id));
   }
-  return { id, sessionId, viewerId, segmentIndex, turnCount: turnIds.length, messageCount: rows.length, sealed };
+  return {
+    id,
+    sessionId,
+    viewerId,
+    segmentIndex,
+    turnCount: turnIds.length,
+    messageCount: rows.length,
+    contentHash: sha1(transcript),
+    sealed
+  };
 }
 
 function keyEventDetected(text) {
@@ -2522,15 +3075,31 @@ async function upsertSessionRollupFromRawTurn(db, settings, turn) {
   const sessionId = asText(turn.sessionId || turn.session_id || 'live2d-default', 120);
   if (!sessionId) return null;
   const viewerId = asText(turn.viewerId || turn.viewer_id, 120);
-  const allTurnIds = rawTurnIdsForIdentity(db, sessionId, viewerId);
   const segmentIndex = Number.isFinite(Number(turn.segmentIndex))
     ? Math.max(0, Math.floor(Number(turn.segmentIndex)))
-    : Math.max(0, Math.floor((allTurnIds.length - 1) / SESSION_ROLLUP_TURNS));
-  const rows = rawRowsForSegment(db, sessionId, viewerId, segmentIndex);
+    : Math.max(0, Number(db.prepare(`
+      SELECT MAX(segment_index) AS segment_index FROM raw_messages
+      WHERE session_id = ? AND viewer_id = ?
+    `).get(sessionId, viewerId)?.segment_index) || 0);
+  let rows = rawRowsForSegment(db, sessionId, viewerId, segmentIndex);
+  const hasRawRows = rows.length > 0;
+  if (!hasRawRows) rows = archivedRowsForSegment(db, sessionId, viewerId, segmentIndex);
   if (!rows.length) return null;
-  const segment = archiveTranscriptSegment(db, sessionId, viewerId, segmentIndex, rows);
+  const segment = hasRawRows
+    ? archiveTranscriptSegment(db, sessionId, viewerId, segmentIndex, rows)
+    : db.prepare(`
+      SELECT id, session_id AS sessionId, viewer_id AS viewerId, segment_index AS segmentIndex,
+        turn_count AS turnCount, message_count AS messageCount, content_hash AS contentHash, sealed
+      FROM memory_segments WHERE session_id = ? AND viewer_id = ? AND segment_index = ?
+    `).get(sessionId, viewerId, segmentIndex);
   const transcript = rows.map(compactRawMessage).join('\n');
-  if (!transcript || looksUnsafeMemoryText(transcript)) return null;
+  if (!transcript || looksUnsafeMemoryText(transcript)) {
+    db.prepare(`
+      UPDATE memory_segments SET rollup_error = ?, updated = ?
+      WHERE session_id = ? AND viewer_id = ? AND segment_index = ?
+    `).run('Transcript was empty or rejected by the memory safety filter.', new Date().toISOString(), sessionId, viewerId, segmentIndex);
+    return null;
+  }
   const day = asText((turn.at || turn.created || rows[rows.length - 1]?.created || new Date().toISOString()).slice(0, 10), 10);
   const turnIds = [...new Set(rows.map((row) => row.turn_id).filter(Boolean))].slice(-SESSION_ROLLUP_TURNS);
   const topics = textKeywords(transcript).slice(0, 10);
@@ -2587,7 +3156,52 @@ async function upsertSessionRollupFromRawTurn(db, settings, turn) {
     }] : [],
     sourceTurnIds: turnIds
   }, settings);
+  db.prepare(`
+    UPDATE memory_segments SET rollup_hash = content_hash, rollup_error = '', updated = ?
+    WHERE session_id = ? AND viewer_id = ? AND segment_index = ?
+  `).run(new Date().toISOString(), sessionId, viewerId, segmentIndex);
   return { ...lifecycle, segment };
+}
+
+function recordSegmentRollupError(db, sessionId, viewerId, segmentIndex, error) {
+  db.prepare(`
+    UPDATE memory_segments SET rollup_error = ?, updated = ?
+    WHERE session_id = ? AND viewer_id = ? AND segment_index = ?
+  `).run(asText(error?.message || error || 'Unknown rollup error', 1200), new Date().toISOString(),
+    sessionId, viewerId, segmentIndex);
+}
+
+async function repairPendingSegmentRollups(db, settings, options = {}) {
+  if (!settings.sessionRollupEnabled) return [];
+  const limit = Math.max(1, Math.min(8, Number(options.limit) || 1));
+  const minimumAgeMs = Math.max(0, Number(options.minimumAgeMs) || 0);
+  const cutoff = new Date(Date.now() - minimumAgeMs).toISOString();
+  const excluded = options.excluded instanceof Set ? options.excluded : new Set();
+  const candidates = db.prepare(`
+    SELECT session_id, viewer_id, segment_index
+    FROM memory_segments
+    WHERE sealed = 1
+      AND (rollup_hash != content_hash OR rollup_error != '')
+      AND updated <= ?
+    ORDER BY updated
+    LIMIT ?
+  `).all(cutoff, limit + excluded.size);
+  const repaired = [];
+  for (const segment of candidates) {
+    const key = `${segment.session_id}\u0000${segment.viewer_id}\u0000${segment.segment_index}`;
+    if (excluded.has(key) || repaired.length >= limit) continue;
+    try {
+      const rollup = await upsertSessionRollupFromRawTurn(db, settings, {
+        sessionId: segment.session_id,
+        viewerId: segment.viewer_id,
+        segmentIndex: segment.segment_index
+      });
+      if (rollup) repaired.push(rollup);
+    } catch (error) {
+      recordSegmentRollupError(db, segment.session_id, segment.viewer_id, segment.segment_index, error);
+    }
+  }
+  return repaired;
 }
 
 function ageDays(iso, now = new Date()) {
@@ -2758,12 +3372,10 @@ async function handleSearch(input) {
     }
     const viewers = resolveViewerProfiles(db, input);
     const viewerIds = new Set(viewers.map((viewer) => viewer.id));
-    let notes = activeRows(db, false, MAX_MEMORY_ROWS)
-      .filter((note) => !note.viewerId || viewerIds.has(note.viewerId));
+    let notes = viewerScopedRows(db, viewerIds, false, MAX_MEMORY_ROWS);
     if (!notes.length) {
       await ensureImportedSources(db, settings, { force: true });
-      notes = activeRows(db, false, MAX_MEMORY_ROWS)
-        .filter((note) => !note.viewerId || viewerIds.has(note.viewerId));
+      notes = viewerScopedRows(db, viewerIds, false, MAX_MEMORY_ROWS);
     }
     const query = input.query || {};
     const queryText = String(query.text || '').trim();
@@ -2876,7 +3488,12 @@ async function handleWrite(input) {
     upsertNote(db, note);
     let milvus = { enabled: false };
     try {
-      milvus = await syncMilvus(settings, [note]);
+      if (settings.milvusManaged && !(await isMilvusReady(settings, 750))) {
+        ensureManagedMilvus(settings).catch(() => {});
+        milvus = { enabled: true, synced: 0, deferred: true };
+      } else {
+        milvus = await syncMilvus(settings, [note]);
+      }
     } catch (error) {
       milvus = { enabled: true, synced: 0, error: error.message };
     }
@@ -2937,6 +3554,34 @@ async function handleDelete(input) {
   }
 }
 
+function rawTurnAssignment(db, sessionId, viewerId, turnId) {
+  const existing = db.prepare(`
+    SELECT ingest_sequence, segment_index FROM raw_messages
+    WHERE session_id = ? AND viewer_id = ? AND turn_id = ?
+    ORDER BY ingest_sequence LIMIT 1
+  `).get(sessionId, viewerId, turnId);
+  if (existing) {
+    return {
+      ingestSequence: Number(existing.ingest_sequence) || 0,
+      segmentIndex: Number(existing.segment_index) || 0
+    };
+  }
+  const now = new Date().toISOString();
+  db.prepare(`
+    INSERT OR IGNORE INTO memory_ingest_cursors (session_id, viewer_id, next_sequence, created, updated)
+    VALUES (?, ?, 0, ?, ?)
+  `).run(sessionId, viewerId, now, now);
+  const cursor = db.prepare(`
+    SELECT next_sequence FROM memory_ingest_cursors WHERE session_id = ? AND viewer_id = ?
+  `).get(sessionId, viewerId);
+  const ingestSequence = Math.max(0, Number(cursor?.next_sequence) || 0);
+  db.prepare(`
+    UPDATE memory_ingest_cursors SET next_sequence = ?, updated = ?
+    WHERE session_id = ? AND viewer_id = ?
+  `).run(ingestSequence + 1, now, sessionId, viewerId);
+  return { ingestSequence, segmentIndex: Math.floor(ingestSequence / SESSION_ROLLUP_TURNS) };
+}
+
 async function handleRecordTurn(input) {
   const settings = normalizeSettings(input);
   const db = openStore(settings);
@@ -2944,9 +3589,14 @@ async function handleRecordTurn(input) {
     const insert = db.prepare(`
       INSERT OR IGNORE INTO raw_messages (
         id, session_id, turn_id, role, content, source, emotion, created, metadata_json,
-        viewer_id
+        viewer_id, ingest_sequence, segment_index
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    const existingRole = db.prepare(`
+      SELECT id FROM raw_messages
+      WHERE session_id = ? AND viewer_id = ? AND turn_id = ? AND role = ?
+      LIMIT 1
     `);
     const turns = (Array.isArray(input.turns) ? input.turns : [input])
       .filter((turn) => turn && typeof turn === 'object')
@@ -2980,9 +3630,14 @@ async function handleRecordTurn(input) {
           { role: 'user', content: asText(turn.input || turn.message || '', 2400) },
           { role: 'assistant', content: asText(turn.reply || turn.response || '', 2400) }
         ].filter((row) => row.content);
+        const viewerId = viewer?.id || '';
+        const pendingRows = rows.filter((row) => !existingRole.get(sessionId, viewerId, turnId, row.role));
         const rawIds = [];
         let recorded = 0;
-        for (const row of rows) {
+        const assignment = pendingRows.length
+          ? rawTurnAssignment(db, sessionId, viewerId, turnId)
+          : null;
+        for (const row of pendingRows) {
           const id = `raw-${sha1(`${sessionId}:${turnId}:${row.role}:${row.content}`).slice(0, 24)}`;
           const result = insert.run(
             id,
@@ -2994,7 +3649,9 @@ async function handleRecordTurn(input) {
             emotion,
             now,
             stableJson(metadata),
-            viewer?.id || ''
+            viewerId,
+            assignment.ingestSequence,
+            assignment.segmentIndex
           );
           if (result.changes) {
             rawIds.push(id);
@@ -3002,46 +3659,52 @@ async function handleRecordTurn(input) {
           }
         }
         if (recorded > 0) {
-          const key = `${sessionId}\u0000${viewer?.id || ''}`;
-          affected.set(key, { sessionId, viewerId: viewer?.id || '', at: now });
+          const key = `${sessionId}\u0000${viewerId}\u0000${assignment.segmentIndex}`;
+          affected.set(key, { sessionId, viewerId, segmentIndex: assignment.segmentIndex, at: now });
           if (viewer && rows.some((row) => row.role === 'user')) {
             upsertViewerProfile(db, viewer, { ...turn, sessionId, turnId, at: now });
             viewerProfilesUpdated += 1;
           }
         }
-        persisted.push({ sessionId, turnId, rawIds, recorded, viewerId: viewer?.id || '' });
+        persisted.push({ sessionId, turnId, rawIds, recorded, viewerId });
       }
     })();
 
     const rollups = [];
     if (settings.sessionRollupEnabled) {
       for (const identity of affected.values()) {
-        const totalTurns = rawTurnIdsForIdentity(db, identity.sessionId, identity.viewerId).length;
-        const segmentCount = Math.ceil(totalTurns / SESSION_ROLLUP_TURNS);
-        const existingSegments = new Map(db.prepare(`
-          SELECT segment_index, turn_count, sealed
+        const segmentIndex = identity.segmentIndex;
+        const existing = db.prepare(`
+          SELECT segment_index, turn_count, content_hash, sealed, rollup_hash, rollup_error
           FROM memory_segments
-          WHERE session_id = ? AND viewer_id = ?
-        `).all(identity.sessionId, identity.viewerId).map((row) => [Number(row.segment_index), row]));
-        for (let segmentIndex = 0; segmentIndex < segmentCount; segmentIndex += 1) {
-          const rows = rawRowsForSegment(db, identity.sessionId, identity.viewerId, segmentIndex);
-          if (!rows.length) continue;
-          const turnCount = new Set(rows.map((row) => row.turn_id)).size;
-          const existing = existingSegments.get(segmentIndex);
-          const segment = archiveTranscriptSegment(db, identity.sessionId, identity.viewerId, segmentIndex, rows);
-          const shouldRefreshRollup = !existing || segment.sealed || turnCount % 4 === 0;
-          if (!shouldRefreshRollup) continue;
-          try {
-            const rollup = await upsertSessionRollupFromRawTurn(db, settings, {
-              ...identity,
-              segmentIndex
-            });
-            if (rollup) rollups.push(rollup);
-          } catch (_) {
-            // Raw rows and their compressed segment are already durable; consolidation can retry later.
-          }
+          WHERE session_id = ? AND viewer_id = ? AND segment_index = ?
+        `).get(identity.sessionId, identity.viewerId, segmentIndex);
+        const rows = rawRowsForSegment(db, identity.sessionId, identity.viewerId, segmentIndex);
+        if (!rows.length) continue;
+        const turnCount = new Set(rows.map((row) => row.turn_id)).size;
+        const segment = archiveTranscriptSegment(db, identity.sessionId, identity.viewerId, segmentIndex, rows);
+        const contentChanged = Boolean(existing) && existing.content_hash !== segment.contentHash;
+        const sealedContentChanged = Boolean(existing?.sealed) && contentChanged;
+        const becameSealed = Boolean(segment.sealed) && !Boolean(existing?.sealed);
+        const currentOpenCheckpoint = !segment.sealed && turnCount % 4 === 0;
+        const rollupPending = Boolean(existing) && existing.rollup_hash !== segment.contentHash;
+        const shouldRefreshRollup = !existing || sealedContentChanged || becameSealed || currentOpenCheckpoint ||
+          (segment.sealed && rollupPending);
+        if (!shouldRefreshRollup) continue;
+        try {
+          const rollup = await upsertSessionRollupFromRawTurn(db, settings, identity);
+          if (rollup) rollups.push(rollup);
+        } catch (error) {
+          recordSegmentRollupError(db, identity.sessionId, identity.viewerId, segmentIndex, error);
+          // Raw rows and their compressed segment are already durable; consolidation can retry later.
         }
       }
+      const repaired = await repairPendingSegmentRollups(db, settings, {
+        limit: 1,
+        minimumAgeMs: 60_000,
+        excluded: new Set(affected.keys())
+      });
+      rollups.push(...repaired);
     }
     const first = persisted[0] || { sessionId: '', turnId: '', rawIds: [], recorded: 0 };
     const maintenance = maybeRunAutomaticMaintenance(db, settings);
@@ -3074,8 +3737,11 @@ async function handleConsolidate(input) {
       notes = activeRows(db, false, MAX_MEMORY_ROWS);
     }
     const lifecycle = await ensureLifecycleForNotes(db, notes, settings);
-    const pendingSegments = db.prepare('SELECT session_id, viewer_id, segment_index FROM memory_segments WHERE sealed = 0 ORDER BY updated')
-      .all();
+    const pendingSegments = db.prepare(`
+      SELECT session_id, viewer_id, segment_index FROM memory_segments
+      WHERE sealed = 0 OR rollup_hash != content_hash OR rollup_error != ''
+      ORDER BY updated
+    `).all();
     let rollupsRefreshed = 0;
     for (const segment of pendingSegments) {
       try {
@@ -3085,7 +3751,8 @@ async function handleConsolidate(input) {
           segmentIndex: segment.segment_index
         });
         if (rollup) rollupsRefreshed += 1;
-      } catch (_) {
+      } catch (error) {
+        recordSegmentRollupError(db, segment.session_id, segment.viewer_id, segment.segment_index, error);
         // The compressed source segment remains available for the next maintenance pass.
       }
     }
@@ -3121,13 +3788,13 @@ async function handleProfile(input) {
         .all(maxItems)
         .map(rowToViewerProfile)
         .filter(Boolean);
-    const profile = db.prepare("SELECT * FROM user_profile WHERE status IN ('candidate', 'active') ORDER BY category, confidence DESC, updated DESC LIMIT ?")
-      .all(maxItems)
-      .map(rowToProfile)
-      .filter(Boolean)
-      .filter((item) => !hasViewerFilter || !item.viewerId || requestedViewerIds.has(item.viewerId));
-    const scenes = activeScenes(db)
-      .filter((scene) => !hasViewerFilter || !scene.viewerId || requestedViewerIds.has(scene.viewerId))
+    const profile = hasViewerFilter
+      ? relevantProfileRows(db, '', maxItems, requestedViewerIds)
+      : db.prepare("SELECT * FROM user_profile WHERE status IN ('candidate', 'active') ORDER BY category, confidence DESC, updated DESC LIMIT ?")
+        .all(maxItems)
+        .map(rowToProfile)
+        .filter(Boolean);
+    const scenes = (hasViewerFilter ? viewerScopedScenes(db, requestedViewerIds, maxItems) : activeScenes(db))
       .slice(0, maxItems)
       .map((scene) => scenePublic(scene));
     const anchors = activeAnchors(db, maxItems)
@@ -3213,9 +3880,14 @@ async function handleGc(input) {
 }
 
 async function handleShutdown(input) {
+  memoryServiceShuttingDown = true;
+  if (managedMilvusRetryTimer) {
+    clearTimeout(managedMilvusRetryTimer);
+    managedMilvusRetryTimer = null;
+  }
   let milvus = { enabled: true, stopped: false };
   try {
-    const shouldStopMilvus = asBoolean(input.stopMilvus ?? true);
+    const shouldStopMilvus = asBoolean(input.stopMilvus ?? false);
     if (shouldStopMilvus) milvus = await stopManagedMilvusContainer();
   } catch (error) {
     milvus = { enabled: true, stopped: false, error: error.message };
@@ -3260,9 +3932,14 @@ const server = http.createServer(async (req, res) => {
         success: true,
         service: 'yachiyo-memory-data',
         repoRoot,
+        sqliteReady: sqliteRuntimeHealth.ready,
+        sqliteError: sqliteRuntimeHealth.error,
+        sqliteIntegrity: sqliteRuntimeHealth.integrity,
+        databasePath: sqliteRuntimeHealth.databasePath,
         managedMilvus: {
           autostart: asBoolean(process.env.YACHIYO_MEMORY_AUTOSTART_MANAGED_MILVUS),
-          error: managedMilvusStartupError
+          error: managedMilvusStartupError,
+          ...managedMilvusStatus
         }
       });
       return;
@@ -3284,11 +3961,10 @@ const server = http.createServer(async (req, res) => {
 
 server.listen(port, '127.0.0.1', () => {
   process.stdout.write(`Yachiyo memory data service listening on http://127.0.0.1:${port}\n`);
-  if (asBoolean(process.env.YACHIYO_MEMORY_AUTOSTART_MANAGED_MILVUS)) {
-    handleManagedMilvusStart({})
-      .catch((error) => {
-        managedMilvusStartupError = error.message || 'Managed Milvus failed to start.';
-        process.stderr.write(`Managed Milvus startup failed: ${managedMilvusStartupError}\n`);
-      });
+  if (asBoolean(process.env.YACHIYO_MEMORY_AUTOSTART_MANAGED_MILVUS) && sqliteRuntimeHealth.ready) {
+    scheduleManagedMilvusAutostart();
+  } else if (!sqliteRuntimeHealth.ready) {
+    managedMilvusStartupError = `SQLite runtime is unavailable: ${sqliteRuntimeHealth.error}`;
+    updateManagedMilvusStatus({ phase: 'degraded', ready: false, error: managedMilvusStartupError });
   }
 });
