@@ -3,8 +3,9 @@ import { cleanLive2DReply } from './live2dText';
 
 const DEFAULT_GPT_SOVITS_GPT_WEIGHT = 'GPT_weights_v2ProPlus/yachiyo-v2pro-e15.ckpt';
 const DEFAULT_GPT_SOVITS_SOVITS_WEIGHT = 'SoVITS_weights_v2ProPlus/yachiyo-v2pro_e8_s456.pth';
+const FORCED_TTS_LANGUAGE = 'ja';
 const MAX_TTS_PREFETCH = 4;
-const LLM_TRANSLATION_TIMEOUT_MS = 6000;
+const LLM_TRANSLATION_TIMEOUT_MS = 4000;
 const TTS_FETCH_TIMEOUT_MS = 90000;
 const AUDIO_STALL_TIMEOUT_MS = 12000;
 const AUDIO_PLAYBACK_GRACE_MS = 18000;
@@ -229,10 +230,12 @@ async function translateForJapaneseTts(text, options = {}) {
   const source = cleanTtsText(text);
   const declaredLanguage = normalizeGptSovitsLang(options.sourceLang || '', 'auto');
   const sourceLanguage = declaredLanguage === 'auto' ? detectTextLang(source) : declaredLanguage;
-  const fallback = { text: source, textLang: sourceLanguage === 'auto' ? detectTextLang(source) : sourceLanguage };
-  if (!source || sourceLanguage === 'ja') return fallback;
+  if (!source) return null;
+  if (sourceLanguage === FORCED_TTS_LANGUAGE) {
+    return { text: source, textLang: FORCED_TTS_LANGUAGE };
+  }
   const settings = readRoomLLMSettings();
-  if (!settings.apiKey || !settings.apiUrl) return fallback;
+  if (!settings.apiKey || !settings.apiUrl) return null;
 
   const systemPrompt = japaneseTtsTranslatorPrompt(options);
   try {
@@ -283,11 +286,11 @@ async function translateForJapaneseTts(text, options = {}) {
       if (!response.ok) throw new Error(`日文翻译失败：LLM ${response.status}`);
       translated = cleanTtsText(pickReply(await response.json()));
     }
-    if (!translated) return fallback;
-    return { text: translated, textLang: detectTextLang(translated) };
+    if (!translated) return null;
+    return { text: translated, textLang: FORCED_TTS_LANGUAGE };
   } catch (_) {
-    // Translation is an optional voice-style adaptation. The original language remains speakable.
-    return fallback;
+    // Never pass non-Japanese fallback text into the Japanese character voice.
+    return null;
   }
 }
 
@@ -357,12 +360,11 @@ async function ensureGptSovitsWeights(settings) {
 function buildGptSovitsAudioUrl(text, settings) {
   const url = normalizeLocalGptSovitsUrl(settings.apiUrl || defaultTtsUrl(settings.provider));
   const speechText = String(text || '').trim() || 'OK.';
-  const configuredLang = normalizeGptSovitsLang(settings.textLang || settings.model, 'auto');
   url.searchParams.set('text', speechText);
-  url.searchParams.set('text_lang', configuredLang === 'auto' ? detectTextLang(speechText) : configuredLang);
+  url.searchParams.set('text_lang', FORCED_TTS_LANGUAGE);
   url.searchParams.set('ref_audio_path', settings.refAudioPath || settings.voice || '');
   url.searchParams.set('prompt_text', settings.promptText || '');
-  url.searchParams.set('prompt_lang', normalizeGptSovitsLang(settings.promptLang, 'ja'));
+  url.searchParams.set('prompt_lang', FORCED_TTS_LANGUAGE);
   url.searchParams.set('text_split_method', pickSplitMethod(speechText));
   url.searchParams.set('batch_size', '1');
   url.searchParams.set('media_type', 'wav');
@@ -675,16 +677,16 @@ export function createLive2DSpeechPlayer({ onState } = {}) {
   }
 
   async function makeAudio(text, settings, options = {}) {
+    const translatedLine = await translateForJapaneseTts(text, options);
+    const ttsText = translatedLine?.text || '';
+    if (!ttsText) return null;
     const directLocalGptSovits = isDirectLocalGptSovits(settings);
     if (directLocalGptSovits) {
-      const translatedLine = await translateForJapaneseTts(text, options);
-      const ttsText = translatedLine.text;
-      if (!ttsText) return null;
       await ensureGptSovitsWeights(settings);
       const audio = createFastAudioFromUrl(buildGptSovitsAudioUrl(ttsText, {
         ...settings,
-        textLang: translatedLine.textLang,
-        promptLang: settings.promptLang || 'ja'
+        textLang: FORCED_TTS_LANGUAGE,
+        promptLang: FORCED_TTS_LANGUAGE
       }), ttsText);
       audio.dataset.speechText = ttsText;
       return audio;
@@ -695,8 +697,9 @@ export function createLive2DSpeechPlayer({ onState } = {}) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         ...settings,
-        text,
-        textLang: settings.textLang || 'auto',
+        text: ttsText,
+        textLang: FORCED_TTS_LANGUAGE,
+        promptLang: FORCED_TTS_LANGUAGE,
         emotion: normalizeTtsEmotion(options.emotion),
         speechStyle: options.speechStyle || null
       })

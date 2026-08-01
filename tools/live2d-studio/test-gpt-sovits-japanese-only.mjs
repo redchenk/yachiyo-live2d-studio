@@ -2,14 +2,16 @@ import assert from 'node:assert/strict';
 import { createServer } from 'vite';
 
 const chineseSource = '\u8fd9\u662f\u4e00\u53e5\u4e2d\u6587\u53f0\u8bcd\u3002';
+const secondChineseSource = '\u8fd9\u662f\u53e6\u4e00\u53e5\u4e2d\u6587\u53f0\u8bcd\u3002';
 const japaneseSource = '\u516b\u5343\u4ee3\u3001\u767b\u573a\u3002';
+const japaneseTranslation = '\u516b\u5343\u4ee3\u304c\u7b54\u3048\u308b\u3088\u3002';
 const store = new Map([
   ['roomTTSSettings', JSON.stringify({
     enabled: true,
     provider: 'gpt-sovits',
     apiUrl: 'http://localhost:9880/tts',
-    textLang: 'auto',
-    promptLang: 'ja',
+    textLang: 'zh',
+    promptLang: 'zh',
     useProxy: false
   })],
   ['roomLLMSettings', JSON.stringify({
@@ -21,7 +23,9 @@ const store = new Map([
   })]
 ]);
 const audios = [];
+const playbackEvents = [];
 let translationCalls = 0;
+let translationReply = japaneseTranslation;
 
 globalThis.localStorage = {
   getItem(key) {
@@ -53,7 +57,7 @@ globalThis.window = {
 globalThis.fetch = async (url) => {
   assert.equal(String(url), '/api/chat');
   translationCalls += 1;
-  return new Response(JSON.stringify({ success: true, data: { reply: '' } }), {
+  return new Response(JSON.stringify({ success: true, data: { reply: translationReply } }), {
     status: 200,
     headers: { 'Content-Type': 'application/json' }
   });
@@ -76,9 +80,11 @@ globalThis.Audio = class MockAudio {
   }
   load() {}
   play() {
+    playbackEvents.push('play-requested');
     this.paused = false;
     this.onplay?.();
     queueMicrotask(() => {
+      playbackEvents.push('audio-playing');
       this.onplaying?.();
       queueMicrotask(() => {
         this.currentTime = this.duration;
@@ -105,11 +111,30 @@ try {
   const { createLive2DSpeechPlayer } = await server.ssrLoadModule('/src/frontend/services/room/live2dSpeech.js');
   player = createLive2DSpeechPlayer();
 
-  await player.enqueue(chineseSource, { queueGroup: 'live-reply', priority: 100 });
-  assert.equal(translationCalls, 1, 'empty translation must not trigger a latency-adding retry');
+  await player.enqueue(chineseSource, {
+    queueGroup: 'live-reply',
+    priority: 100,
+    onStart: () => playbackEvents.push('caption-start')
+  });
+  assert.equal(translationCalls, 1, 'a non-Japanese line should use one bounded translation request');
   let audioUrl = new URL(audios.at(-1).src);
-  assert.equal(audioUrl.searchParams.get('text'), chineseSource);
-  assert.equal(audioUrl.searchParams.get('text_lang'), 'zh');
+  assert.equal(audioUrl.searchParams.get('text'), japaneseTranslation);
+  assert.equal(audioUrl.searchParams.get('text_lang'), 'ja');
+  assert.equal(audioUrl.searchParams.get('prompt_lang'), 'ja');
+  assert.ok(
+    playbackEvents.indexOf('caption-start') > playbackEvents.indexOf('audio-playing'),
+    'captions must start from the real audio-playing event'
+  );
+
+  translationReply = '';
+  const callsBeforeEmpty = translationCalls;
+  const audioCountBeforeEmpty = audios.length;
+  await assert.rejects(
+    player.enqueue(secondChineseSource, { queueGroup: 'live-reply', priority: 100 }),
+    (error) => error?.name === 'AbortError'
+  );
+  assert.equal(translationCalls, callsBeforeEmpty + 1, 'empty translation must not trigger a latency-adding retry');
+  assert.equal(audios.length, audioCountBeforeEmpty, 'non-Japanese fallback text must never reach GPT-SoVITS');
 
   const callsBeforeJapanese = translationCalls;
   await player.enqueue(japaneseSource, {
@@ -122,7 +147,7 @@ try {
   assert.equal(audioUrl.searchParams.get('text'), japaneseSource);
   assert.equal(audioUrl.searchParams.get('text_lang'), 'ja');
 
-  console.log('GPT-SoVITS translation fallback checks passed');
+  console.log('GPT-SoVITS Japanese-only realtime checks passed');
 } finally {
   player?.destroy();
   await server.close();

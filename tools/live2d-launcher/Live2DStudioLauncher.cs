@@ -5332,11 +5332,7 @@ internal static class DesktopApiProxy
         TryLoadGptSovitsWeight(parsed, "/set_gpt_weights", GetString(input, "gptWeightPath"));
         TryLoadGptSovitsWeight(parsed, "/set_sovits_weights", GetString(input, "sovitsWeightPath"));
 
-        var textLang = NormalizeGptSovitsLang(GetString(input, "textLang"), "auto");
-        if (textLang == "auto")
-        {
-            textLang = DetectTextLang(text);
-        }
+        const string textLang = "ja";
 
         var query = new Dictionary<string, string>
         {
@@ -5344,7 +5340,7 @@ internal static class DesktopApiProxy
             { "text_lang", textLang },
             { "ref_audio_path", GetString(input, "refAudioPath") },
             { "prompt_text", GetString(input, "promptText") },
-            { "prompt_lang", NormalizeGptSovitsLang(GetString(input, "promptLang"), "ja") },
+            { "prompt_lang", "ja" },
             { "text_split_method", text.Length <= 4 ? "cut0" : "cut5" },
             { "batch_size", "1" },
             { "media_type", "wav" },

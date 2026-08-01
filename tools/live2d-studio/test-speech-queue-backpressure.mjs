@@ -108,6 +108,7 @@ try {
   player = createLive2DSpeechPlayer();
 
   const firstAudience = player.enqueue('第一条弹幕', {
+    sourceLang: 'ja',
     queueGroup: 'bilibili-read',
     priority: 10,
     maxQueuedInGroup: 1,
@@ -116,18 +117,21 @@ try {
   await waitFor(() => started.length === 1, 'first audience speech');
 
   const staleAudience = player.enqueue('很快就过时的第二条弹幕', {
+    sourceLang: 'ja',
     queueGroup: 'bilibili-read',
     priority: 10,
     maxQueuedInGroup: 1,
     onStart: () => started.push('audience-2')
   }).catch((error) => error.name);
   const latestAudience = player.enqueue('最新的第三条弹幕', {
+    sourceLang: 'ja',
     queueGroup: 'bilibili-read',
     priority: 10,
     maxQueuedInGroup: 1,
     onStart: () => started.push('audience-3')
   }).catch((error) => error.name);
   const liveReply = player.enqueue('八千代的当前回复', {
+    sourceLang: 'ja',
     queueGroup: 'live-reply',
     priority: 100,
     onStart: () => started.push('reply')
@@ -152,6 +156,7 @@ try {
 
   let expiredStarted = false;
   const expiredResult = await player.enqueue('已经过期的弹幕', {
+    sourceLang: 'ja',
     queueGroup: 'bilibili-read',
     priority: 10,
     expiresAt: Date.now() - 1,
@@ -169,6 +174,7 @@ try {
   let gatedSpeechStarted = false;
   const audioCountBeforeGate = audios.length;
   const gatedSpeech = player.enqueue('Japanese TTS source', {
+    sourceLang: 'ja',
     queueGroup: 'live-reply',
     priority: 100,
     startGate: captionGate,
@@ -195,6 +201,7 @@ try {
   let cancelledGateStarted = false;
   const audioCountBeforeCancelledGate = audios.length;
   const cancelledGateSpeech = player.enqueue('Cancelled gated TTS source', {
+    sourceLang: 'ja',
     queueGroup: 'live-reply',
     priority: 100,
     startGate: new Promise(() => {}),
@@ -218,6 +225,7 @@ try {
   let firstReplyCaptionToken = 0;
   let secondReplyCaptionToken = 0;
   const firstReply = player.enqueue('第一轮流式回复', {
+    sourceLang: 'ja',
     queueGroup: 'live-reply',
     priority: 100,
     onStart: () => {
@@ -227,6 +235,7 @@ try {
   }).finally(() => captionSynchronizer.finish(firstReplyCaptionToken));
   await waitFor(() => pipelinedStarts.length === 1, 'first pipelined reply');
   const secondReply = player.enqueue('第二轮流式回复', {
+    sourceLang: 'ja',
     queueGroup: 'live-reply',
     priority: 100,
     interTurnPauseMs: 30,
