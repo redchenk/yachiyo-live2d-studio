@@ -1972,6 +1972,11 @@ internal static class DesktopApiProxy
             var bitrate = (int)Math.Round(GetDouble(input, "neteaseBitrate", DefaultNeteaseMusicBitrate, 96000, 999000));
             var headers = NeteaseMusicHeaders(input);
             var detail = ResolveNeteaseMusicUrl(apiUrl, songId, level, bitrate, GetBoolean(input, "neteaseUnblock", false), GetString(input, "neteaseUnblockSource"), headers);
+            var expectedDurationMs = GetInt(candidate, "durationMs");
+            if (IsNeteaseMusicTrialDetail(detail) || IsNeteaseMusicTruncatedDetail(detail, expectedDurationMs))
+            {
+                return JsonError(403, "NetEase Cloud Music returned a preview instead of the full track. Refresh the NetEase account login and confirm that this account can play the song in full.");
+            }
             var directUrl = GetString(detail, "url");
             if (string.IsNullOrWhiteSpace(directUrl))
             {
@@ -1990,7 +1995,7 @@ internal static class DesktopApiProxy
                 { "artist", FirstNonEmpty(GetString(candidate, "artist"), GetString(candidate, "artistName"), string.Empty) },
                 { "album", FirstNonEmpty(GetString(candidate, "album"), GetString(candidate, "albumName"), string.Empty) },
                 { "artworkUrl", GetString(candidate, "artworkUrl") },
-                { "durationMs", GetInt(candidate, "durationMs") },
+                { "durationMs", expectedDurationMs },
                 { "quality", FirstNonEmpty(GetString(detail, "resolvedLevel"), level, DefaultNeteaseMusicQualityLevel) },
                 { "bitrate", GetInt(detail, "br") },
                 { "expiresInMs", NeteaseMusicStreamTicketTtlSeconds * 1000 }
@@ -2614,6 +2619,63 @@ internal static class DesktopApiProxy
         return NeteaseMusicAudioHeaders(ReadNeteaseCookie(input));
     }
 
+    private static bool IsNeteaseCookieAttribute(string name)
+    {
+        switch ((name ?? string.Empty).Trim().ToLowerInvariant())
+        {
+            case "domain":
+            case "expires":
+            case "httponly":
+            case "max-age":
+            case "partitioned":
+            case "path":
+            case "priority":
+            case "samesite":
+            case "secure":
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    private static string NormalizeNeteaseCookie(string cookie)
+    {
+        var raw = (cookie ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(raw) || raw.Length > 128 * 1024) return string.Empty;
+
+        var names = new List<string>();
+        var values = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var segment in raw.Split(';'))
+        {
+            var part = (segment ?? string.Empty).Trim();
+            var separator = part.IndexOf('=');
+            if (separator <= 0) continue;
+            var name = part.Substring(0, separator).Trim();
+            var value = part.Substring(separator + 1).Trim();
+            if (string.IsNullOrWhiteSpace(name) || IsNeteaseCookieAttribute(name) ||
+                !RegexContains(name, @"^[A-Za-z0-9_][A-Za-z0-9_.-]*$"))
+            {
+                continue;
+            }
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                values.Remove(name);
+                names.RemoveAll(item => string.Equals(item, name, StringComparison.OrdinalIgnoreCase));
+                continue;
+            }
+            if (!values.ContainsKey(name)) names.Add(name);
+            values[name] = value;
+        }
+
+        var normalized = new List<string>();
+        foreach (var name in names)
+        {
+            string value;
+            if (values.TryGetValue(name, out value)) normalized.Add(name + "=" + value);
+        }
+        return string.Join("; ", normalized.ToArray());
+    }
+
     private static string ReadNeteaseCookie(Dictionary<string, object> input)
     {
         var storedCookie = ReadStoredNeteaseCookie();
@@ -2623,7 +2685,7 @@ internal static class DesktopApiProxy
     private static string ReadManualNeteaseCookie(Dictionary<string, object> input)
     {
         var inlineCookie = GetString(input, "neteaseCookie");
-        if (!string.IsNullOrWhiteSpace(inlineCookie)) return inlineCookie;
+        if (!string.IsNullOrWhiteSpace(inlineCookie)) return NormalizeNeteaseCookie(inlineCookie);
 
         var cookiePath = GetString(input, "neteaseCookiePath");
         if (string.IsNullOrWhiteSpace(cookiePath)) return string.Empty;
@@ -2633,7 +2695,7 @@ internal static class DesktopApiProxy
             if (!File.Exists(fullPath)) return string.Empty;
             var info = new FileInfo(fullPath);
             if (info.Length > 128 * 1024) throw new InvalidOperationException("NetEase Cookie file is too large.");
-            return File.ReadAllText(fullPath, Encoding.UTF8).Trim();
+            return NormalizeNeteaseCookie(File.ReadAllText(fullPath, Encoding.UTF8));
         }
         catch (InvalidOperationException)
         {
@@ -2674,7 +2736,7 @@ internal static class DesktopApiProxy
             if (encrypted.Length == 0 || encrypted.Length > 256 * 1024) return string.Empty;
             var entropy = Encoding.UTF8.GetBytes(NeteaseMusicAccountEntropy);
             var plain = ProtectedData.Unprotect(encrypted, entropy, DataProtectionScope.CurrentUser);
-            var cookie = Encoding.UTF8.GetString(plain ?? new byte[0]).Trim();
+            var cookie = NormalizeNeteaseCookie(Encoding.UTF8.GetString(plain ?? new byte[0]));
             return IsValidNeteaseLoginCookie(cookie) ? cookie : string.Empty;
         }
         catch
@@ -2685,7 +2747,8 @@ internal static class DesktopApiProxy
 
     private static void SaveStoredNeteaseCookie(string cookie)
     {
-        if (!IsValidNeteaseLoginCookie(cookie))
+        var normalizedCookie = NormalizeNeteaseCookie(cookie);
+        if (!IsValidNeteaseLoginCookie(normalizedCookie))
         {
             throw new InvalidOperationException("NetEase login Cookie is invalid.");
         }
@@ -2693,7 +2756,7 @@ internal static class DesktopApiProxy
         var directory = Path.GetDirectoryName(path);
         if (!Directory.Exists(directory)) Directory.CreateDirectory(directory);
         var entropy = Encoding.UTF8.GetBytes(NeteaseMusicAccountEntropy);
-        var plain = Encoding.UTF8.GetBytes(cookie.Trim());
+        var plain = Encoding.UTF8.GetBytes(normalizedCookie);
         var encrypted = ProtectedData.Protect(plain, entropy, DataProtectionScope.CurrentUser);
         File.WriteAllBytes(path, encrypted);
     }
@@ -2706,9 +2769,10 @@ internal static class DesktopApiProxy
 
     private static bool IsValidNeteaseLoginCookie(string cookie)
     {
-        return !string.IsNullOrWhiteSpace(cookie) &&
-            cookie.Length <= 128 * 1024 &&
-            RegexContains(cookie, @"(^|;\s*)MUSIC_U=[^;]+");
+        var normalizedCookie = NormalizeNeteaseCookie(cookie);
+        return !string.IsNullOrWhiteSpace(normalizedCookie) &&
+            normalizedCookie.Length <= 128 * 1024 &&
+            RegexContains(normalizedCookie, @"(^|;\s*)MUSIC_U=[^;]+");
     }
 
     private static Dictionary<string, object> FetchNeteaseMusicAccount(string cookie)
@@ -2752,9 +2816,10 @@ internal static class DesktopApiProxy
             { "User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124 Safari/537.36" },
             { "Referer", "https://music.163.com/" }
         };
-        if (!string.IsNullOrWhiteSpace(cookie))
+        var normalizedCookie = NormalizeNeteaseCookie(cookie);
+        if (!string.IsNullOrWhiteSpace(normalizedCookie))
         {
-            headers["Cookie"] = cookie.Trim();
+            headers["Cookie"] = normalizedCookie;
         }
         return headers;
     }
@@ -2818,6 +2883,7 @@ internal static class DesktopApiProxy
         Dictionary<string, string> headers)
     {
         Exception lastError = null;
+        Dictionary<string, object> previewDetail = null;
         foreach (var fallbackLevel in NeteaseMusicQualityFallbacks(level))
         {
             try
@@ -2838,7 +2904,12 @@ internal static class DesktopApiProxy
                     NeteaseMusicResolveRequestTimeoutMs));
                 if (!string.IsNullOrWhiteSpace(GetString(detail, "url")))
                 {
-                    detail["resolvedLevel"] = fallbackLevel;
+                    detail["resolvedLevel"] = FirstNonEmpty(GetString(detail, "level"), fallbackLevel);
+                    if (IsNeteaseMusicTrialDetail(detail))
+                    {
+                        previewDetail = detail;
+                        continue;
+                    }
                     return detail;
                 }
             }
@@ -2867,8 +2938,9 @@ internal static class DesktopApiProxy
             if (!string.IsNullOrWhiteSpace(GetString(legacy, "url")))
             {
                 legacy["resolvedLevel"] = "legacy";
+                if (IsNeteaseMusicTrialDetail(legacy)) return previewDetail ?? legacy;
             }
-            return legacy;
+            return !string.IsNullOrWhiteSpace(GetString(legacy, "url")) ? legacy : (previewDetail ?? legacy);
         }
         catch
         {
@@ -2917,6 +2989,28 @@ internal static class DesktopApiProxy
         return new Dictionary<string, object>();
     }
 
+    private static bool IsNeteaseMusicTrialDetail(Dictionary<string, object> detail)
+    {
+        if (detail == null) return false;
+        object rawTrial;
+        if (detail.TryGetValue("freeTrialInfo", out rawTrial) && rawTrial != null &&
+            !string.Equals(Convert.ToString(rawTrial), "null", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+        return GetInt(detail, "fee") > 0 && GetInt(detail, "payed") <= 0;
+    }
+
+    private static bool IsNeteaseMusicTruncatedDetail(Dictionary<string, object> detail, int expectedDurationMs)
+    {
+        if (detail == null || expectedDurationMs < 60000) return false;
+        var size = GetInt(detail, "size");
+        var bitrate = GetInt(detail, "br");
+        if (size <= 0 || bitrate <= 0) return false;
+        var estimatedDurationMs = (double)size * 8d * 1000d / bitrate;
+        return estimatedDurationMs < expectedDurationMs * 0.72d;
+    }
+
     private static void ValidateHttpMediaUrl(string url)
     {
         Uri parsed;
@@ -2937,7 +3031,7 @@ internal static class DesktopApiProxy
             NeteaseMusicStreamTickets[token] = new NeteaseMusicStreamTicket
             {
                 Url = directUrl,
-                Cookie = cookie ?? string.Empty,
+                Cookie = NormalizeNeteaseCookie(cookie),
                 ExpiresAt = now.AddSeconds(NeteaseMusicStreamTicketTtlSeconds)
             };
         }

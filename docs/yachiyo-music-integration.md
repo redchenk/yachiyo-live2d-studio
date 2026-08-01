@@ -24,7 +24,10 @@ The QR flow uses the API package's `/login/qr/key`, `/login/qr/create`, and
 DPAPI for the current Windows user and stored under
 `%LOCALAPPDATA%\YachiyoLive2DStudio\music\netease-account.dat`. It is never
 returned to Vue, the LLM, or browser automation. Legacy Cookie text/file
-settings remain readable for migration but QR login takes precedence.
+settings remain readable for migration but QR login takes precedence. QR
+responses are normalized to standard `name=value; name=value` request Cookie
+syntax before storage and use, so Set-Cookie attributes such as `Expires`,
+`Path`, and `Max-Age` cannot hide `MUSIC_U` from the managed API.
 
 ## Search and playback
 
@@ -37,6 +40,11 @@ upstream-style quality cascade, for example:
 exhigh -> higher -> standard -> legacy bitrate endpoint
 lossless -> exhigh -> higher -> standard -> legacy bitrate endpoint
 ```
+
+Preview-only URL responses are not considered playable full tracks. The EXE
+rejects explicit `freeTrialInfo` results and also compares the returned media
+size/bitrate with the catalog duration, preventing a 20-second VIP preview from
+being mistaken for a normally completed song.
 
 The EXE owns its API sidecar on a dynamically selected loopback port. The
 configured `http://127.0.0.1:3302` is now only a logical managed-service
