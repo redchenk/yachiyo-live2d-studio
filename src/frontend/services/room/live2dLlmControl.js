@@ -37,6 +37,7 @@ const FIRST_SOFT_CHUNK_UNIT_LIMIT = 12;
 const FOLLOWUP_SOFT_CHUNK_UNIT_LIMIT = 30;
 const FIRST_MAX_CHUNK_UNIT_LIMIT = 16;
 const FOLLOWUP_MAX_CHUNK_UNIT_LIMIT = 42;
+const CAPTION_TRANSLATION_TIMEOUT_MS = 6000;
 const SEMANTIC_EMOTION_ID_LIST = [
   ...semanticExpressionIds().filter((id) => id !== 'bsmile'),
   'happy',
@@ -205,6 +206,42 @@ function readStreamingSpeechProgress(text) {
   return pieces.join('\n').trim();
 }
 
+function readStreamingVoiceLinesProgress(text, options = {}) {
+  const value = String(text || '').replace(/<think>[\s\S]*?<\/think>/gi, '');
+  const controlIndex = value.search(/(?:^|\n)\s*(?:CONTROL|JSON|LIVE2D_CONTROL)\s*[:\uFF1A]/i);
+  const beforeControl = controlIndex >= 0 ? value.slice(0, controlIndex) : value;
+  const lines = beforeControl.split(/\r?\n/);
+  const voices = [];
+  let hasProtocol = false;
+  lines.forEach((line, index) => {
+    const match = line.match(/^\s*(?:SAY|SPEECH|VOICE|LINE)\s*[:\uFF1A]\s*(.*)$/i);
+    if (!match) return;
+    hasProtocol = true;
+    const complete = index < lines.length - 1 || controlIndex >= 0 || Boolean(options.flush);
+    if (!complete) return;
+    const voice = cleanReplyForSpeech(match[1]);
+    if (voice) voices.push(voice);
+  });
+  return { voices, hasProtocol };
+}
+
+function readStreamingCaptionProgress(text, options = {}) {
+  const value = String(text || '').replace(/<think>[\s\S]*?<\/think>/gi, '');
+  const controlIndex = value.search(/(?:^|\n)\s*(?:CONTROL|JSON|LIVE2D_CONTROL)\s*[:\uFF1A]/i);
+  const beforeControl = controlIndex >= 0 ? value.slice(0, controlIndex) : value;
+  const lines = beforeControl.split(/\r?\n/);
+  const captions = [];
+  lines.forEach((line, index) => {
+    const match = line.match(/^\s*(?:CAPTION|SUBTITLE|ZH_CAPTION)\s*[:\uFF1A]\s*(.*)$/i);
+    if (!match) return;
+    const complete = index < lines.length - 1 || controlIndex >= 0 || Boolean(options.flush);
+    if (!complete) return;
+    const caption = cleanReplyForSpeech(match[1]);
+    captions.push(caption);
+  });
+  return captions;
+}
+
 function parseStreamingBeatLine(line) {
   const match = String(line || '').match(/^\s*(?:BEAT|EMOTION_BEAT|ACTION_BEAT)\s*[:：]\s*(.*)$/i);
   if (!match) return null;
@@ -367,10 +404,44 @@ function createReplySentenceEmitter(handlers = {}) {
   let sentenceBuffer = '';
   let pendingShortSentence = '';
   let seenBeatCount = 0;
+  let seenVoiceLineCount = 0;
+  let seenCaptionCount = 0;
   const pendingBeats = [];
+  const captionValues = [];
+  const captionSlots = [];
   let emittedCount = 0;
 
-  const dispatchSentence = (text) => {
+  const createCaptionSlot = (index) => {
+    let settled = false;
+    let resolveCaption = null;
+    const promise = new Promise((resolve) => {
+      resolveCaption = resolve;
+    });
+    const slot = {
+      promise,
+      resolve(value = '') {
+        if (settled) return;
+        settled = true;
+        resolveCaption(cleanReplyForSpeech(value));
+      }
+    };
+    captionSlots[index] = slot;
+    if (captionValues[index]) slot.resolve(captionValues[index]);
+    return slot;
+  };
+
+  const captureCaptions = (rawText, options = {}) => {
+    const captions = readStreamingCaptionProgress(rawText, options);
+    if (captions.length <= seenCaptionCount) return;
+    captions.slice(seenCaptionCount).forEach((caption, offset) => {
+      const index = seenCaptionCount + offset;
+      captionValues[index] = caption;
+      captionSlots[index]?.resolve(caption);
+    });
+    seenCaptionCount = captions.length;
+  };
+
+  const dispatchSentence = (text, options = {}) => {
     const sentence = cleanReplyForSpeech(text);
     if (!sentence || speakableUnitLength(sentence) < 2) return;
     const analysis = analyzeLive2DSentenceEmotion(sentence);
@@ -382,10 +453,14 @@ function createReplySentenceEmitter(handlers = {}) {
       ? buildBeatLive2DIntent(sentence, beat, analysis.emotion, analysis.speechStyle)
       : buildSentenceLive2DIntent(sentence, analysis.emotion, analysis.speechStyle);
     const emotion = live2d?.emotion || live2d?.expression || analysis.emotion;
+    const captionSlot = createCaptionSlot(emittedCount);
     emittedCount += 1;
     handlers.onSentence?.({
       index: emittedCount,
       text: sentence,
+      caption: captionValues[emittedCount - 1] || '',
+      captionReady: captionSlot.promise,
+      sourceLang: options.sourceLang || '',
       emotion,
       speechStyle: live2d?.speechStyle || speechStyle,
       live2d,
@@ -434,17 +509,33 @@ function createReplySentenceEmitter(handlers = {}) {
         pendingBeats.push(...beats.slice(seenBeatCount));
         seenBeatCount = beats.length;
       }
+      captureCaptions(rawText, options);
+      const voiceProgress = readStreamingVoiceLinesProgress(rawText, options);
+      if (voiceProgress.hasProtocol) {
+        voiceProgress.voices.slice(seenVoiceLineCount).forEach((voice) => {
+          dispatchSentence(voice, { sourceLang: 'ja' });
+        });
+        seenVoiceLineCount = voiceProgress.voices.length;
+        if (options.flush) captionSlots.forEach((slot, index) => slot.resolve(captionValues[index] || ''));
+        return;
+      }
       const streamingSpeech = readStreamingSpeechProgress(rawText);
       if (streamingSpeech) {
         pushReply(streamingSpeech, { flush: options.flush });
+        if (options.flush) captionSlots.forEach((slot, index) => slot.resolve(captionValues[index] || ''));
         return;
       }
       const field = readReplyFieldProgress(rawText);
       if (!field.found) return;
       pushReply(field.value, { flush: options.flush || field.complete });
+      if (options.flush || field.complete) {
+        captionSlots.forEach((slot, index) => slot.resolve(captionValues[index] || ''));
+      }
     },
-    flushReply(reply) {
+    flushReply(reply, caption = '') {
+      if (caption) captionValues[0] = cleanReplyForSpeech(caption);
       pushReply(reply, { flush: true });
+      captionSlots.forEach((slot, index) => slot.resolve(captionValues[index] || ''));
     },
     get emittedCount() {
       return emittedCount;
@@ -782,6 +873,7 @@ export function parseLive2DControlPayload(rawText) {
     const rawReply = data.reply || data.text || data.message || '';
     const stageText = extractLive2DStageDirections(`${rawReply}\n${rawText}`);
     const reply = cleanReplyForSpeech(rawReply);
+    const caption = cleanReplyForSpeech(data.caption || data.subtitle || data.caption_zh || data.captionZh || '');
     const behaviorLive2D = compileBehaviorIntent(data);
     const explicitLive2D = mergeBehaviorAndExplicitIntent(
       behaviorLive2D,
@@ -791,6 +883,7 @@ export function parseLive2DControlPayload(rawText) {
     const live2d = mergeInferredLive2DIntent(explicitLive2D, inferredLive2D);
     return {
       reply: reply || 'OK.',
+      caption,
       live2d,
       music: normalizeMusicFromPayload(data),
       acknowledgedIndexes: normalizeAcknowledgedIndexes(data),
@@ -801,10 +894,12 @@ export function parseLive2DControlPayload(rawText) {
     const stageText = extractLive2DStageDirections(rawText);
     const streamingSpeech = readStreamingSpeechProgress(rawText);
     const reply = cleanReplyForSpeech(streamingSpeech || rawText) || 'OK.';
+    const caption = readStreamingCaptionProgress(rawText, { flush: true }).join('');
     const behaviorLive2D = compileBehaviorIntent({ reply, text: [stageText, reply].filter(Boolean).join('\n') });
     const inferredLive2D = inferLive2DIntentFromText([stageText, reply].filter(Boolean).join('\n'));
     return {
       reply,
+      caption,
       live2d: mergeBehaviorAndExplicitIntent(behaviorLive2D, inferredLive2D),
       music: null,
       acknowledgedIndexes: [],
@@ -855,19 +950,55 @@ function chineseCaptionTranslatorPrompt() {
   ].join('\n');
 }
 
-export async function translateLive2DReplyToChinese(text) {
+async function fetchCaptionTranslation(resource, options = {}, timeoutMs = CAPTION_TRANSLATION_TIMEOUT_MS) {
+  if (typeof AbortController !== 'function') return fetch(resource, options);
+  const controller = new AbortController();
+  const externalSignal = options.signal;
+  let timedOut = false;
+  const abortFromExternal = () => controller.abort(externalSignal?.reason);
+  if (externalSignal?.aborted) abortFromExternal();
+  else externalSignal?.addEventListener?.('abort', abortFromExternal, { once: true });
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, Math.max(1, Number(timeoutMs) || CAPTION_TRANSLATION_TIMEOUT_MS));
+
+  try {
+    return await fetch(resource, { ...options, signal: controller.signal });
+  } catch (error) {
+    if (timedOut) {
+      const timeoutError = new Error('Chinese caption translation timed out.');
+      timeoutError.name = 'TimeoutError';
+      throw timeoutError;
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
+    externalSignal?.removeEventListener?.('abort', abortFromExternal);
+  }
+}
+
+function normalizeChineseCaptionTranslation(source, translated) {
+  const caption = cleanReplyForSpeech(translated);
+  if (!caption) return '';
+  if (detectCaptionLang(caption) === 'ja' && caption === source) return '';
+  return caption;
+}
+
+export async function translateLive2DReplyToChinese(text, options = {}) {
   const source = cleanReplyForSpeech(text);
   if (!source) return '';
   if (detectCaptionLang(source) === 'zh') return source;
   const cacheKey = source.slice(0, 240);
-  if (chineseCaptionTranslationCache.has(cacheKey)) return chineseCaptionTranslationCache.get(cacheKey);
+  const useCache = !options.signal && options.timeoutMs == null;
+  if (useCache && chineseCaptionTranslationCache.has(cacheKey)) return chineseCaptionTranslationCache.get(cacheKey);
 
   const settings = readRoomLLMSettings();
   if (!settings.apiKey || !settings.apiUrl) return '';
   const systemPrompt = chineseCaptionTranslatorPrompt();
   const promise = (async () => {
     if (settings.useProxy) {
-      const response = await fetch('/api/chat', {
+      const response = await fetchCaptionTranslation('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -877,17 +1008,17 @@ export async function translateLive2DReplyToChinese(text) {
           apiUrl: settings.apiUrl,
           model: settings.model,
           systemPrompt
-        })
-      });
+        }),
+        signal: options.signal
+      }, options.timeoutMs);
       const result = await response.json().catch(() => ({}));
       if (!response.ok || !result.success) throw new Error(result.message || `Caption translate LLM ${response.status}`);
-      const translated = cleanReplyForSpeech(result.data?.reply || '');
-      return detectCaptionLang(translated) === 'ja' ? '' : translated;
+      return normalizeChineseCaptionTranslation(source, result.data?.reply || '');
     }
 
     const model = settings.model || 'gpt-4o-mini';
     const apiUrl = normalizeOpenAIUrl(settings.apiUrl, model, settings.provider);
-    const response = await fetch(apiUrl, {
+    const response = await fetchCaptionTranslation(apiUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -909,16 +1040,16 @@ export async function translateLive2DReplyToChinese(text) {
             ],
             temperature: isKimiChatTarget(apiUrl, model) ? 1 : 0.2,
             max_tokens: 120
-          })
-    });
+          }),
+      signal: options.signal
+    }, options.timeoutMs);
     if (!response.ok) throw new Error(`Caption translate LLM ${response.status}`);
-    const translated = cleanReplyForSpeech(pickReply(await response.json()));
-    return detectCaptionLang(translated) === 'ja' ? '' : translated;
+    return normalizeChineseCaptionTranslation(source, pickReply(await response.json()));
   })().catch((error) => {
-    chineseCaptionTranslationCache.delete(cacheKey);
+    if (useCache) chineseCaptionTranslationCache.delete(cacheKey);
     throw error;
   });
-  chineseCaptionTranslationCache.set(cacheKey, promise);
+  if (useCache) chineseCaptionTranslationCache.set(cacheKey, promise);
   return promise;
 }
 
@@ -989,7 +1120,7 @@ function throwIfLive2DRequestAborted(signal) {
 function finishLive2DControlRequest(message, history, rawReply, sentenceEmitter = null, memoryContext = {}) {
   const parsed = parseLive2DControlPayload(rawReply);
   if (sentenceEmitter && sentenceEmitter.emittedCount < 1) {
-    sentenceEmitter.flushReply(parsed.reply);
+    sentenceEmitter.flushReply(parsed.reply, parsed.caption);
   }
   if (parsed.memoryWrites?.length) {
     writePendingLive2DMemories(parsed.memoryWrites, memoryContext).catch(() => {});
@@ -1042,22 +1173,26 @@ export function live2DControlSystemPrompt() {
 export function live2DStreamingControlSystemPrompt() {
   return [
     'You are controlling a Live2D character named Yachiyo.',
-    'This is a low-latency streaming turn. Output one compact semantic BEAT before each Japanese spoken VOICE line, then output final CONTROL JSON at the end.',
+    'This is a low-latency bilingual streaming turn. Output one compact semantic BEAT, then the Japanese spoken VOICE immediately, followed by its matching Simplified Chinese CAPTION. Output final CONTROL JSON at the end.',
     'Output format must be exactly:',
     'BEAT: {"emotion":"happy","intensity":0.68,"actions":[{"type":"look_at_chat","duration":0.9},{"type":"smile","duration":1.2}],"speech_style":{"speed":1.06,"pitch":0.06,"pause":"bright"}}',
     'VOICE: first short Japanese phrase, 8-14 kana/characters if possible, such as うん、聞いてるよ、 or えへへ、いいね、.',
+    'CAPTION: the matching natural Simplified Chinese caption, such as 嗯，我在听哦。',
     'BEAT: {"emotion":"smug","intensity":0.72,"actions":[{"type":"smirk","duration":1.1},{"type":"lean_in","duration":1.0,"delay":0.08}],"speech_style":{"speed":1.04,"pitch":0.05,"pause":"teasing"}}',
     'For TTS stability, do not use tiny fragments; the first VOICE should include at least one short phrase, not only a filler.',
     'VOICE: next natural Japanese clause or short sentence, normally about 18-32 Japanese characters.',
+    'CAPTION: the matching natural Simplified Chinese clause, normally about 12-28 Chinese characters.',
     'VOICE: combine tiny comma clauses instead of making every comma its own TTS chunk; prefer one stable phrase over many tiny fragments.',
-    `CONTROL: {"reply":"same Japanese spoken text without VOICE labels","acknowledgedIndexes":[],"emotion":"${SEMANTIC_EMOTION_ID_LIST}","intensity":0.72,"actions":[{"type":"look_at_chat","duration":1.2},{"type":"smirk","duration":2.0}],"interruptPolicy":{"mode":"blend","priority":4},"speech_style":{"speed":1.05,"pitch":0.08,"pause":"playful"},"music":null,"memory_writes":[]}`,
-    'Each BEAT must be a single-line JSON object and must appear immediately before the VOICE it controls.',
+    `CONTROL: {"reply":"all Japanese VOICE text without labels","caption":"all matching Simplified Chinese CAPTION text without labels","acknowledgedIndexes":[],"emotion":"${SEMANTIC_EMOTION_ID_LIST}","intensity":0.72,"actions":[{"type":"look_at_chat","duration":1.2},{"type":"smirk","duration":2.0}],"interruptPolicy":{"mode":"blend","priority":4},"speech_style":{"speed":1.05,"pitch":0.08,"pause":"playful"},"music":null,"memory_writes":[]}`,
+    'Each BEAT must be a single-line JSON object and must appear immediately before the VOICE it controls. Its CAPTION must be the next line after that VOICE.',
     'BEAT contains only semantic fields: emotion, intensity, actions, and speech_style. Keep it short so the first VOICE can start quickly.',
-    'The VOICE lines must come before CONTROL. Emit the first BEAT and VOICE before planning the full answer. Do not wait for CONTROL before speaking.',
+    'Emit the first BEAT and Japanese VOICE before generating its CAPTION, so GPT-SoVITS preparation starts without waiting for Chinese caption tokens. Do not wait for CONTROL before speaking.',
     'Avoid standalone ultra-short VOICE lines like only うん、 あっ、 えへへ、. Attach a few spoken words so each chunk is stable for TTS.',
     'Keep the first VOICE line low-latency; after that, prioritize smooth GPT-SoVITS quality and natural sentence rhythm.',
-    'VOICE lines must contain only natural Japanese dialogue. Never put BEAT JSON, stage directions, parenthesized action hints, asterisk actions, action labels, pose descriptions, or JSON in VOICE.',
-    'CONTROL must be one JSON object after the CONTROL label. The reply field must exactly match the spoken VOICE text.',
+    'VOICE lines must contain only natural Japanese dialogue so GPT-SoVITS can synthesize them directly without an extra translation request.',
+    'CAPTION lines must contain only matching natural Simplified Chinese dialogue. Keep viewer names consistent between CAPTION and VOICE.',
+    'Never put BEAT JSON, stage directions, parenthesized action hints, asterisk actions, action labels, pose descriptions, or JSON in CAPTION or VOICE.',
+    'CONTROL must be one JSON object after the CONTROL label. Its reply must exactly match all spoken VOICE text, and its caption must exactly match all CAPTION text.',
     'Choose 2-5 semantic actions across the turn that match the spoken meaning and mood. Per-BEAT actions may be 1-3 concise semantic actions.',
     'Use only semantic emotion ids and semantic actions. Do not output raw Live2D parameters, VTube Studio parameter ids, expression file names, live2d.parameters, parameterTargets, or pose descriptions.',
     `Good action combos: ${behaviorActionComboPrompt()}.`,

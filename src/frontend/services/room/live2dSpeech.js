@@ -4,7 +4,7 @@ import { cleanLive2DReply } from './live2dText';
 const DEFAULT_GPT_SOVITS_GPT_WEIGHT = 'GPT_weights_v2ProPlus/yachiyo-v2pro-e15.ckpt';
 const DEFAULT_GPT_SOVITS_SOVITS_WEIGHT = 'SoVITS_weights_v2ProPlus/yachiyo-v2pro_e8_s456.pth';
 const MAX_TTS_PREFETCH = 4;
-const LLM_TRANSLATION_TIMEOUT_MS = 45000;
+const LLM_TRANSLATION_TIMEOUT_MS = 6000;
 const TTS_FETCH_TIMEOUT_MS = 90000;
 const AUDIO_STALL_TIMEOUT_MS = 12000;
 const AUDIO_PLAYBACK_GRACE_MS = 18000;
@@ -227,60 +227,68 @@ function japaneseTtsTranslatorPrompt(options = {}) {
 
 async function translateForJapaneseTts(text, options = {}) {
   const source = cleanTtsText(text);
-  if (!source) return '';
-  if (detectTextLang(source) === 'ja') return source;
+  const declaredLanguage = normalizeGptSovitsLang(options.sourceLang || '', 'auto');
+  const sourceLanguage = declaredLanguage === 'auto' ? detectTextLang(source) : declaredLanguage;
+  const fallback = { text: source, textLang: sourceLanguage === 'auto' ? detectTextLang(source) : sourceLanguage };
+  if (!source || sourceLanguage === 'ja') return fallback;
   const settings = readRoomLLMSettings();
-  if (!settings.apiKey || !settings.apiUrl) {
-    throw new Error('请先在 Studio Settings 里配置 LLM，用于把 GPT-SoVITS 文本翻译成日文后再播放。');
-  }
+  if (!settings.apiKey || !settings.apiUrl) return fallback;
 
   const systemPrompt = japaneseTtsTranslatorPrompt(options);
-  if (settings.useProxy) {
-    const response = await fetchWithTimeout('/api/chat', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        message: source,
-        conversation: [],
-        apiKey: settings.apiKey,
-        apiUrl: settings.apiUrl,
-        model: settings.model,
-        systemPrompt
-      })
-    }, LLM_TRANSLATION_TIMEOUT_MS, 'Japanese TTS translation');
-    const result = await response.json().catch(() => ({}));
-    if (!response.ok || !result.success) throw new Error(result.message || `日文翻译失败：LLM ${response.status}`);
-    return cleanTtsText(result.data?.reply || '');
-  }
-
-  const model = settings.model || 'gpt-4o-mini';
-  const apiUrl = normalizeOpenAIUrl(settings.apiUrl, model, settings.provider);
-  const response = await fetchWithTimeout(apiUrl, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${settings.apiKey}`,
-      ...openRouterHeaders(apiUrl)
-    },
-    body: JSON.stringify(isOpenAIResponsesApi(apiUrl)
-      ? {
-          model: settings.model || 'gpt-5.5',
-          instructions: systemPrompt,
-          input: source,
-          max_output_tokens: 240
-        }
-      : {
-          model,
-          messages: [
-            { role: 'system', content: systemPrompt },
-            { role: 'user', content: source }
-          ],
-          temperature: isKimiChatTarget(apiUrl, model) ? 1 : 0.2,
-          max_tokens: 240
+  try {
+    let translated = '';
+    if (settings.useProxy) {
+      const response = await fetchWithTimeout('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          message: source,
+          conversation: [],
+          apiKey: settings.apiKey,
+          apiUrl: settings.apiUrl,
+          model: settings.model,
+          systemPrompt
         })
-  }, LLM_TRANSLATION_TIMEOUT_MS, 'Japanese TTS translation');
-  if (!response.ok) throw new Error(`日文翻译失败：LLM ${response.status}`);
-  return cleanTtsText(pickReply(await response.json()));
+      }, LLM_TRANSLATION_TIMEOUT_MS, 'Japanese TTS translation');
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok || !result.success) throw new Error(result.message || `日文翻译失败：LLM ${response.status}`);
+      translated = cleanTtsText(result.data?.reply || '');
+    } else {
+      const model = settings.model || 'gpt-4o-mini';
+      const apiUrl = normalizeOpenAIUrl(settings.apiUrl, model, settings.provider);
+      const response = await fetchWithTimeout(apiUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${settings.apiKey}`,
+          ...openRouterHeaders(apiUrl)
+        },
+        body: JSON.stringify(isOpenAIResponsesApi(apiUrl)
+          ? {
+              model: settings.model || 'gpt-5.5',
+              instructions: systemPrompt,
+              input: source,
+              max_output_tokens: 240
+            }
+          : {
+              model,
+              messages: [
+                { role: 'system', content: systemPrompt },
+                { role: 'user', content: source }
+              ],
+              temperature: isKimiChatTarget(apiUrl, model) ? 1 : 0.2,
+              max_tokens: 240
+            })
+      }, LLM_TRANSLATION_TIMEOUT_MS, 'Japanese TTS translation');
+      if (!response.ok) throw new Error(`日文翻译失败：LLM ${response.status}`);
+      translated = cleanTtsText(pickReply(await response.json()));
+    }
+    if (!translated) return fallback;
+    return { text: translated, textLang: detectTextLang(translated) };
+  } catch (_) {
+    // Translation is an optional voice-style adaptation. The original language remains speakable.
+    return fallback;
+  }
 }
 
 function pickSplitMethod(text) {
@@ -669,12 +677,13 @@ export function createLive2DSpeechPlayer({ onState } = {}) {
   async function makeAudio(text, settings, options = {}) {
     const directLocalGptSovits = isDirectLocalGptSovits(settings);
     if (directLocalGptSovits) {
-      const ttsText = await translateForJapaneseTts(text, options);
-      if (!ttsText) throw new Error('日文翻译结果为空，已取消语音播放。');
+      const translatedLine = await translateForJapaneseTts(text, options);
+      const ttsText = translatedLine.text;
+      if (!ttsText) return null;
       await ensureGptSovitsWeights(settings);
       const audio = createFastAudioFromUrl(buildGptSovitsAudioUrl(ttsText, {
         ...settings,
-        textLang: 'ja',
+        textLang: translatedLine.textLang,
         promptLang: settings.promptLang || 'ja'
       }), ttsText);
       audio.dataset.speechText = ttsText;

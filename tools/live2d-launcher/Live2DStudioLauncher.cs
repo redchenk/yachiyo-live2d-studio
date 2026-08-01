@@ -410,8 +410,32 @@ internal sealed class LocalStudioServer : IDisposable
 
             if (client != null)
             {
-                ThreadPool.QueueUserWorkItem(_ => HandleClient(client));
+                ThreadPool.QueueUserWorkItem(_ => HandleClientSafely(client));
             }
+        }
+    }
+
+    private void HandleClientSafely(TcpClient client)
+    {
+        try
+        {
+            HandleClient(client);
+        }
+        catch (IOException)
+        {
+            // Browsers routinely cancel navigation, SSE, and media requests while the server is writing.
+        }
+        catch (SocketException)
+        {
+            // A reset connection is isolated to this client and must never terminate the desktop app.
+        }
+        catch (ObjectDisposedException)
+        {
+            // Expected when the app closes while a request is still in flight.
+        }
+        catch (Exception ex)
+        {
+            Trace.TraceError("Local Studio request failed: " + ex);
         }
     }
 

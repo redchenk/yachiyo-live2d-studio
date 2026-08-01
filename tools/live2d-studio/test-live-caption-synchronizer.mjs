@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 import {
   createLive2DPreparedCaption,
   createLive2DCaptionSynchronizer,
-  createLive2DOrderedCaptionTranscript
+  createLive2DOrderedCaptionTranscript,
+  resolveFirstLive2DChineseCaption
 } from '../../src/frontend/services/room/live2dCaptionSynchronizer.js';
 
 function deferred() {
@@ -80,9 +81,41 @@ const unavailableCaption = createLive2DPreparedCaption(Promise.reject(new Error(
 });
 assert.equal(
   await unavailableCaption.ready,
-  '\u4e2d\u6587\u5b57\u5e55\u6682\u4e0d\u53ef\u7528',
-  'translation failures must use a Chinese-only caption instead of the Japanese speech source'
+  '',
+  'translation failures must stay visually silent instead of exposing an internal status message'
 );
+
+const pairedCaption = deferred();
+const legacyCaption = deferred();
+const firstUsableCaption = resolveFirstLive2DChineseCaption([
+  pairedCaption.promise,
+  legacyCaption.promise
+], { timeoutMs: 100 });
+legacyCaption.resolve('');
+pairedCaption.resolve('\u76f4\u64ad\u6d41\u4e2d\u6587\u5b57\u5e55');
+assert.equal(
+  await firstUsableCaption,
+  '\u76f4\u64ad\u6d41\u4e2d\u6587\u5b57\u5e55',
+  'an empty fallback must not beat a valid caption from the main stream'
+);
+
+const fastCaptionStartedAt = Date.now();
+assert.equal(
+  await resolveFirstLive2DChineseCaption([
+    Promise.resolve('\u4e0d\u7b49\u540e\u5907\u7528\u7ffb\u8bd1'),
+    new Promise(() => {})
+  ], { timeoutMs: 1000 }),
+  '\u4e0d\u7b49\u540e\u5907\u7528\u7ffb\u8bd1'
+);
+assert.ok(Date.now() - fastCaptionStartedAt < 100, 'the main-stream caption must not wait for backup translation');
+
+const captionTimeoutStartedAt = Date.now();
+assert.equal(
+  await resolveFirstLive2DChineseCaption([new Promise(() => {})], { timeoutMs: 20 }),
+  '',
+  'a stuck caption source must release playback without showing a placeholder'
+);
+assert.ok(Date.now() - captionTimeoutStartedAt < 150, 'caption release must use a bounded deadline');
 
 assert.deepEqual(changes, ['旧句', '当前句', '当前句中文', '']);
 console.log('live caption synchronizer checks passed');
