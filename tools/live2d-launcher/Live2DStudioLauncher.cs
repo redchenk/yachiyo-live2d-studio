@@ -282,9 +282,8 @@ internal sealed class StudioWindow : Form
 
         Text = "Yachiyo Live2D Studio";
         StartPosition = FormStartPosition.CenterScreen;
-        Width = 1360;
-        Height = 860;
-        MinimumSize = new Size(960, 640);
+        ClientSize = new Size(1280, 720);
+        MinimumSize = SizeFromClientSize(new Size(960, 540));
         BackColor = Color.FromArgb(8, 10, 18);
 
         var iconPath = Path.Combine(repoRoot, "favicon.ico");
