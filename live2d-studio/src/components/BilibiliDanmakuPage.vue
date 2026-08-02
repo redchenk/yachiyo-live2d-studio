@@ -224,8 +224,8 @@ onUnmounted(() => {
             <span>首条弹幕自动开播</span>
           </label>
           <label class="studio-check-row">
-            <input v-model="settings.readAloud" type="checkbox">
-            <span>直接朗读弹幕</span>
+            <input v-model="settings.readAloud" type="checkbox" :disabled="settings.autoForward">
+            <span>直接朗读弹幕（关闭 AI 回复时生效）</span>
           </label>
           <label class="studio-check-row">
             <input v-model="settings.readUserName" type="checkbox">

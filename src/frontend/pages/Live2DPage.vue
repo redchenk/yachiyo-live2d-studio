@@ -59,16 +59,18 @@ import {
   createLive2DBilibiliGiftAcknowledgementGate
 } from '../services/room/live2dBilibiliGiftAcknowledgementGate';
 import {
+  createLive2DCaptionPlaybackGate,
   createLive2DCaptionSynchronizer,
   createLive2DOrderedCaptionTranscript,
   createLive2DPreparedCaption,
-  resolveFirstLive2DChineseCaption
+  resolveLive2DChineseCaptionWithFallback
 } from '../services/room/live2dCaptionSynchronizer';
 import {
   createLive2DDirectorScheduler,
   resolveLive2DDirectorReplyDelay
 } from '../services/room/live2dDirectorScheduler';
 import { createLive2DTurnPipeline } from '../services/room/live2dTurnPipeline';
+import { shouldReadBilibiliDanmakuAloud } from '../services/room/live2dBilibiliReplyPolicy';
 import { createLive2DSpeechPlayer } from '../services/room/live2dSpeech';
 import { cleanLive2DReply } from '../services/room/live2dText';
 import { recordLive2DViewerMemoryInteraction } from '../services/room/live2dMemory';
@@ -1110,7 +1112,6 @@ async function performStreamingLiveTurn(message, options = {}) {
   let playbackFailed = false;
   const captionTranscript = createLive2DOrderedCaptionTranscript();
   const preparedCaptionTranscript = createLive2DOrderedCaptionTranscript();
-  const captionPreparationPromises = [];
 
   streamingSpeechSession?.begin();
   dispatchCharacterState('thinking', { holdMs: 2400, attention: 0.82, arousal: 0.5 });
@@ -1141,13 +1142,17 @@ async function performStreamingLiveTurn(message, options = {}) {
         };
         const pairedCaption = Promise.resolve(sentence.captionReady || sentence.caption || '')
           .then(normalizePreparedCaption);
-        const translatedCaption = translateLive2DReplyToChinese(speechSentence, {
-          signal: options.signal,
-          timeoutMs: 5500
-        }).then(normalizePreparedCaption);
         const preparedCaption = createLive2DPreparedCaption(
-          resolveFirstLive2DChineseCaption([pairedCaption, translatedCaption], { timeoutMs: 6000 })
+          resolveLive2DChineseCaptionWithFallback(
+            pairedCaption,
+            () => translateLive2DReplyToChinese(speechSentence, {
+              signal: options.signal,
+              timeoutMs: 4200
+            }).then(normalizePreparedCaption),
+            { fallbackDelayMs: 800, timeoutMs: 5000 }
+          )
         );
+        const captionPlaybackGate = createLive2DCaptionPlaybackGate(preparedCaption);
         const publishPreparedCaption = (visibleSentence) => {
           if (!visibleSentence || !isLiveTurnOperationCurrent(options)) return;
           streamedReply = captionTranscript.resolve(sentenceIndex, visibleSentence);
@@ -1165,11 +1170,11 @@ async function performStreamingLiveTurn(message, options = {}) {
             live2d: sentence.live2d
           };
         };
-        captionPreparationPromises.push(preparedCaption.ready.then((visibleSentence) => {
+        preparedCaption.ready.then((visibleSentence) => {
           preparedCaptionTranscript.resolve(sentenceIndex, visibleSentence);
           publishPreparedCaption(visibleSentence);
           return visibleSentence;
-        }));
+        });
         const showCaption = (durationMs = 0) => {
           if (!isLiveTurnOperationCurrent(options)) return;
           const visibleSentence = preparedCaption.read();
@@ -1208,6 +1213,7 @@ async function performStreamingLiveTurn(message, options = {}) {
           emotion: sentence.emotion,
           speechStyle: sentence.speechStyle,
           sourceLang: sentence.sourceLang || undefined,
+          startGate: captionPlaybackGate,
           onStart: ({ durationMs }) => showCaption(durationMs)
         }).catch((error) => {
           playbackFailed = true;
@@ -1225,9 +1231,11 @@ async function performStreamingLiveTurn(message, options = {}) {
 
     let visibleReply = '';
     if (queuedSpeechCount > 0) {
-      await Promise.all(captionPreparationPromises);
-      throwIfLiveTurnOperationCancelled(options);
-      visibleReply = preparedCaptionTranscript.read() || streamedReply;
+      const finalVisibleCaption = ensureLive2DAudienceNamesInSpeech(
+        visibleYachiyoText(finalResult.caption),
+        options.audienceLines
+      );
+      visibleReply = preparedCaptionTranscript.read() || finalVisibleCaption || streamedReply;
     }
     if (queuedSpeechCount > 0 && finalResult.live2d && queuedLive2DCount < 1) {
       dispatchRoomLive2D(alignLive2DToSpeech(finalResult.live2d, Number(finalResult.live2d.durationMs) || 0));
@@ -1242,19 +1250,20 @@ async function performStreamingLiveTurn(message, options = {}) {
           visibleYachiyoText(caption),
           options.audienceLines
         ));
-      const translatedFinalCaption = translateLive2DReplyToChinese(finalSpeech, {
-        signal: options.signal,
-        timeoutMs: 5500
-      }).then((caption) => ensureLive2DAudienceNamesInSpeech(
-        visibleYachiyoText(caption),
-        options.audienceLines
-      ));
       const preparedCaption = createLive2DPreparedCaption(
-        resolveFirstLive2DChineseCaption(
-          [pairedFinalCaption, translatedFinalCaption],
-          { timeoutMs: 6000 }
+        resolveLive2DChineseCaptionWithFallback(
+          pairedFinalCaption,
+          () => translateLive2DReplyToChinese(finalSpeech, {
+            signal: options.signal,
+            timeoutMs: 4200
+          }).then((caption) => ensureLive2DAudienceNamesInSpeech(
+            visibleYachiyoText(caption),
+            options.audienceLines
+          )),
+          { fallbackDelayMs: 300, timeoutMs: 5000 }
         )
       );
+      const captionPlaybackGate = createLive2DCaptionPlaybackGate(preparedCaption);
       const publishFinalCaption = (caption) => {
         if (!caption || !isLiveTurnOperationCurrent(options)) return caption;
         streamedReply = caption;
@@ -1281,6 +1290,7 @@ async function performStreamingLiveTurn(message, options = {}) {
         emotion: finalResult.live2d?.emotion || finalResult.live2d?.expression || 'neutral',
         speechStyle: finalResult.live2d?.speechStyle || null,
         sourceLang: finalResult.caption ? 'ja' : undefined,
+        startGate: captionPlaybackGate,
         onStart: ({ durationMs }) => {
           if (!isLiveTurnOperationCurrent(options)) return;
           const caption = preparedCaption.read();
@@ -1304,8 +1314,7 @@ async function performStreamingLiveTurn(message, options = {}) {
           streamingSpeechSession?.lineSettled();
         }
       }));
-      visibleReply = await finalCaptionReady;
-      throwIfLiveTurnOperationCancelled(options);
+      visibleReply = preparedCaption.read() || visibleYachiyoText(finalResult.caption) || streamedReply;
     }
 
     llmState.value = {
@@ -1399,6 +1408,8 @@ function buildLiveDirectorPrompt(audienceLines, options = {}) {
     'Say each selected viewer’s exact display name aloud. With two viewers, give each viewer a distinct short clause so both can clearly tell they were answered; do not silently merge unnamed viewers into a topic summary.',
     'Set acknowledgedIndexes in final CONTROL to the 1-based indexes actually addressed. Never claim an unaddressed or unnamed message was acknowledged.',
     'Always prioritize superchats, gifts, and guard purchases. Thank the named viewer naturally, mentioning the gift or message without sounding like a receipt printer.',
+    'If a paid event is selected, acknowledge every selected paid viewer before any ordinary chat. Never omit a gift, guard purchase, or superchat from acknowledgedIndexes.',
+    'Respond to the meaning of viewer messages instead of quoting or repeating their full text verbatim. A short keyword is fine only when needed for clarity.',
     'Do not wait passively for instructions. React, tease gently, ask a tiny hook, or continue the topic.',
     'Choose 2-5 semantic actions every turn unless the moment is intentionally calm.',
     'Match actions to the meaning of the line and vary the combo from the previous turn; avoid looping the same body action.',
@@ -1693,8 +1704,12 @@ function syncBilibiliDanmakuFromSettings() {
   }
 }
 
-function readBilibiliDanmakuAloud(message, settings) {
-  if (!settings.readAloud || muted.value || !speechPlayer) return false;
+function readBilibiliDanmakuAloud(message, settings, context = {}) {
+  if (
+    !shouldReadBilibiliDanmakuAloud(message, settings, context) ||
+    muted.value ||
+    !speechPlayer
+  ) return false;
   const speechText = formatBilibiliDanmakuSpeech(message, settings);
   if (!speechText) return false;
   const paidEvent = ['superchat', 'gift', 'guard'].includes(message.type);
@@ -1773,9 +1788,11 @@ function processBilibiliDanmaku(message, settings) {
       timestamp: message.timestamp
     }
   };
-  readBilibiliDanmakuAloud(message, settings);
+  const readAloudStarted = readBilibiliDanmakuAloud(message, settings, {
+    autoReplyActive: Boolean(shouldForward)
+  });
   if (!shouldForward) {
-    pushLog('audience', displayText, { source: 'bilibili', readAloud: shouldRead });
+    pushLog('audience', displayText, { source: 'bilibili', readAloud: readAloudStarted });
     dispatchCharacterState('listening', { holdMs: 1800, attention: 0.92, arousal: 0.5 });
     if (musicCommand) routeAudienceMusicRequest(text, audienceMeta);
     return;
@@ -1804,7 +1821,13 @@ function flushBilibiliDanmakuBatch() {
 function handleBilibiliDanmakuEvent(event) {
   const message = event.detail || {};
   if (!['danmu', 'superchat', 'gift', 'guard'].includes(message.type)) return;
-  if (!String(message.text || '').trim()) return;
+  const paidFallbackText = message.type === 'superchat'
+    ? '\u9192\u76ee\u7559\u8a00'
+    : (message.type === 'guard' ? '\u5927\u822a\u6d77' : '\u793c\u7269');
+  const eventText = String(
+    message.text || message.giftName || (message.type === 'danmu' ? '' : paidFallbackText)
+  ).trim();
+  if (!eventText) return;
   const viewerArrival = audienceViewerState.recordArrival({
     id: message.id,
     userId: message.userId,
@@ -1813,6 +1836,8 @@ function handleBilibiliDanmakuEvent(event) {
   });
   const trackedMessage = {
     ...message,
+    text: eventText,
+    giftName: message.giftName || (['gift', 'guard'].includes(message.type) ? eventText : ''),
     isFirstMessage: Boolean(
       viewerArrival &&
       Number(viewerArrival.messageCount) === 1 &&
@@ -1825,12 +1850,12 @@ function handleBilibiliDanmakuEvent(event) {
     platform: 'bilibili',
     userId: message.userId,
     userName: message.userName,
-    text: message.text,
-    eventType: message.type,
-    giftName: message.giftName,
-    amount: message.amount,
-    price: message.price,
-    timestamp: message.timestamp
+    text: trackedMessage.text,
+    eventType: trackedMessage.type,
+    giftName: trackedMessage.giftName,
+    amount: trackedMessage.amount,
+    price: trackedMessage.price,
+    timestamp: trackedMessage.timestamp
   });
   const existingIndex = bilibiliPendingMessages.findIndex((item) => item.id === trackedMessage.id);
   if (existingIndex >= 0) bilibiliPendingMessages.splice(existingIndex, 1);
@@ -1839,7 +1864,7 @@ function handleBilibiliDanmakuEvent(event) {
     bilibiliPendingMessages = bilibiliPendingMessages.slice(-240);
   }
   if (!bilibiliBatchTimer) {
-    bilibiliBatchTimer = window.setTimeout(flushBilibiliDanmakuBatch, 120);
+    bilibiliBatchTimer = window.setTimeout(flushBilibiliDanmakuBatch, 80);
   }
 }
 

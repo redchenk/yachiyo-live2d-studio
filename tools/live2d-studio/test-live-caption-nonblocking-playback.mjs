@@ -10,10 +10,10 @@ const end = source.indexOf('\nfunction handleLivePlaybackIdle', start);
 assert.ok(start >= 0 && end > start, 'streaming live-turn implementation must be present');
 const streamingTurn = source.slice(start, end);
 
-assert.doesNotMatch(
+assert.match(
   streamingTurn,
-  /startGate\s*:\s*preparedCaption\.ready/,
-  'Chinese caption preparation must never hold back GPT-SoVITS playback'
+  /startGate\s*:\s*captionPlaybackGate/,
+  'audio must be gated by a non-empty Chinese caption while GPT-SoVITS prepares in parallel'
 );
 assert.ok(
   (streamingTurn.match(/resolved\s*:\s*(?:preparedCaption\.ready|finalCaptionReady)/g) || []).length >= 2,
@@ -23,6 +23,16 @@ assert.match(
   streamingTurn,
   /sourceLang\s*:\s*sentence\.sourceLang/,
   'known Japanese VOICE chunks must retain their zero-translation TTS fast path'
+);
+assert.doesNotMatch(
+  streamingTurn,
+  /await\s+Promise\.all\(captionPreparationPromises\)/,
+  'slow backup captions must not block the next LLM generation'
+);
+assert.match(
+  streamingTurn,
+  /resolveLive2DChineseCaptionWithFallback/,
+  'backup caption translation must be lazy instead of firing for every streamed sentence'
 );
 
 console.log('live caption nonblocking playback checks passed');

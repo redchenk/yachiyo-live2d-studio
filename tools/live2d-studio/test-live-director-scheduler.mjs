@@ -63,40 +63,40 @@ assert.equal(
     { pendingCount: 1 },
     sequenceRng([0, 0.5])
   ),
-  2_500,
-  'low traffic pause must start at 2.5 seconds'
+  2_000,
+  'low traffic pause must start at 2 seconds'
 );
 assert.equal(
   sampleLive2DDirectorReplyDelay(
     { pendingCount: 4 },
     sequenceRng([0.5, 0.5])
   ),
-  2_500,
-  'normal traffic pause must be sampled from 1.8-3.2 seconds'
+  1_950,
+  'normal traffic pause must be sampled from 1.4-2.5 seconds'
 );
 assert.equal(
   sampleLive2DDirectorReplyDelay(
     { pendingCount: 12 },
     sequenceRng([1, 0.5])
   ),
-  2_200,
-  'high backlog pause must not exceed 2.2 seconds'
+  1_500,
+  'high backlog pause must not exceed 1.5 seconds'
 );
 assert.equal(
   sampleLive2DDirectorReplyDelay(
     { pendingCount: 4 },
     sequenceRng([0.5, 0.05, 0.25])
   ),
-  3_750,
-  'roughly ten percent of ordinary turns receive an extra 1-2 second thinking pause'
+  2_800,
+  'a small share of ordinary turns receive a short extra thinking pause'
 );
 assert.equal(
   sampleLive2DDirectorReplyDelay(
     { pendingCount: 20, priorityPending: true },
     sequenceRng([0.5])
   ),
-  1_100,
-  'priority audience uses only the 0.8-1.4 second priority pause'
+  575,
+  'priority audience uses only a short 0.35-0.8 second pause'
 );
 
 const scheduler = createLive2DDirectorScheduler({
@@ -114,7 +114,7 @@ scheduler.audienceArrived({ turnInFlight: false });
 assert.equal(onlyTimer().dueAt, now + LIVE2D_DIRECTOR_AUDIENCE_DELAY_MS);
 fireNextTimer();
 assert.deepEqual(turns, [{
-  at: 62_180,
+  at: 62_120,
   reason: 'audience',
   delayMs: LIVE2D_DIRECTOR_AUDIENCE_DELAY_MS
 }]);
@@ -128,7 +128,7 @@ now += 20_000;
 scheduler.audienceArrived({ turnInFlight: true });
 assert.equal(timers.size, 0);
 scheduler.playbackIdle({ pendingAudience: true, pendingCount: 4 });
-assert.equal(onlyTimer().dueAt, now + 2_500);
+assert.equal(onlyTimer().dueAt, now + 1_950);
 
 const replyGapDueAt = onlyTimer().dueAt;
 now += 300;
@@ -142,7 +142,7 @@ fireNextTimer();
 assert.deepEqual(turns.at(-1), {
   at: replyGapDueAt,
   reason: 'reply-gap',
-  delayMs: 2_500
+  delayMs: 1_950
 });
 
 now += 2_000;
@@ -161,7 +161,7 @@ now = playbackEndedAt;
 scheduler.playbackIdle({ pendingAudience: true, pendingCount: 10 });
 assert.equal(
   onlyTimer().dueAt,
-  playbackEndedAt + 1_700,
+  playbackEndedAt + 1_175,
   'the human-like gap must be measured from playback idle, not generation completion'
 );
 

@@ -136,10 +136,13 @@ const staleQueue = [
     }
   }, { now }).entry
 ];
-const freshTurn = selectLive2DAudienceTurn(staleQueue, { limit: 3, now });
-assert.deepEqual(freshTurn.selected.map((entry) => entry.id), ['recent-enough-sc']);
+const freshTurn = selectLive2DAudienceTurn(staleQueue, { limit: 3, replyCount: 2, now });
+assert.deepEqual(
+  new Set(freshTurn.selected.map((entry) => entry.id)),
+  new Set(['stale-ordinary', 'recent-enough-sc'])
+);
 assert.deepEqual(freshTurn.remaining, []);
-assert.deepEqual(freshTurn.discarded.map((entry) => entry.id), ['stale-ordinary']);
+assert.deepEqual(freshTurn.discarded, []);
 
 const burstSelection = selectLive2DBilibiliMessages([
   { id: 'ordinary', type: 'danmu', userId: '1', userName: 'A', text: '路过', timestamp: now },
@@ -179,8 +182,8 @@ const expiredPaid = enqueueLive2DAudienceEntry([], '[SC] 太久以前的醒目�
   }
 }, { now }).entry;
 const expiredPaidTurn = selectLive2DAudienceTurn([expiredPaid], { limit: 1, now });
-assert.deepEqual(expiredPaidTurn.selected, []);
-assert.deepEqual(expiredPaidTurn.discarded.map((entry) => entry.id), ['expired-paid']);
+assert.deepEqual(expiredPaidTurn.selected.map((entry) => entry.id), ['expired-paid']);
+assert.deepEqual(expiredPaidTurn.discarded, []);
 
 function sequenceRng(values) {
   let index = 0;

@@ -52,6 +52,86 @@ export function resolveFirstLive2DChineseCaption(candidates = [], options = {}) 
   });
 }
 
+export function resolveLive2DChineseCaptionWithFallback(primary, fallbackFactory, options = {}) {
+  const fallbackDelayMs = Math.max(0, Number(options.fallbackDelayMs ?? 800));
+  const timeoutMs = Math.max(fallbackDelayMs + 1, Number(options.timeoutMs ?? 5000));
+  const setTimer = options.setTimeoutImpl || globalThis.setTimeout;
+  const clearTimer = options.clearTimeoutImpl || globalThis.clearTimeout;
+
+  return new Promise((resolve) => {
+    let settled = false;
+    let primaryDone = false;
+    let fallbackDone = typeof fallbackFactory !== 'function';
+    let fallbackStarted = false;
+    let fallbackTimer = null;
+    let timeoutTimer = null;
+
+    const cleanup = () => {
+      if (fallbackTimer !== null) clearTimer(fallbackTimer);
+      if (timeoutTimer !== null) clearTimer(timeoutTimer);
+      fallbackTimer = null;
+      timeoutTimer = null;
+    };
+    const finish = (value = '', allowEmpty = false) => {
+      if (settled) return false;
+      const caption = asCaption(value);
+      if (!caption && !allowEmpty) return false;
+      settled = true;
+      cleanup();
+      resolve(caption);
+      return true;
+    };
+    const finishIfExhausted = () => {
+      if (primaryDone && fallbackDone) finish('', true);
+    };
+    const startFallback = () => {
+      if (settled || fallbackStarted || typeof fallbackFactory !== 'function') {
+        finishIfExhausted();
+        return;
+      }
+      fallbackStarted = true;
+      Promise.resolve()
+        .then(() => fallbackFactory())
+        .then((value) => {
+          fallbackDone = true;
+          if (!finish(value)) finishIfExhausted();
+        })
+        .catch(() => {
+          fallbackDone = true;
+          finishIfExhausted();
+        });
+    };
+
+    Promise.resolve(primary)
+      .then((value) => {
+        primaryDone = true;
+        if (!finish(value)) {
+          startFallback();
+          finishIfExhausted();
+        }
+      })
+      .catch(() => {
+        primaryDone = true;
+        startFallback();
+        finishIfExhausted();
+      });
+
+    fallbackTimer = setTimer(startFallback, fallbackDelayMs);
+    timeoutTimer = setTimer(() => finish('', true), timeoutMs);
+  });
+}
+
+export function createLive2DCaptionPlaybackGate(preparedCaption) {
+  const ready = preparedCaption?.ready ?? preparedCaption;
+  return Promise.resolve(ready).then((value) => {
+    const caption = asCaption(value);
+    if (caption) return caption;
+    const error = new Error('Chinese caption unavailable');
+    error.name = 'AbortError';
+    throw error;
+  });
+}
+
 function joinCaptionText(left, right) {
   const previous = asCaption(left);
   const next = asCaption(right);

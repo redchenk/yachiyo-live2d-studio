@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
 import {
+  createLive2DCaptionPlaybackGate,
   createLive2DPreparedCaption,
   createLive2DCaptionSynchronizer,
   createLive2DOrderedCaptionTranscript,
-  resolveFirstLive2DChineseCaption
+  resolveFirstLive2DChineseCaption,
+  resolveLive2DChineseCaptionWithFallback
 } from '../../src/frontend/services/room/live2dCaptionSynchronizer.js';
 
 function deferred() {
@@ -118,4 +120,53 @@ assert.equal(
 assert.ok(Date.now() - captionTimeoutStartedAt < 150, 'caption release must use a bounded deadline');
 
 assert.deepEqual(changes, ['旧句', '当前句', '当前句中文', '']);
+let unusedFallbackCalls = 0;
+assert.equal(
+  await resolveLive2DChineseCaptionWithFallback(
+    Promise.resolve('\u4e3b\u6d41\u5b57\u5e55'),
+    () => {
+      unusedFallbackCalls += 1;
+      return Promise.resolve('\u5907\u7528\u5b57\u5e55');
+    },
+    { fallbackDelayMs: 30, timeoutMs: 200 }
+  ),
+  '\u4e3b\u6d41\u5b57\u5e55'
+);
+assert.equal(
+  unusedFallbackCalls,
+  0,
+  'the backup translation request must stay lazy when the paired stream caption succeeds'
+);
+
+let delayedFallbackCalls = 0;
+const delayedFallbackStartedAt = Date.now();
+assert.equal(
+  await resolveLive2DChineseCaptionWithFallback(
+    new Promise(() => {}),
+    () => {
+      delayedFallbackCalls += 1;
+      return Promise.resolve('\u5ef6\u8fdf\u540e\u7684\u5907\u7528\u5b57\u5e55');
+    },
+    { fallbackDelayMs: 15, timeoutMs: 200 }
+  ),
+  '\u5ef6\u8fdf\u540e\u7684\u5907\u7528\u5b57\u5e55'
+);
+assert.equal(delayedFallbackCalls, 1);
+assert.ok(
+  Date.now() - delayedFallbackStartedAt < 150,
+  'a missing paired caption must start one bounded backup translation without waiting for stream completion'
+);
+
+const playbackCaption = createLive2DPreparedCaption(Promise.resolve('\u64ad\u653e\u524d\u5b57\u5e55'));
+assert.equal(
+  await createLive2DCaptionPlaybackGate(playbackCaption),
+  '\u64ad\u653e\u524d\u5b57\u5e55',
+  'TTS playback may start only after a non-empty Chinese caption is ready'
+);
+await assert.rejects(
+  createLive2DCaptionPlaybackGate(createLive2DPreparedCaption(Promise.resolve(''))),
+  (error) => error?.name === 'AbortError',
+  'caption failure must cancel the audio item instead of playing without subtitles'
+);
+
 console.log('live caption synchronizer checks passed');

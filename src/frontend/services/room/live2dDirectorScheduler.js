@@ -1,15 +1,15 @@
 export const LIVE2D_DIRECTOR_AUTO_TURN_INTERVAL_MS = 60_000;
-export const LIVE2D_DIRECTOR_AUDIENCE_DELAY_MS = 180;
+export const LIVE2D_DIRECTOR_AUDIENCE_DELAY_MS = 120;
 export const LIVE2D_DIRECTOR_PENDING_DELAY_MS = 1_800;
 export const LIVE2D_DIRECTOR_LOW_TRAFFIC_MAX_PENDING = 2;
 export const LIVE2D_DIRECTOR_HIGH_TRAFFIC_MIN_PENDING = 8;
-export const LIVE2D_DIRECTOR_THINKING_PAUSE_CHANCE = 0.1;
-export const LIVE2D_DIRECTOR_THINKING_PAUSE_RANGE_MS = Object.freeze([1_000, 2_000]);
+export const LIVE2D_DIRECTOR_THINKING_PAUSE_CHANCE = 0.08;
+export const LIVE2D_DIRECTOR_THINKING_PAUSE_RANGE_MS = Object.freeze([700, 1_300]);
 export const LIVE2D_DIRECTOR_REPLY_GAP_RANGES_MS = Object.freeze({
-  low: Object.freeze([2_500, 4_500]),
-  normal: Object.freeze([1_800, 3_200]),
-  high: Object.freeze([1_200, 2_200]),
-  priority: Object.freeze([800, 1_400])
+  low: Object.freeze([2_000, 3_500]),
+  normal: Object.freeze([1_400, 2_500]),
+  high: Object.freeze([850, 1_500]),
+  priority: Object.freeze([350, 800])
 });
 
 function randomUnit(rng) {
