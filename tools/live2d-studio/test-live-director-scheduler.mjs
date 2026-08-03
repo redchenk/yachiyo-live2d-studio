@@ -165,4 +165,39 @@ assert.equal(
   'the human-like gap must be measured from playback idle, not generation completion'
 );
 
+let burstNow = 0;
+let burstTimerSequence = 0;
+const burstTimers = new Map();
+const burstTurns = [];
+const burstScheduler = createLive2DDirectorScheduler({
+  setTimeoutImpl: (callback, delay) => {
+    const id = burstTimerSequence += 1;
+    burstTimers.set(id, { callback, dueAt: burstNow + delay });
+    return id;
+  },
+  clearTimeoutImpl: (id) => burstTimers.delete(id),
+  onTurn: (context) => burstTurns.push({ at: burstNow, ...context })
+});
+
+function advanceBurstTo(targetTime) {
+  while (true) {
+    const next = [...burstTimers.entries()]
+      .sort((left, right) => left[1].dueAt - right[1].dueAt)[0];
+    if (!next || next[1].dueAt > targetTime) break;
+    burstTimers.delete(next[0]);
+    burstNow = next[1].dueAt;
+    next[1].callback();
+  }
+  burstNow = targetTime;
+}
+
+for (let index = 0; index < 40; index += 1) {
+  advanceBurstTo(index * 80);
+  burstScheduler.audienceArrived({ turnInFlight: false, playbackPending: false });
+}
+assert.ok(
+  burstTurns.length > 0,
+  'a continuous audience burst faster than the 120ms startup delay must not postpone the first reply forever'
+);
+
 console.log('live director scheduler checks passed');

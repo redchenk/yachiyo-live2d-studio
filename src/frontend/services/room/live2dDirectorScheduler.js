@@ -118,7 +118,7 @@ export function createLive2DDirectorScheduler(options = {}) {
       cancel();
       return null;
     }
-    if (timerKind === 'reply-gap') return scheduledDelay;
+    if (timerKind === 'reply-gap' || timerKind === 'audience') return scheduledDelay;
     cancel();
     return scheduleTimer(audienceDelayMs, 'audience');
   }
