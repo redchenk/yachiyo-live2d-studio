@@ -29,11 +29,29 @@ for (const [text, meta] of [
 const duplicate = enqueueLive2DAudienceEntry(
   queue,
   '八千代，你今天为什么这么开心？',
-  { source: 'bilibili' },
+  { source: 'bilibili', bilibili: { userId: '2', userName: 'B' } },
   { now }
 );
 assert.equal(duplicate.accepted, false);
 assert.equal(duplicate.reason, 'duplicate');
+
+const commonGreetingFromAnotherViewer = enqueueLive2DAudienceEntry(
+  [enqueueLive2DAudienceEntry([], '晚上好', {
+    source: 'bilibili',
+    bilibili: { id: 'greeting-a', userId: 'greeting-viewer-a', userName: 'A' }
+  }, { now }).entry],
+  '晚上好',
+  {
+    source: 'bilibili',
+    bilibili: { id: 'greeting-b', userId: 'greeting-viewer-b', userName: 'B' }
+  },
+  { now }
+);
+assert.equal(
+  commonGreetingFromAnotherViewer.accepted,
+  true,
+  'common messages from different viewers must not be collapsed by global text deduplication'
+);
 
 const spam = enqueueLive2DAudienceEntry(queue, '啊啊啊啊啊啊啊啊啊啊啊啊', {}, { now });
 assert.equal(spam.accepted, false);
@@ -109,6 +127,60 @@ assert.deepEqual(
 
 const restored = requeueLive2DAudienceTurn(turn.remaining, turn.selected);
 assert.deepEqual(restored.map((entry) => entry.id), ['sc', 'mention', 'plain', 'question']);
+
+const nearlyExpiredAttempt = enqueueLive2DAudienceEntry([], 'please retry this reply', {
+  source: 'bilibili',
+  bilibili: {
+    id: 'retry-after-playback-failure',
+    userId: 'retry-viewer',
+    timestamp: now - 29_500
+  }
+}, { now }).entry;
+const retryQueue = requeueLive2DAudienceTurn([
+  enqueueLive2DAudienceEntry([], 'fresh reply candidate', {
+    source: 'bilibili',
+    bilibili: {
+      id: 'fresh-reply-candidate',
+      userId: 'fresh-reply-viewer',
+      timestamp: now
+    }
+  }, { now }).entry
+], [nearlyExpiredAttempt], { now });
+const retriedTurn = selectLive2DAudienceTurn(retryQueue, {
+  limit: 1,
+  replyCount: 1,
+  rng: () => 0.99,
+  now: now + 1_000
+});
+assert.deepEqual(
+  retriedTurn.selected.map((entry) => entry.id),
+  ['retry-after-playback-failure'],
+  'a selected reply that failed delivery must retain a fresh retry window instead of expiring immediately'
+);
+assert.equal(retriedTurn.discarded.length, 0);
+
+let exhaustedRetryQueue = [enqueueLive2DAudienceEntry([], 'bounded failed reply', {
+  source: 'bilibili',
+  bilibili: {
+    id: 'bounded-reply-failure',
+    userId: 'bounded-retry-viewer',
+    timestamp: now
+  }
+}, { now }).entry];
+for (let retry = 0; retry < 3; retry += 1) {
+  exhaustedRetryQueue = requeueLive2DAudienceTurn([], exhaustedRetryQueue, {
+    now: now + retry * 1_000
+  });
+  assert.equal(exhaustedRetryQueue.length, 1);
+}
+exhaustedRetryQueue = requeueLive2DAudienceTurn([], exhaustedRetryQueue, {
+  now: now + 3_000
+});
+assert.equal(
+  exhaustedRetryQueue.length,
+  0,
+  'permanently failing ordinary replies must stop retrying before they can starve fresh viewers'
+);
 
 const promptLine = formatLive2DAudiencePromptEntry(turn.selected[0]);
 assert.match(promptLine, /"type":"superchat"/);
@@ -214,7 +286,7 @@ assert.equal(singleViewerTurn.remaining.length, 2);
 
 const twoViewerTurn = selectLive2DAudienceTurn(randomCountQueue, {
   limit: 9,
-  rng: sequenceRng([0.9, 0.1, 0.9]),
+  rng: sequenceRng([0.55, 0.1, 0.9]),
   now
 });
 assert.equal(twoViewerTurn.selected.length, 2);

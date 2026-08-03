@@ -2,10 +2,15 @@ const DEFAULT_MAX_QUEUE_SIZE = 120;
 const DEFAULT_BILIBILI_MAX_AGE_MS = 30_000;
 const DEFAULT_BILIBILI_PAID_MAX_AGE_MS = 120_000;
 const DEFAULT_MAX_VIEWERS_PER_TURN = 2;
-const DEFAULT_SINGLE_VIEWER_PROBABILITY = 0.65;
+const DEFAULT_SINGLE_VIEWER_PROBABILITY = 0.5;
 const DEFAULT_REPLY_COOLDOWN_MS = 60_000;
 const DEFAULT_FIRST_MESSAGE_BONUS = 34;
 const DEFAULT_MAX_WAIT_BONUS = 28;
+const DEFAULT_REPLY_RETRY_GRACE_MS = 45_000;
+const DEFAULT_PAID_REPLY_RETRY_GRACE_MS = 120_000;
+const DEFAULT_REPLY_RETRY_BONUS = 84;
+const DEFAULT_MAX_REPLY_RETRY_COUNT = 3;
+const DEFAULT_MAX_PAID_REPLY_RETRY_COUNT = 6;
 
 const SOURCE_PRIORITY = Object.freeze({
   manual: 52,
@@ -50,6 +55,11 @@ function sourcePriority(entry) {
 
 function isPaidBilibiliMessage(entry) {
   return ['superchat', 'gift', 'guard'].includes(entry?.messageType);
+}
+
+function isReplyRetryActive(entry, now) {
+  return Number(entry?.replyAttemptCount || 0) > 0 &&
+    Number(entry?.replyRetryUntil || 0) >= Number(now);
 }
 
 function finiteNumber(value, fallback = 0) {
@@ -148,7 +158,8 @@ function selectionWeight(entry, now, state, options = {}) {
   return Math.max(
     1,
     scoreLive2DAudienceEntry(entry, now) +
-    (entry?.isFirstMessage !== true && isFirstViewerMessage(entry, state) ? firstMessageBonus : 0)
+    (entry?.isFirstMessage !== true && isFirstViewerMessage(entry, state) ? firstMessageBonus : 0) +
+    (isReplyRetryActive(entry, now) ? DEFAULT_REPLY_RETRY_BONUS : 0)
   );
 }
 
@@ -238,7 +249,11 @@ export function enqueueLive2DAudienceEntry(queue, text, meta = {}, options = {})
     return { queue: current.slice(), entry: null, accepted: false, reason: 'empty-or-spam' };
   }
 
-  if (current.some((item) => item?.normalizedKey === entry.normalizedKey)) {
+  const identity = audienceIdentity(entry);
+  if (current.some((item) => (
+    item?.normalizedKey === entry.normalizedKey &&
+    audienceIdentity(item) === identity
+  ))) {
     return { queue: current.slice(), entry, accepted: false, reason: 'duplicate' };
   }
 
@@ -298,6 +313,7 @@ export function selectLive2DAudienceTurn(queue, options = {}) {
   );
   const discarded = current.filter((entry) => {
     if (entry?.source !== 'bilibili') return false;
+    if (isReplyRetryActive(entry, now)) return false;
     const ageMs = Math.max(0, now - Number(entry?.receivedAt || now));
     const maxAgeMs = isPaidBilibiliMessage(entry)
       ? bilibiliPaidMaxAgeMs
@@ -332,6 +348,15 @@ export function selectLive2DAudienceTurn(queue, options = {}) {
   const guaranteedPaidCount = enforceUniqueViewers
     ? new Set(paidCandidates.map((candidate) => candidate.identity)).size
     : paidCandidates.length;
+  const replyRetryCandidates = candidates
+    .filter((candidate) => (
+      !isPaidBilibiliMessage(candidate.entry) &&
+      isReplyRetryActive(candidate.entry, now)
+    ))
+    .sort(paidCandidateSort);
+  const guaranteedRetryCount = enforceUniqueViewers
+    ? new Set(replyRetryCandidates.map((candidate) => candidate.identity)).size
+    : replyRetryCandidates.length;
   let targetCount;
   if (options.replyCount != null) {
     targetCount = Math.max(1, Math.min(limit, Math.round(finiteNumber(options.replyCount, limit))));
@@ -344,7 +369,10 @@ export function selectLive2DAudienceTurn(queue, options = {}) {
     );
     targetCount = clampedRandom(rng) < singleViewerProbability ? 1 : limit;
   }
-  targetCount = Math.max(targetCount, Math.min(limit, guaranteedPaidCount));
+  targetCount = Math.max(
+    targetCount,
+    Math.min(limit, guaranteedPaidCount + guaranteedRetryCount)
+  );
 
   for (const candidate of paidCandidates) {
     if (selected.length >= targetCount) break;
@@ -354,8 +382,17 @@ export function selectLive2DAudienceTurn(queue, options = {}) {
     selectedIdentities.add(candidate.identity);
   }
 
+  for (const candidate of replyRetryCandidates) {
+    if (selected.length >= targetCount) break;
+    if (enforceUniqueViewers && selectedIdentities.has(candidate.identity)) continue;
+    selected.push(candidate.entry);
+    selectedEntries.add(candidate.entry);
+    selectedIdentities.add(candidate.identity);
+  }
+
   const ordinaryCandidates = candidates.filter((candidate) => (
     !isPaidBilibiliMessage(candidate.entry) &&
+    !isReplyRetryActive(candidate.entry, now) &&
     (!enforceUniqueViewers || !selectedIdentities.has(candidate.identity))
   ));
   const groupCandidates = enforceUniqueViewers
@@ -443,9 +480,44 @@ export function requeueLive2DAudienceTurn(queue, entries, options = {}) {
   const current = Array.isArray(queue) ? queue : [];
   const restored = Array.isArray(entries) ? entries : [];
   const maxQueueSize = Math.max(1, Math.round(Number(options.maxQueueSize) || DEFAULT_MAX_QUEUE_SIZE));
+  const now = Number(options.now) || Date.now();
+  const retryGraceMs = Math.max(
+    1,
+    Number(options.retryGraceMs) || DEFAULT_REPLY_RETRY_GRACE_MS
+  );
+  const paidRetryGraceMs = Math.max(
+    retryGraceMs,
+    Number(options.paidRetryGraceMs) || DEFAULT_PAID_REPLY_RETRY_GRACE_MS
+  );
+  const maxReplyRetryCount = Math.max(
+    0,
+    Math.round(finiteNumber(options.maxReplyRetryCount, DEFAULT_MAX_REPLY_RETRY_COUNT))
+  );
+  const maxPaidReplyRetryCount = Math.max(
+    maxReplyRetryCount,
+    Math.round(finiteNumber(
+      options.maxPaidReplyRetryCount,
+      DEFAULT_MAX_PAID_REPLY_RETRY_COUNT
+    ))
+  );
   const knownIds = new Set(current.map((entry) => entry?.id).filter(Boolean));
   return [
-    ...restored.filter((entry) => entry && !knownIds.has(entry.id)),
+    ...restored
+      .filter((entry) => entry && !knownIds.has(entry.id))
+      .map((entry) => {
+        const paid = isPaidBilibiliMessage(entry);
+        const replyAttemptCount = Math.max(0, Number(entry.replyAttemptCount) || 0) + 1;
+        const maxRetryCount = paid ? maxPaidReplyRetryCount : maxReplyRetryCount;
+        if (replyAttemptCount > maxRetryCount) return null;
+        return {
+          ...entry,
+          replyAttemptCount,
+          lastReplyAttemptAt: now,
+          replyRetryUntil: Math.max(0, Number(entry.replyRetryUntil) || 0) ||
+            now + (paid ? paidRetryGraceMs : retryGraceMs)
+        };
+      })
+      .filter(Boolean),
     ...current
   ].slice(0, maxQueueSize);
 }

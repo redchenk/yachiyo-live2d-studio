@@ -15,6 +15,7 @@ const ROOM_MEMORY_MANAGED_MILVUS_DEFAULTS_MIGRATION_KEY = 'roomMemoryManagedMilv
 const ROOM_MUSIC_LOCAL_DEFAULTS_MIGRATION_KEY = 'roomMusicLocalDefaultsMigratedV1';
 const ROOM_MUSIC_NETEASE_DEFAULTS_MIGRATION_KEY = 'roomMusicNeteaseDefaultsMigratedV1';
 const ROOM_MUSIC_ENABLED_DEFAULTS_MIGRATION_KEY = 'roomMusicEnabledDefaultsMigratedV1';
+const ROOM_BILIBILI_REPLY_CAPACITY_MIGRATION_KEY = 'roomBilibiliReplyCapacityMigratedV1';
 const LEGACY_ROOM_MODEL_STAGE_IDLE_SCALE = 0.9;
 const LEGACY_ROOM_MODEL_STAGE_MOTION_SCALE = 0.75;
 const LEGACY_ROOM_MODEL_RENDER_DPRS = [3, 4];
@@ -202,7 +203,7 @@ export const DEFAULT_ROOM_BILIBILI_DANMAKU_SETTINGS = {
   autoStartDirector: true,
   readAloud: true,
   readUserName: true,
-  maxForwardPerMinute: 12,
+  maxForwardPerMinute: 24,
   safetyFilterEnabled: true,
   safetyLevel: 'balanced',
   sensitiveWords: '',
@@ -586,6 +587,26 @@ export function normalizeRoomBilibiliDanmakuSettings(settings = {}) {
   };
 }
 
+function upgradeLegacyRoomBilibiliDefaults(settings, rawSettings = {}) {
+  if (typeof localStorage === 'undefined') return settings;
+  try {
+    if (localStorage.getItem(ROOM_BILIBILI_REPLY_CAPACITY_MIGRATION_KEY) === '1') {
+      return settings;
+    }
+    localStorage.setItem(ROOM_BILIBILI_REPLY_CAPACITY_MIGRATION_KEY, '1');
+    if (Number(rawSettings.maxForwardPerMinute) !== 12) return settings;
+
+    const upgraded = normalizeRoomBilibiliDanmakuSettings({
+      ...settings,
+      maxForwardPerMinute: DEFAULT_ROOM_BILIBILI_DANMAKU_SETTINGS.maxForwardPerMinute
+    });
+    writeJson(ROOM_BILIBILI_DANMAKU_SETTINGS_KEY, upgraded);
+    return upgraded;
+  } catch (_) {
+    return settings;
+  }
+}
+
 function upgradeLegacyRoomMusicDefaults(settings, rawSettings = {}) {
   if (typeof localStorage === 'undefined') return settings;
   try {
@@ -736,8 +757,13 @@ export function readRoomMusicSettings() {
 }
 
 export function readRoomBilibiliDanmakuSettings() {
-  return normalizeRoomBilibiliDanmakuSettings(
-    readJson(ROOM_BILIBILI_DANMAKU_SETTINGS_KEY, clone(DEFAULT_ROOM_BILIBILI_DANMAKU_SETTINGS))
+  const raw = readJson(
+    ROOM_BILIBILI_DANMAKU_SETTINGS_KEY,
+    clone(DEFAULT_ROOM_BILIBILI_DANMAKU_SETTINGS)
+  );
+  return upgradeLegacyRoomBilibiliDefaults(
+    normalizeRoomBilibiliDanmakuSettings(raw),
+    raw
   );
 }
 

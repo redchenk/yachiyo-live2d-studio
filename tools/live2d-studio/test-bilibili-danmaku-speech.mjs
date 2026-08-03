@@ -1,6 +1,19 @@
 import assert from 'node:assert/strict';
 import { createServer } from 'vite';
 
+const settingsStore = new Map();
+globalThis.localStorage = {
+  getItem(key) {
+    return settingsStore.has(key) ? settingsStore.get(key) : null;
+  },
+  setItem(key, value) {
+    settingsStore.set(key, String(value));
+  },
+  removeItem(key) {
+    settingsStore.delete(key);
+  }
+};
+
 const server = await createServer({
   configFile: false,
   server: { middlewareMode: true, hmr: false },
@@ -14,7 +27,10 @@ try {
   } = await server.ssrLoadModule(
     '/src/frontend/services/room/live2dBilibiliDanmaku.js'
   );
-  const { normalizeRoomBilibiliDanmakuSettings } = await server.ssrLoadModule(
+  const {
+    normalizeRoomBilibiliDanmakuSettings,
+    readRoomBilibiliDanmakuSettings
+  } = await server.ssrLoadModule(
     '/src/frontend/services/room/roomSettings.js'
   );
 
@@ -23,10 +39,34 @@ try {
   assert.equal(defaults.autoStartDirector, true);
   assert.equal(defaults.readAloud, true);
   assert.equal(defaults.readUserName, true);
+  assert.equal(defaults.maxForwardPerMinute, 24);
   assert.equal(defaults.safetyFilterEnabled, true);
   assert.equal(defaults.safetyLevel, 'balanced');
   assert.equal(defaults.sensitiveWords, '');
   assert.equal(defaults.maskMildLanguage, true);
+
+  localStorage.setItem('roomBilibiliDanmakuSettings', JSON.stringify({
+    enabled: true,
+    roomId: '25271643',
+    maxForwardPerMinute: 12
+  }));
+  const migratedCapacity = readRoomBilibiliDanmakuSettings();
+  assert.equal(
+    migratedCapacity.maxForwardPerMinute,
+    24,
+    'the old fixed default must migrate so existing installations receive the higher reply admission rate'
+  );
+  assert.equal(migratedCapacity.roomId, '25271643');
+  localStorage.setItem('roomBilibiliDanmakuSettings', JSON.stringify({
+    enabled: true,
+    roomId: '25271643',
+    maxForwardPerMinute: 18
+  }));
+  assert.equal(
+    readRoomBilibiliDanmakuSettings().maxForwardPerMinute,
+    18,
+    'a custom processing limit must remain user-controlled after the one-time migration'
+  );
 
   const normalizedSafety = normalizeRoomBilibiliDanmakuSettings({
     safetyLevel: 'STRICT',
@@ -100,4 +140,5 @@ try {
   console.log('Bilibili danmaku speech checks passed');
 } finally {
   await server.close();
+  delete globalThis.localStorage;
 }
