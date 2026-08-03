@@ -988,6 +988,8 @@ internal static class DesktopApiProxy
     private const int NeteaseMusicStreamTicketTtlSeconds = 1800;
     private const int NeteaseMusicApiRequestTimeoutMs = 8000;
     private const int NeteaseMusicResolveRequestTimeoutMs = 4500;
+    private const int ChatRequestTimeoutMs = 45000;
+    private const int ChatStreamReadWriteTimeoutMs = 20000;
     private const string NeteaseMusicAccountRelativePath = "YachiyoLive2DStudio\\music\\netease-account.dat";
     private const string NeteaseMusicAccountEntropy = "YachiyoLive2DStudio.NetEase.Account.v1";
     private const string MemoryIndexRelativePath = ".yachiyo-index/memory-index.json";
@@ -5686,7 +5688,12 @@ internal static class DesktopApiProxy
 
     private static string PostJson(string url, Dictionary<string, object> payload, Dictionary<string, string> headers)
     {
-        return Encoding.UTF8.GetString(PostBytes(url, Json.Serialize(payload), headers).Body);
+        return Encoding.UTF8.GetString(PostBytes(
+            url,
+            Json.Serialize(payload),
+            headers,
+            ChatRequestTimeoutMs
+        ).Body);
     }
 
     private static void PostJsonStream(string url, Dictionary<string, object> payload, Dictionary<string, string> headers, Action<byte[]> write)
@@ -5697,8 +5704,8 @@ internal static class DesktopApiProxy
         request.Method = "POST";
         request.ContentType = "application/json; charset=utf-8";
         request.Accept = "text/event-stream, application/json, */*";
-        request.Timeout = 120000;
-        request.ReadWriteTimeout = 120000;
+        request.Timeout = ChatRequestTimeoutMs;
+        request.ReadWriteTimeout = ChatStreamReadWriteTimeoutMs;
         AddHeaders(request, headers);
         using (var requestStream = request.GetRequestStream())
         {

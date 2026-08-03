@@ -42,6 +42,8 @@ const FOLLOWUP_SOFT_CHUNK_UNIT_LIMIT = 30;
 const FIRST_MAX_CHUNK_UNIT_LIMIT = 16;
 const FOLLOWUP_MAX_CHUNK_UNIT_LIMIT = 42;
 const CAPTION_TRANSLATION_TIMEOUT_MS = 6000;
+export const LIVE2D_LLM_REQUEST_TIMEOUT_MS = 60_000;
+export const LIVE2D_LLM_STREAM_IDLE_TIMEOUT_MS = 15_000;
 const SEMANTIC_EMOTION_ID_LIST = [
   ...semanticExpressionIds().filter((id) => id !== 'bsmile'),
   'happy',
@@ -575,9 +577,11 @@ function pickStreamDelta(data) {
 }
 
 async function readStreamingTextResponse(response, handlers = {}) {
+  handlers.onActivity?.();
   const contentType = response.headers?.get?.('content-type') || '';
   if (!/event-stream|stream/i.test(contentType)) {
     const data = await response.json().catch(() => null);
+    handlers.onActivity?.();
     const text = pickReply(data);
     if (text) handlers.onText?.(text, text, data);
     return text;
@@ -600,6 +604,7 @@ async function readStreamingTextResponse(response, handlers = {}) {
     try {
       payload = JSON.parse(data);
     } catch (_) {
+      handlers.onActivity?.();
       rawText += data;
       handlers.onEvent?.({ event, payload: null, delta: data, rawText });
       handlers.onText?.(data, rawText);
@@ -611,6 +616,7 @@ async function readStreamingTextResponse(response, handlers = {}) {
     const delta = pickStreamDelta(payload);
     handlers.onEvent?.({ event, payload, delta, rawText });
     if (!delta) return;
+    handlers.onActivity?.();
     rawText += delta;
     handlers.onText?.(delta, rawText, payload);
   };
@@ -1141,6 +1147,96 @@ function flushLive2DHistorySettlements() {
   }
 }
 
+function live2DLLMTimeoutError(message) {
+  const error = new Error(message);
+  error.name = 'TimeoutError';
+  error.code = 'LIVE2D_LLM_TIMEOUT';
+  return error;
+}
+
+function normalizedWatchdogTimeout(value, fallback) {
+  const timeout = Number(value);
+  return Math.max(10, Number.isFinite(timeout) ? timeout : fallback);
+}
+
+function createLive2DLLMRequestWatchdog(options = {}) {
+  if (typeof AbortController !== 'function') {
+    return {
+      signal: options.signal,
+      armIdle() {},
+      touch() {},
+      cleanup() {},
+      timeoutReason: () => null
+    };
+  }
+
+  const externalSignal = options.signal;
+  const controller = new AbortController();
+  const requestTimeoutMs = normalizedWatchdogTimeout(
+    options.requestTimeoutMs,
+    LIVE2D_LLM_REQUEST_TIMEOUT_MS
+  );
+  const streamIdleTimeoutMs = normalizedWatchdogTimeout(
+    options.streamIdleTimeoutMs,
+    LIVE2D_LLM_STREAM_IDLE_TIMEOUT_MS
+  );
+  let totalTimer = null;
+  let idleTimer = null;
+  let timeoutReason = null;
+
+  const abortWith = (reason) => {
+    if (controller.signal.aborted) return;
+    controller.abort(reason);
+  };
+  const onExternalAbort = () => abortWith(externalSignal?.reason);
+  const failAfter = (kind, timeoutMs) => {
+    if (controller.signal.aborted) return;
+    timeoutReason = live2DLLMTimeoutError(
+      kind === 'idle'
+        ? `LLM stream stopped responding for ${timeoutMs}ms.`
+        : `LLM request exceeded ${timeoutMs}ms.`
+    );
+    abortWith(timeoutReason);
+  };
+  const armIdle = () => {
+    if (controller.signal.aborted) return;
+    if (idleTimer !== null) globalThis.clearTimeout(idleTimer);
+    idleTimer = globalThis.setTimeout(
+      () => failAfter('idle', streamIdleTimeoutMs),
+      streamIdleTimeoutMs
+    );
+  };
+  const cleanup = () => {
+    if (totalTimer !== null) globalThis.clearTimeout(totalTimer);
+    if (idleTimer !== null) globalThis.clearTimeout(idleTimer);
+    totalTimer = null;
+    idleTimer = null;
+    externalSignal?.removeEventListener?.('abort', onExternalAbort);
+  };
+
+  if (externalSignal?.aborted) {
+    onExternalAbort();
+  } else {
+    externalSignal?.addEventListener?.('abort', onExternalAbort, { once: true });
+  }
+  totalTimer = globalThis.setTimeout(
+    () => failAfter('total', requestTimeoutMs),
+    requestTimeoutMs
+  );
+
+  return {
+    signal: controller.signal,
+    armIdle,
+    touch: armIdle,
+    cleanup,
+    timeoutReason: () => timeoutReason
+  };
+}
+
+function resolvedLive2DLLMRequestError(error, watchdog) {
+  return watchdog?.timeoutReason?.() || error;
+}
+
 function createLive2DHistoryReservation() {
   const sequence = historyRequestSequence += 1;
   const epoch = historyEpoch;
@@ -1290,6 +1386,7 @@ async function requestLive2DControlInternal(message, options = {}, historyReserv
   }
 
   const signal = options.signal;
+  const requestWatchdog = options.requestWatchdog;
   throwIfLive2DRequestAborted(signal);
   const history = readLive2DLLMHistory();
   const memoryContext = options.memoryContext || {};
@@ -1301,6 +1398,7 @@ async function requestLive2DControlInternal(message, options = {}, historyReserv
   let rawReply = '';
 
   if (settings.useProxy) {
+    requestWatchdog?.armIdle?.();
     const response = await fetch('/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1315,12 +1413,15 @@ async function requestLive2DControlInternal(message, options = {}, historyReserv
       }),
       signal
     });
+    requestWatchdog?.touch?.();
     const result = await response.json().catch(() => ({}));
+    requestWatchdog?.touch?.();
     throwIfLive2DRequestAborted(signal);
     if (!response.ok || !result.success) throw new Error(result.message || `LLM ${response.status}`);
     rawReply = result.data?.reply || '';
   } else {
     const apiUrl = normalizeOpenAIUrl(settings.apiUrl, settings.model, settings.provider);
+    requestWatchdog?.armIdle?.();
     const response = await fetch(apiUrl, {
       method: 'POST',
       headers: {
@@ -1331,8 +1432,10 @@ async function requestLive2DControlInternal(message, options = {}, historyReserv
       body: JSON.stringify(buildDirectRequestBody({ ...settings, apiUrl }, systemPrompt, history, message, visionContext.payload)),
       signal
     });
+    requestWatchdog?.touch?.();
     if (!response.ok) throw new Error(`LLM ${response.status}`);
     rawReply = pickReply(await response.json());
+    requestWatchdog?.touch?.();
     throwIfLive2DRequestAborted(signal);
   }
 
@@ -1349,11 +1452,19 @@ async function requestLive2DControlInternal(message, options = {}, historyReserv
 
 export async function requestLive2DControl(message, options = {}) {
   const historyReservation = options.historyReservation || createLive2DHistoryReservation();
+  const inheritedWatchdog = options.requestWatchdog;
+  const requestWatchdog = inheritedWatchdog || createLive2DLLMRequestWatchdog(options);
   try {
-    return await requestLive2DControlInternal(message, options, historyReservation);
+    return await requestLive2DControlInternal(message, {
+      ...options,
+      signal: requestWatchdog.signal,
+      requestWatchdog
+    }, historyReservation);
   } catch (error) {
     historyReservation.cancel();
-    throw error;
+    throw resolvedLive2DLLMRequestError(error, requestWatchdog);
+  } finally {
+    if (!inheritedWatchdog) requestWatchdog.cleanup();
   }
 }
 
@@ -1364,6 +1475,7 @@ async function requestLive2DControlStreamInternal(message, handlers = {}, histor
   }
 
   const signal = handlers.signal;
+  const requestWatchdog = handlers.requestWatchdog;
   throwIfLive2DRequestAborted(signal);
   const history = readLive2DLLMHistory();
   const memoryContext = handlers.memoryContext || {};
@@ -1376,6 +1488,7 @@ async function requestLive2DControlStreamInternal(message, handlers = {}, histor
   let rawReply = '';
 
   if (settings.useProxy) {
+    requestWatchdog?.armIdle?.();
     const response = await fetch('/api/chat/stream', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1390,13 +1503,14 @@ async function requestLive2DControlStreamInternal(message, handlers = {}, histor
       }),
       signal
     });
+    requestWatchdog?.touch?.();
     if (!response.ok) {
       if (response.status === 404 || response.status === 405) {
-        const fallback = await requestLive2DControl(message, {
+        const fallback = await requestLive2DControlInternal(message, {
           memoryContext,
           signal,
-          historyReservation
-        });
+          requestWatchdog
+        }, historyReservation);
         throwIfLive2DRequestAborted(signal);
         sentenceEmitter.flushReply(fallback.reply);
         handlers.onDone?.(fallback);
@@ -1406,6 +1520,7 @@ async function requestLive2DControlStreamInternal(message, handlers = {}, histor
       throw new Error(result.message || `LLM ${response.status}`);
     }
     rawReply = await readStreamingTextResponse(response, {
+      onActivity: requestWatchdog?.touch,
       onText: (delta, accumulated) => {
         if (signal?.aborted) return;
         sentenceEmitter.pushRaw(accumulated);
@@ -1417,6 +1532,7 @@ async function requestLive2DControlStreamInternal(message, handlers = {}, histor
     });
   } else {
     const apiUrl = normalizeOpenAIUrl(settings.apiUrl, settings.model, settings.provider);
+    requestWatchdog?.armIdle?.();
     const response = await fetch(apiUrl, {
       method: 'POST',
       headers: {
@@ -1427,8 +1543,10 @@ async function requestLive2DControlStreamInternal(message, handlers = {}, histor
       body: JSON.stringify(buildStreamingDirectRequestBody({ ...settings, apiUrl }, systemPrompt, history, message, visionContext.payload)),
       signal
     });
+    requestWatchdog?.touch?.();
     if (!response.ok) throw new Error(`LLM ${response.status}`);
     rawReply = await readStreamingTextResponse(response, {
+      onActivity: requestWatchdog?.touch,
       onText: (delta, accumulated) => {
         if (signal?.aborted) return;
         sentenceEmitter.pushRaw(accumulated);
@@ -1458,10 +1576,18 @@ async function requestLive2DControlStreamInternal(message, handlers = {}, histor
 
 export async function requestLive2DControlStream(message, handlers = {}) {
   const historyReservation = handlers.historyReservation || createLive2DHistoryReservation();
+  const inheritedWatchdog = handlers.requestWatchdog;
+  const requestWatchdog = inheritedWatchdog || createLive2DLLMRequestWatchdog(handlers);
   try {
-    return await requestLive2DControlStreamInternal(message, handlers, historyReservation);
+    return await requestLive2DControlStreamInternal(message, {
+      ...handlers,
+      signal: requestWatchdog.signal,
+      requestWatchdog
+    }, historyReservation);
   } catch (error) {
     historyReservation.cancel();
-    throw error;
+    throw resolvedLive2DLLMRequestError(error, requestWatchdog);
+  } finally {
+    if (!inheritedWatchdog) requestWatchdog.cleanup();
   }
 }
