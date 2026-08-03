@@ -497,7 +497,11 @@ function memoryDataProviderReady(settings) {
 export async function searchLive2DMemory(inputText, options = {}) {
   const settings = readRoomMemorySettings();
   if (!memorySettingsReady(settings)) return [];
-  await flushLive2DMemoryOutbox().catch(async () => ({ flushed: 0, pending: (await readMemoryOutbox()).length }));
+  // Durable writes must never gate a live reply. During busy chat the outbox is
+  // continuously replenished, so waiting for a completely empty queue can starve
+  // retrieval forever. Keep draining in the background while searching the last
+  // committed memory snapshot immediately.
+  flushLive2DMemoryOutbox().catch(() => {});
 
   const tags = [
     ...inferMemoryTags(inputText),
