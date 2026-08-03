@@ -2,7 +2,11 @@ export function createLive2DTurnPipeline(options = {}) {
   const onPlaybackIdle = typeof options.onPlaybackIdle === 'function'
     ? options.onPlaybackIdle
     : () => {};
-  let generationInFlight = false;
+  const maxConcurrentGenerations = Math.max(
+    1,
+    Math.round(Number(options.maxConcurrentGenerations) || 2)
+  );
+  let activeGenerations = 0;
   let playbackEpoch = 0;
   const playbackTasks = new Set();
 
@@ -22,16 +26,16 @@ export function createLive2DTurnPipeline(options = {}) {
   }
 
   async function runGeneration(generate) {
-    if (generationInFlight || typeof generate !== 'function') {
+    if (activeGenerations >= maxConcurrentGenerations || typeof generate !== 'function') {
       return { accepted: false, result: null };
     }
-    generationInFlight = true;
+    activeGenerations += 1;
     try {
       const result = await generate();
       trackPlayback(result?.playbackDone);
       return { accepted: true, result };
     } finally {
-      generationInFlight = false;
+      activeGenerations = Math.max(0, activeGenerations - 1);
     }
   }
 
@@ -44,7 +48,9 @@ export function createLive2DTurnPipeline(options = {}) {
     runGeneration,
     trackPlayback,
     clearPlayback,
-    isGenerationInFlight: () => generationInFlight,
+    isGenerationInFlight: () => activeGenerations > 0,
+    activeGenerationCount: () => activeGenerations,
+    canStartGeneration: () => activeGenerations < maxConcurrentGenerations,
     pendingPlaybackCount: () => playbackTasks.size
   };
 }

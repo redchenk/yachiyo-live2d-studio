@@ -158,9 +158,12 @@ const MODEL_VIEWPORT_LIMITS = Object.freeze({
   maxY: 680
 });
 
-let liveTurnInFlight = false;
+let liveTurnsInFlight = 0;
+let liveLlmRequestCount = 0;
 let liveDirectorSessionId = 0;
-let liveDirectorAbortController = null;
+const liveDirectorAbortControllers = new Set();
+let livePlaybackPrefetchBarrier = null;
+let livePlaybackPrefetchConsumed = true;
 let speechPlayer = null;
 let streamingSpeechSession = null;
 let asrRecorder = null;
@@ -187,6 +190,7 @@ const liveDirectorScheduler = createLive2DDirectorScheduler({
   onTurn: (context) => runLiveTurn(context)
 });
 const liveTurnPipeline = createLive2DTurnPipeline({
+  maxConcurrentGenerations: 2,
   onPlaybackIdle: () => handleLivePlaybackIdle()
 });
 
@@ -905,7 +909,7 @@ async function init() {
       if (patch.status === 'playing') {
         if (liveDirector.running) liveDirector.status = 'speaking';
       } else if (patch.status === 'idle' || patch.status === 'disabled' || patch.status === 'error') {
-        if (liveDirector.running && !liveTurnInFlight) liveDirector.status = 'idle';
+        if (liveDirector.running && liveTurnsInFlight < 1) liveDirector.status = 'idle';
       }
       if (patch.status === 'disabled' || patch.status === 'error') {
         speechCaptionSynchronizer.clear();
@@ -1100,8 +1104,13 @@ async function performLLMAct(message, source = 'manual', options = {}) {
 
 async function performStreamingLiveTurn(message, options = {}) {
   const value = String(message || '').trim();
-  if (!value || llmState.value.loading || !speechPlayer) return null;
+  if (
+    !value ||
+    (!options.allowConcurrent && llmState.value.loading) ||
+    !speechPlayer
+  ) return null;
   throwIfLiveTurnOperationCancelled(options);
+  liveLlmRequestCount += 1;
   const logId = uid('yachiyo-stream');
   const playbackPromises = [];
   let streamedReply = '';
@@ -1110,11 +1119,24 @@ async function performStreamingLiveTurn(message, options = {}) {
   let queuedLive2DCount = 0;
   let dispatchedStreamLive2DCount = 0;
   let playbackFailed = false;
+  let firstPlaybackStarted = false;
+  let resolveFirstPlaybackStarted = null;
+  const firstPlaybackStartedReady = new Promise((resolve) => {
+    resolveFirstPlaybackStarted = resolve;
+  });
   const captionTranscript = createLive2DOrderedCaptionTranscript();
   const preparedCaptionTranscript = createLive2DOrderedCaptionTranscript();
+  const notifyFirstPlaybackStart = () => {
+    if (firstPlaybackStarted || !isLiveTurnOperationCurrent(options)) return;
+    firstPlaybackStarted = true;
+    resolveFirstPlaybackStarted?.();
+    options.onFirstPlaybackStart?.();
+  };
 
   streamingSpeechSession?.begin();
-  dispatchCharacterState('thinking', { holdMs: 2400, attention: 0.82, arousal: 0.5 });
+  if (!options.allowConcurrent || speechState.value.status !== 'playing') {
+    dispatchCharacterState('thinking', { holdMs: 2400, attention: 0.82, arousal: 0.5 });
+  }
   llmState.value = {
     ...llmState.value,
     loading: true,
@@ -1203,28 +1225,40 @@ async function performStreamingLiveTurn(message, options = {}) {
         };
         liveDirector.status = 'speaking';
         queuedSpeechCount += 1;
-        streamingSpeechSession?.queueLine();
-        playbackPromises.push(speechPlayer.enqueue(speechSentence, {
-          queueGroup: 'live-reply',
-          priority: 100,
-          interTurnPauseMs: sentenceIndex === 0
-            ? Math.max(0, Number(options.interTurnPauseMs) || 0)
-            : 0,
-          emotion: sentence.emotion,
-          speechStyle: sentence.speechStyle,
-          sourceLang: sentence.sourceLang || undefined,
-          startGate: captionPlaybackGate,
-          onStart: ({ durationMs }) => showCaption(durationMs)
-        }).catch((error) => {
-          playbackFailed = true;
-          if (error?.name === 'AbortError') return;
-          speechState.value = { status: 'error', error: error.message || 'TTS failed' };
-        }).finally(() => {
-          speechCaptionSynchronizer.finish(captionToken);
-          if (isLiveTurnOperationCurrent(options)) {
-            streamingSpeechSession?.lineSettled();
-          }
-        }));
+        let speechLineQueued = false;
+        const playbackPromise = Promise.resolve(options.enqueueAfter)
+          .then(() => {
+            throwIfLiveTurnOperationCancelled(options);
+            streamingSpeechSession?.queueLine();
+            speechLineQueued = true;
+            return speechPlayer.enqueue(speechSentence, {
+              queueGroup: 'live-reply',
+              priority: 100,
+              interTurnPauseMs: sentenceIndex === 0
+                ? Math.max(0, Number(options.interTurnPauseMs) || 0)
+                : 0,
+              emotion: sentence.emotion,
+              speechStyle: sentence.speechStyle,
+              sourceLang: sentence.sourceLang || undefined,
+              startGate: captionPlaybackGate,
+              onStart: ({ durationMs }) => {
+                showCaption(durationMs);
+                notifyFirstPlaybackStart();
+              }
+            });
+          })
+          .catch((error) => {
+            playbackFailed = true;
+            if (error?.name === 'AbortError') return;
+            speechState.value = { status: 'error', error: error.message || 'TTS failed' };
+          })
+          .finally(() => {
+            speechCaptionSynchronizer.finish(captionToken);
+            if (speechLineQueued && isLiveTurnOperationCurrent(options)) {
+              streamingSpeechSession?.lineSettled();
+            }
+          });
+        playbackPromises.push(playbackPromise);
       }
     });
     throwIfLiveTurnOperationCancelled(options);
@@ -1238,7 +1272,19 @@ async function performStreamingLiveTurn(message, options = {}) {
       visibleReply = preparedCaptionTranscript.read() || finalVisibleCaption || streamedReply;
     }
     if (queuedSpeechCount > 0 && finalResult.live2d && queuedLive2DCount < 1) {
-      dispatchRoomLive2D(alignLive2DToSpeech(finalResult.live2d, Number(finalResult.live2d.durationMs) || 0));
+      const dispatchFallbackLive2D = () => {
+        if (!isLiveTurnOperationCurrent(options) || dispatchedStreamLive2DCount > 0) return;
+        dispatchedStreamLive2DCount += 1;
+        dispatchRoomLive2D(alignLive2DToSpeech(
+          finalResult.live2d,
+          Number(finalResult.live2d.durationMs) || 0
+        ));
+      };
+      if (options.allowConcurrent) {
+        firstPlaybackStartedReady.then(dispatchFallbackLive2D);
+      } else {
+        dispatchFallbackLive2D();
+      }
     }
     if (queuedSpeechCount < 1) {
       const finalSpeech = ensureLive2DAudienceNamesInSpeech(
@@ -1282,50 +1328,60 @@ async function performStreamingLiveTurn(message, options = {}) {
       };
       const finalCaptionReady = preparedCaption.ready.then(publishFinalCaption);
       let finalCaptionToken = 0;
-      streamingSpeechSession?.queueLine();
-      playbackPromises.push(speechPlayer.enqueue(finalSpeech, {
-        queueGroup: 'live-reply',
-        priority: 100,
-        interTurnPauseMs: Math.max(0, Number(options.interTurnPauseMs) || 0),
-        emotion: finalResult.live2d?.emotion || finalResult.live2d?.expression || 'neutral',
-        speechStyle: finalResult.live2d?.speechStyle || null,
-        sourceLang: finalResult.caption ? 'ja' : undefined,
-        startGate: captionPlaybackGate,
-        onStart: ({ durationMs }) => {
-          if (!isLiveTurnOperationCurrent(options)) return;
-          const caption = preparedCaption.read();
-          finalCaptionToken = speechCaptionSynchronizer.start({
-            fallback: caption,
-            resolved: finalCaptionReady
+      let finalSpeechLineQueued = false;
+      const finalPlaybackPromise = Promise.resolve(options.enqueueAfter)
+        .then(() => {
+          throwIfLiveTurnOperationCancelled(options);
+          streamingSpeechSession?.queueLine();
+          finalSpeechLineQueued = true;
+          return speechPlayer.enqueue(finalSpeech, {
+            queueGroup: 'live-reply',
+            priority: 100,
+            interTurnPauseMs: Math.max(0, Number(options.interTurnPauseMs) || 0),
+            emotion: finalResult.live2d?.emotion || finalResult.live2d?.expression || 'neutral',
+            speechStyle: finalResult.live2d?.speechStyle || null,
+            sourceLang: finalResult.caption ? 'ja' : undefined,
+            startGate: captionPlaybackGate,
+            onStart: ({ durationMs }) => {
+              if (!isLiveTurnOperationCurrent(options)) return;
+              const caption = preparedCaption.read();
+              finalCaptionToken = speechCaptionSynchronizer.start({
+                fallback: caption,
+                resolved: finalCaptionReady
+              });
+              publishFinalCaption(caption);
+              if (finalResult.live2d) dispatchRoomLive2D(alignLive2DToSpeech(finalResult.live2d, durationMs));
+              dispatchStreamingSpeechStart(durationMs, {
+                emotion: finalResult.live2d?.emotion || finalResult.live2d?.expression || 'neutral'
+              });
+              notifyFirstPlaybackStart();
+            }
           });
-          publishFinalCaption(caption);
-          if (finalResult.live2d) dispatchRoomLive2D(alignLive2DToSpeech(finalResult.live2d, durationMs));
-          dispatchStreamingSpeechStart(durationMs, {
-            emotion: finalResult.live2d?.emotion || finalResult.live2d?.expression || 'neutral'
-          });
-        }
-      }).catch((error) => {
-        playbackFailed = true;
-        if (error?.name === 'AbortError') return;
-        speechState.value = { status: 'error', error: error.message || 'TTS failed' };
-      }).finally(() => {
-        speechCaptionSynchronizer.finish(finalCaptionToken);
-        if (isLiveTurnOperationCurrent(options)) {
-          streamingSpeechSession?.lineSettled();
-        }
-      }));
+        })
+        .catch((error) => {
+          playbackFailed = true;
+          if (error?.name === 'AbortError') return;
+          speechState.value = { status: 'error', error: error.message || 'TTS failed' };
+        })
+        .finally(() => {
+          speechCaptionSynchronizer.finish(finalCaptionToken);
+          if (finalSpeechLineQueued && isLiveTurnOperationCurrent(options)) {
+            streamingSpeechSession?.lineSettled();
+          }
+        });
+      playbackPromises.push(finalPlaybackPromise);
       visibleReply = preparedCaption.read() || visibleYachiyoText(finalResult.caption) || streamedReply;
     }
 
     llmState.value = {
-      loading: false,
+      loading: liveLlmRequestCount > 1,
       error: '',
       reply: streamedReply || visibleReply || llmState.value.reply,
       raw: finalResult.raw,
       live2d: finalResult.live2d
     };
     liveDirector.turn += 1;
-    Promise.resolve()
+    Promise.resolve(options.allowConcurrent ? firstPlaybackStartedReady : undefined)
       .then(() => {
         if (!isLiveTurnOperationCurrent(options)) return null;
         return executeMusicFromLLMResult(finalResult, 'live', value, {
@@ -1363,11 +1419,19 @@ async function performStreamingLiveTurn(message, options = {}) {
     if (isLiveTurnOperationCurrent(options)) {
       llmState.value = {
         ...llmState.value,
-        loading: false,
+        loading: liveLlmRequestCount > 1,
         error: error.message || 'LLM control failed'
       };
     }
     throw error;
+  } finally {
+    liveLlmRequestCount = Math.max(0, liveLlmRequestCount - 1);
+    if (isLiveTurnOperationCurrent(options)) {
+      llmState.value = {
+        ...llmState.value,
+        loading: liveLlmRequestCount > 0
+      };
+    }
   }
 }
 
@@ -1422,8 +1486,30 @@ function buildLiveDirectorPrompt(audienceLines, options = {}) {
   ].join('\n');
 }
 
+function scheduleLivePlaybackPrefetch() {
+  if (
+    livePlaybackPrefetchConsumed ||
+    !livePlaybackPrefetchBarrier ||
+    !liveDirector.running ||
+    audienceQueue.value.length < 1
+  ) return false;
+  livePlaybackPrefetchConsumed = true;
+  const enqueueAfter = livePlaybackPrefetchBarrier;
+  queueMicrotask(() => runLiveTurn({
+    reason: 'playback-prefetch',
+    enqueueAfter
+  }));
+  return true;
+}
+
+function openLivePlaybackPrefetchWindow(enqueueAfter) {
+  livePlaybackPrefetchBarrier = enqueueAfter || Promise.resolve();
+  livePlaybackPrefetchConsumed = false;
+  scheduleLivePlaybackPrefetch();
+}
+
 function handleLivePlaybackIdle() {
-  if (!liveDirector.running || liveTurnInFlight) return;
+  if (!liveDirector.running || liveTurnsInFlight > 0) return;
   if (speechState.value.status !== 'playing') liveDirector.status = 'idle';
   liveDirectorScheduler.playbackIdle({
     pendingAudience: audienceQueue.value.length > 0,
@@ -1433,22 +1519,29 @@ function handleLivePlaybackIdle() {
 }
 
 async function runLiveTurn(trigger = {}) {
+  const playbackPrefetch = trigger?.reason === 'playback-prefetch';
   if (
     !liveDirector.running ||
-    liveTurnInFlight ||
-    liveTurnPipeline.isGenerationInFlight() ||
-    llmState.value.loading
+    !liveTurnPipeline.canStartGeneration() ||
+    (!playbackPrefetch && liveTurnsInFlight > 0) ||
+    (!playbackPrefetch && llmState.value.loading)
   ) return;
-  liveTurnInFlight = true;
+  liveTurnsInFlight += 1;
   const turnSessionId = liveDirectorSessionId;
   const turnAbortController = new AbortController();
-  liveDirectorAbortController = turnAbortController;
+  liveDirectorAbortControllers.add(turnAbortController);
+  let settleGenerationBarrier = null;
+  const generationSettled = new Promise((resolve) => {
+    settleGenerationBarrier = resolve;
+  });
   const isCurrentTurn = () => (
     liveDirector.running &&
     turnSessionId === liveDirectorSessionId &&
     !turnAbortController.signal.aborted
   );
-  liveDirector.status = 'thinking';
+  liveDirector.status = playbackPrefetch && speechState.value.status === 'playing'
+    ? 'speaking'
+    : 'thinking';
   liveDirector.error = '';
   const pendingCountBeforeSelection = audienceQueue.value.length;
   const priorityPendingBeforeSelection = hasPriorityAudience();
@@ -1481,7 +1574,7 @@ async function runLiveTurn(trigger = {}) {
     audienceQueue.value = requeueLive2DAudienceTurn(audienceQueue.value, targets);
     if (liveDirector.running) {
       liveDirectorScheduler.audienceArrived({
-        turnInFlight: liveTurnInFlight || liveTurnPipeline.isGenerationInFlight(),
+        turnInFlight: liveTurnsInFlight > 0 || liveTurnPipeline.isGenerationInFlight(),
         playbackPending: liveTurnPipeline.pendingPlaybackCount() > 0
       });
     }
@@ -1493,11 +1586,19 @@ async function runLiveTurn(trigger = {}) {
     const shouldSpeak = Boolean(liveDirector.autoVoice && speechPlayer);
     const generation = await liveTurnPipeline.runGeneration(async () => {
       if (shouldSpeak) {
-        liveDirector.status = 'thinking';
+        if (!playbackPrefetch || speechState.value.status !== 'playing') {
+          liveDirector.status = 'thinking';
+        }
         return performStreamingLiveTurn(buildLiveDirectorPrompt(audienceLines, { streaming: true }), {
           requestedBy: musicRequestedBy,
           audienceLines,
           interTurnPauseMs,
+          allowConcurrent: playbackPrefetch,
+          enqueueAfter: trigger?.enqueueAfter,
+          onFirstPlaybackStart: () => {
+            if (!isCurrentTurn()) return;
+            openLivePlaybackPrefetchWindow(generationSettled);
+          },
           signal: turnAbortController.signal,
           isCurrent: isCurrentTurn
         });
@@ -1559,27 +1660,20 @@ async function runLiveTurn(trigger = {}) {
     if (!cancelled) {
       liveDirector.error = error.message || 'Live director failed';
     }
-    if (turnSessionId === liveDirectorSessionId) {
+    if (turnSessionId === liveDirectorSessionId && liveTurnsInFlight <= 1) {
       liveDirector.status = 'idle';
     }
   } finally {
-    liveTurnInFlight = false;
-    if (liveDirectorAbortController === turnAbortController) {
-      liveDirectorAbortController = null;
-    }
+    settleGenerationBarrier?.();
+    liveTurnsInFlight = Math.max(0, liveTurnsInFlight - 1);
+    liveDirectorAbortControllers.delete(turnAbortController);
     if (liveDirector.running) {
       if (turnSessionId !== liveDirectorSessionId) {
         queueMicrotask(() => runLiveTurn({ reason: 'restart' }));
         return;
       }
       const pendingPlaybackCount = liveTurnPipeline.pendingPlaybackCount();
-      if (
-        audienceQueue.value.length > 0 &&
-        pendingPlaybackCount > 0 &&
-        pendingPlaybackCount < 2
-      ) {
-        queueMicrotask(() => runLiveTurn({ reason: 'prefetch' }));
-      } else if (pendingPlaybackCount < 1) {
+      if (liveTurnsInFlight < 1 && pendingPlaybackCount < 1) {
         handleLivePlaybackIdle();
       }
     }
@@ -1603,8 +1697,12 @@ function stopLiveDirector() {
   liveDirectorSessionId += 1;
   liveDirector.running = false;
   liveDirector.status = 'idle';
-  liveDirectorAbortController?.abort();
-  liveDirectorAbortController = null;
+  for (const controller of liveDirectorAbortControllers) controller.abort();
+  liveDirectorAbortControllers.clear();
+  liveTurnsInFlight = 0;
+  liveLlmRequestCount = 0;
+  livePlaybackPrefetchBarrier = null;
+  livePlaybackPrefetchConsumed = true;
   liveDirectorScheduler.cancel();
   liveTurnPipeline.clearPlayback();
   streamingSpeechSession?.cancel();
@@ -1640,10 +1738,12 @@ function submitAudienceLine(text, meta = {}) {
   pushLog('audience', value, meta);
   dispatchCharacterState('listening', { holdMs: 1800, attention: 0.88, arousal: 0.48 });
   if (queued.accepted && liveDirector.running) {
-    liveDirectorScheduler.audienceArrived({
-      turnInFlight: liveTurnInFlight,
-      playbackPending: liveTurnPipeline.pendingPlaybackCount() > 0
-    });
+    if (!scheduleLivePlaybackPrefetch()) {
+      liveDirectorScheduler.audienceArrived({
+        turnInFlight: liveTurnsInFlight > 0,
+        playbackPending: liveTurnPipeline.pendingPlaybackCount() > 0
+      });
+    }
   }
 }
 

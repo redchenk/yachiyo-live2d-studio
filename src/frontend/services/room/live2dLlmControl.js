@@ -28,6 +28,10 @@ import { normalizeLLMApiUrl, readRoomLLMSettings } from './roomSettings';
 import { readJson, writeJson } from './roomStorage';
 
 const HISTORY_KEY = 'live2dLLMControlHistory';
+let historyRequestSequence = 0;
+let nextHistorySettlementSequence = 1;
+let historyEpoch = 0;
+const pendingHistorySettlements = new Map();
 const HARD_SENTENCE_END_PATTERN = /[\u3002\uff01\uff1f.!?\u2026]/u;
 const SOFT_SENTENCE_END_PATTERN = /[\uff0c\u3001,;\uff1b\n]/u;
 const SENTENCE_TRAILING_PATTERN = /[\s"'\u201d\u2019\uff09)\]\u3011\u300b\u300d\u300f]+/u;
@@ -1117,7 +1121,59 @@ function throwIfLive2DRequestAborted(signal) {
   throw error;
 }
 
-function finishLive2DControlRequest(message, history, rawReply, sentenceEmitter = null, memoryContext = {}) {
+function flushLive2DHistorySettlements() {
+  while (pendingHistorySettlements.has(nextHistorySettlementSequence)) {
+    const settlement = pendingHistorySettlements.get(nextHistorySettlementSequence);
+    pendingHistorySettlements.delete(nextHistorySettlementSequence);
+    nextHistorySettlementSequence += 1;
+    if (!settlement || settlement.epoch !== historyEpoch) continue;
+    const currentHistory = readLive2DLLMHistory();
+    writeJson(HISTORY_KEY, [
+      ...currentHistory,
+      { role: 'user', content: settlement.message },
+      { role: 'assistant', content: settlement.reply }
+    ].slice(-8));
+    try {
+      settlement.afterCommit?.();
+    } catch (_) {
+      // Conversation history must continue draining if durable memory is temporarily unavailable.
+    }
+  }
+}
+
+function createLive2DHistoryReservation() {
+  const sequence = historyRequestSequence += 1;
+  const epoch = historyEpoch;
+  let settled = false;
+  const settle = (value) => {
+    if (settled) return;
+    settled = true;
+    if (epoch !== historyEpoch) return;
+    pendingHistorySettlements.set(sequence, value ? { ...value, epoch } : null);
+    flushLive2DHistorySettlements();
+  };
+  return {
+    commit(message, reply, afterCommit = null) {
+      settle({
+        message: String(message || ''),
+        reply: String(reply || ''),
+        afterCommit: typeof afterCommit === 'function' ? afterCommit : null
+      });
+    },
+    cancel() {
+      settle(null);
+    }
+  };
+}
+
+function finishLive2DControlRequest(
+  message,
+  history,
+  rawReply,
+  sentenceEmitter = null,
+  memoryContext = {},
+  historyReservation = null
+) {
   const parsed = parseLive2DControlPayload(rawReply);
   if (sentenceEmitter && sentenceEmitter.emittedCount < 1) {
     sentenceEmitter.flushReply(parsed.reply, parsed.caption);
@@ -1126,19 +1182,24 @@ function finishLive2DControlRequest(message, history, rawReply, sentenceEmitter 
     writePendingLive2DMemories(parsed.memoryWrites, memoryContext).catch(() => {});
   }
   const trustedViewers = Array.isArray(memoryContext.viewers) ? memoryContext.viewers.filter(Boolean) : [];
-  recordLive2DSessionMemoryTurn({
+  const recordSessionTurn = () => recordLive2DSessionMemoryTurn({
     source: 'llm-control',
     input: message,
     reply: parsed.reply,
     emotion: parsed.live2d?.emotion || parsed.live2d?.expression || parsed.raw?.emotion || 'neutral',
     viewer: trustedViewers.length === 1 ? trustedViewers[0] : undefined
   });
-  const nextHistory = [
-    ...history,
-    { role: 'user', content: String(message || '') },
-    { role: 'assistant', content: parsed.reply }
-  ].slice(-8);
-  writeJson(HISTORY_KEY, nextHistory);
+  if (historyReservation?.commit) {
+    historyReservation.commit(message, parsed.reply, recordSessionTurn);
+  } else {
+    const currentHistory = readLive2DLLMHistory();
+    writeJson(HISTORY_KEY, [
+      ...currentHistory,
+      { role: 'user', content: String(message || '') },
+      { role: 'assistant', content: parsed.reply }
+    ].slice(-8));
+    recordSessionTurn();
+  }
   return parsed;
 }
 
@@ -1216,10 +1277,13 @@ export function readLive2DLLMHistory() {
 }
 
 export function clearLive2DLLMHistory() {
+  historyEpoch += 1;
+  pendingHistorySettlements.clear();
+  nextHistorySettlementSequence = historyRequestSequence + 1;
   writeJson(HISTORY_KEY, []);
 }
 
-export async function requestLive2DControl(message, options = {}) {
+async function requestLive2DControlInternal(message, options = {}, historyReservation = null) {
   const settings = readRoomLLMSettings();
   if (!settings.apiKey || !settings.apiUrl) {
     throw new Error('Missing LLM settings. Configure LLM in Studio Settings first.');
@@ -1273,10 +1337,27 @@ export async function requestLive2DControl(message, options = {}) {
   }
 
   throwIfLive2DRequestAborted(signal);
-  return finishLive2DControlRequest(message, history, rawReply, null, memoryContext);
+  return finishLive2DControlRequest(
+    message,
+    history,
+    rawReply,
+    null,
+    memoryContext,
+    historyReservation
+  );
 }
 
-export async function requestLive2DControlStream(message, handlers = {}) {
+export async function requestLive2DControl(message, options = {}) {
+  const historyReservation = options.historyReservation || createLive2DHistoryReservation();
+  try {
+    return await requestLive2DControlInternal(message, options, historyReservation);
+  } catch (error) {
+    historyReservation.cancel();
+    throw error;
+  }
+}
+
+async function requestLive2DControlStreamInternal(message, handlers = {}, historyReservation = null) {
   const settings = readRoomLLMSettings();
   if (!settings.apiKey || !settings.apiUrl) {
     throw new Error('Missing LLM settings. Configure LLM in Studio Settings first.');
@@ -1311,7 +1392,11 @@ export async function requestLive2DControlStream(message, handlers = {}) {
     });
     if (!response.ok) {
       if (response.status === 404 || response.status === 405) {
-        const fallback = await requestLive2DControl(message, { memoryContext, signal });
+        const fallback = await requestLive2DControl(message, {
+          memoryContext,
+          signal,
+          historyReservation
+        });
         throwIfLive2DRequestAborted(signal);
         sentenceEmitter.flushReply(fallback.reply);
         handlers.onDone?.(fallback);
@@ -1358,8 +1443,25 @@ export async function requestLive2DControlStream(message, handlers = {}) {
   throwIfLive2DRequestAborted(signal);
   sentenceEmitter.pushRaw(rawReply, { flush: true });
   throwIfLive2DRequestAborted(signal);
-  const parsed = finishLive2DControlRequest(message, history, rawReply, sentenceEmitter, memoryContext);
+  const parsed = finishLive2DControlRequest(
+    message,
+    history,
+    rawReply,
+    sentenceEmitter,
+    memoryContext,
+    historyReservation
+  );
   throwIfLive2DRequestAborted(signal);
   handlers.onDone?.(parsed);
   return parsed;
+}
+
+export async function requestLive2DControlStream(message, handlers = {}) {
+  const historyReservation = handlers.historyReservation || createLive2DHistoryReservation();
+  try {
+    return await requestLive2DControlStreamInternal(message, handlers, historyReservation);
+  } catch (error) {
+    historyReservation.cancel();
+    throw error;
+  }
 }

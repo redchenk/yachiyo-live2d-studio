@@ -9,6 +9,48 @@ function deferred() {
   return { promise, resolve };
 }
 
+const concurrentEvents = [];
+const firstGenerationGate = deferred();
+const secondGenerationGate = deferred();
+const concurrentPipeline = createLive2DTurnPipeline({ maxConcurrentGenerations: 2 });
+const firstConcurrentRun = concurrentPipeline.runGeneration(async () => {
+  concurrentEvents.push('generate-1-start');
+  await firstGenerationGate.promise;
+  concurrentEvents.push('generate-1-done');
+  return { reply: '第一轮回复' };
+});
+await Promise.resolve();
+assert.equal(concurrentPipeline.activeGenerationCount(), 1);
+assert.equal(
+  concurrentPipeline.canStartGeneration(),
+  true,
+  'the next LLM slot must be available while the first streamed turn is still finishing'
+);
+const secondConcurrentRun = concurrentPipeline.runGeneration(async () => {
+  concurrentEvents.push('generate-2-start');
+  await secondGenerationGate.promise;
+  concurrentEvents.push('generate-2-done');
+  return { reply: '第二轮回复' };
+});
+await Promise.resolve();
+assert.deepEqual(
+  concurrentEvents,
+  ['generate-1-start', 'generate-2-start'],
+  'TTS playback start must be able to launch the next LLM request before the previous stream ends'
+);
+assert.equal(concurrentPipeline.activeGenerationCount(), 2);
+assert.equal(concurrentPipeline.canStartGeneration(), false);
+assert.equal(
+  (await concurrentPipeline.runGeneration(async () => ({ reply: 'must not run' }))).accepted,
+  false,
+  'only one look-ahead generation may run alongside the active streamed turn'
+);
+firstGenerationGate.resolve();
+secondGenerationGate.resolve();
+assert.equal((await firstConcurrentRun).accepted, true);
+assert.equal((await secondConcurrentRun).accepted, true);
+assert.equal(concurrentPipeline.activeGenerationCount(), 0);
+
 const firstPlayback = deferred();
 const secondPlayback = deferred();
 const events = [];

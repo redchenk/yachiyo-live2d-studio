@@ -34,5 +34,25 @@ assert.match(
   /resolveLive2DChineseCaptionWithFallback/,
   'backup caption translation must be lazy instead of firing for every streamed sentence'
 );
+assert.match(
+  streamingTurn,
+  /onFirstPlaybackStart/,
+  'the first confirmed TTS playback event must be exposed to the live-turn prefetch coordinator'
+);
+assert.match(
+  source,
+  /reason:\s*'playback-prefetch'/,
+  'the next audience LLM turn must be launched from the previous turn playback-start boundary'
+);
+assert.match(
+  streamingTurn,
+  /Promise\.resolve\(options\.enqueueAfter\)/,
+  'prefetched speech must wait until the previous stream has queued all of its sentences'
+);
+assert.match(
+  streamingTurn,
+  /interTurnPauseMs/,
+  'streaming prefetch must retain the speech queue boundary pause between audience turns'
+);
 
 console.log('live caption nonblocking playback checks passed');
