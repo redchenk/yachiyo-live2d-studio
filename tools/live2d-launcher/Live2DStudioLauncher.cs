@@ -472,6 +472,12 @@ internal sealed class LocalStudioServer : IDisposable
                 return;
             }
 
+            if (method == "POST" && string.Equals(path, "/api/live-reply/telemetry", StringComparison.OrdinalIgnoreCase))
+            {
+                WriteApiResponse(stream, DesktopApiProxy.LiveReplyTelemetry(request.Body));
+                return;
+            }
+
             if (method == "POST" && string.Equals(path, "/api/tts", StringComparison.OrdinalIgnoreCase))
             {
                 WriteApiResponse(stream, DesktopApiProxy.Tts(request.Body));
@@ -999,6 +1005,12 @@ internal static class DesktopApiProxy
     private static readonly object MemoryDataServiceLock = new object();
     private static readonly object AsrServiceLock = new object();
     private static readonly object NeteaseMusicApiServiceLock = new object();
+    private static readonly object LiveReplyTelemetryLock = new object();
+    private static readonly HashSet<string> LiveReplyTelemetryAllowedStages = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+    {
+        "audience-arrived", "selected", "llm-start", "first-sentence", "caption-ready",
+        "tts-queued", "tts-start", "tts-end", "tts-fail", "recovery"
+    };
     private static Process memoryDataServiceProcess;
     private static Process asrServiceProcess;
     private static Process neteaseMusicApiServiceProcess;
@@ -1145,6 +1157,84 @@ internal static class DesktopApiProxy
             {
                 // Best-effort cleanup for the optional NetEase Cloud Music sidecar.
             }
+        }
+    }
+
+    private static void AddLiveReplyTelemetryString(
+        Dictionary<string, object> input,
+        Dictionary<string, object> output,
+        string field,
+        int maxLength)
+    {
+        var value = GetString(input, field);
+        if (string.IsNullOrWhiteSpace(value)) return;
+        output[field] = value.Length <= maxLength ? value : value.Substring(0, maxLength);
+    }
+
+    private static void AddLiveReplyTelemetryNumber(
+        Dictionary<string, object> input,
+        Dictionary<string, object> output,
+        string field,
+        int maximum)
+    {
+        object raw;
+        if (input == null || !input.TryGetValue(field, out raw) || raw == null) return;
+        double value;
+        if (!double.TryParse(Convert.ToString(raw), out value)) return;
+        output[field] = (int)Math.Round(Math.Max(0, Math.Min(maximum, value)));
+    }
+
+    public static StudioApiResponse LiveReplyTelemetry(byte[] body)
+    {
+        try
+        {
+            if (body == null || body.Length == 0 || body.Length > 16 * 1024)
+            {
+                return JsonError(400, "Invalid telemetry payload size.");
+            }
+            var input = ParseObject(body);
+            var stage = GetString(input, "stage").ToLowerInvariant();
+            if (!LiveReplyTelemetryAllowedStages.Contains(stage))
+            {
+                return JsonError(400, "Invalid telemetry stage.");
+            }
+            var output = new Dictionary<string, object>
+            {
+                { "version", 1 },
+                { "receivedAt", DateTime.UtcNow.ToString("o") },
+                { "stage", stage }
+            };
+            AddLiveReplyTelemetryString(input, output, "timestamp", 64);
+            AddLiveReplyTelemetryString(input, output, "turnId", 64);
+            AddLiveReplyTelemetryString(input, output, "source", 24);
+            AddLiveReplyTelemetryString(input, output, "messageType", 24);
+            AddLiveReplyTelemetryString(input, output, "outcome", 48);
+            AddLiveReplyTelemetryNumber(input, output, "audienceCount", 20);
+            AddLiveReplyTelemetryNumber(input, output, "paidCount", 20);
+            AddLiveReplyTelemetryNumber(input, output, "queueDepth", 100000);
+            AddLiveReplyTelemetryNumber(input, output, "durationMs", 3600000);
+            AddLiveReplyTelemetryNumber(input, output, "attempt", 10);
+
+            var directory = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "YachiyoLive2DStudio\\diagnostics");
+            Directory.CreateDirectory(directory);
+            var path = Path.Combine(directory, "live-reply-telemetry-" + DateTime.UtcNow.ToString("yyyyMMdd") + ".jsonl");
+            var line = Json.Serialize(output) + Environment.NewLine;
+            lock (LiveReplyTelemetryLock)
+            {
+                File.AppendAllText(path, line, new UTF8Encoding(false));
+            }
+            return JsonOk(new Dictionary<string, object>
+            {
+                { "success", true },
+                { "accepted", true }
+            });
+        }
+        catch (Exception ex)
+        {
+            Trace.TraceWarning("Live reply telemetry append failed: " + ex.Message);
+            return JsonError(500, "Telemetry persistence failed.");
         }
     }
 

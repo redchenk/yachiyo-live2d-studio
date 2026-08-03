@@ -6,7 +6,7 @@ import { useLive2D } from '../composables/room/useLive2D';
 import {
   clearLive2DLLMHistory,
   requestLive2DControl,
-  requestLive2DControlStream,
+  requestLive2DControlStreamWithRecovery,
   translateLive2DReplyToChinese
 } from '../services/room/live2dLlmControl';
 import { dispatchRoomLive2D } from '../services/room/live2dControl';
@@ -23,7 +23,10 @@ import { createLive2DAsrRecorder } from '../services/room/live2dAsr';
 import {
   enqueueLive2DAudienceEntry,
   ensureLive2DAudienceNamesInSpeech,
+  ensureLive2DPaidAcknowledgementInCaption,
+  ensureLive2DPaidAcknowledgementInSpeech,
   formatLive2DAudiencePromptEntry,
+  live2DPaidAudienceEntries,
   requeueLive2DAudienceTurn,
   resolveLive2DAudienceAcknowledgements,
   selectLive2DBilibiliMessages,
@@ -69,9 +72,13 @@ import {
   createLive2DDirectorScheduler,
   resolveLive2DDirectorReplyDelay
 } from '../services/room/live2dDirectorScheduler';
-import { createLive2DTurnPipeline } from '../services/room/live2dTurnPipeline';
+import {
+  createLive2DPrefetchWindowTrigger,
+  createLive2DTurnPipeline
+} from '../services/room/live2dTurnPipeline';
 import { shouldReadBilibiliDanmakuAloud } from '../services/room/live2dBilibiliReplyPolicy';
 import { createLive2DSpeechPlayer } from '../services/room/live2dSpeech';
+import { recordLive2DReplyTelemetry } from '../services/room/live2dReplyTelemetry';
 import { cleanLive2DReply } from '../services/room/live2dText';
 import { recordLive2DViewerMemoryInteraction } from '../services/room/live2dMemory';
 import {
@@ -729,6 +736,42 @@ function uid(prefix = 'line') {
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
 }
 
+function liveReplyTelemetrySummary(entries = []) {
+  const audience = Array.isArray(entries) ? entries.filter(Boolean) : [];
+  const sources = [...new Set(audience.map((entry) => (
+    ['bilibili', 'manual', 'asr'].includes(entry?.source) ? entry.source : 'live'
+  )))];
+  const types = [...new Set(audience.map((entry) => (
+    ['danmu', 'gift', 'superchat', 'guard'].includes(entry?.messageType)
+      ? entry.messageType
+      : 'unknown'
+  )))];
+  return {
+    source: sources.length === 1 ? sources[0] : 'live',
+    messageType: types.length === 1 ? types[0] : (types.length > 1 ? 'mixed' : 'unknown'),
+    audienceCount: audience.length,
+    paidCount: audience.filter((entry) => (
+      ['gift', 'superchat', 'guard'].includes(entry?.messageType)
+    )).length
+  };
+}
+
+function emitLiveReplyTelemetry(event = {}) {
+  recordLive2DReplyTelemetry(event).catch(() => {});
+}
+
+function emitLiveTurnTelemetry(options, stage, detail = {}) {
+  emitLiveReplyTelemetry({
+    stage,
+    turnId: options?.turnId,
+    ...liveReplyTelemetrySummary(options?.audienceLines),
+    ...(options?.telemetryStartedAt
+      ? { durationMs: Date.now() - options.telemetryStartedAt }
+      : {}),
+    ...detail
+  });
+}
+
 function visibleYachiyoText(text) {
   return cleanLive2DReply(text).replace(/[ \t]{2,}/g, ' ').trim();
 }
@@ -1120,6 +1163,7 @@ async function performStreamingLiveTurn(message, options = {}) {
   let dispatchedStreamLive2DCount = 0;
   let playbackFailed = false;
   let firstPlaybackStarted = false;
+  let firstSentenceReady = false;
   let resolveFirstPlaybackStarted = null;
   const firstPlaybackStartedReady = new Promise((resolve) => {
     resolveFirstPlaybackStarted = resolve;
@@ -1132,6 +1176,12 @@ async function performStreamingLiveTurn(message, options = {}) {
     resolveFirstPlaybackStarted?.();
     options.onFirstPlaybackStart?.();
   };
+  const notifyFirstSentenceReady = () => {
+    if (firstSentenceReady || !isLiveTurnOperationCurrent(options)) return;
+    firstSentenceReady = true;
+    emitLiveTurnTelemetry(options, 'first-sentence');
+    options.onFirstSentenceReady?.();
+  };
 
   streamingSpeechSession?.begin();
   if (!options.allowConcurrent || speechState.value.status !== 'playing') {
@@ -1142,24 +1192,39 @@ async function performStreamingLiveTurn(message, options = {}) {
     loading: true,
     error: ''
   };
+  emitLiveTurnTelemetry(options, 'llm-start', { attempt: 1 });
 
   try {
-    finalResult = await requestLive2DControlStream(value, {
+    finalResult = await requestLive2DControlStreamWithRecovery(value, {
+      audienceLines: options.audienceLines,
       memoryContext: memoryContextForAudience(options.audienceLines),
       signal: options.signal,
+      onRecovery: (event) => {
+        emitLiveTurnTelemetry(options, 'recovery', {
+          attempt: event?.phase === 'compact-retry' ? 2 : 3,
+          outcome: event?.phase || 'unknown'
+        });
+      },
       onSentence: (sentence) => {
         if (!isLiveTurnOperationCurrent(options)) return;
         const rawSpeechSentence = visibleYachiyoText(sentence.text);
         const speechSentence = queuedSpeechCount === 0
-          ? ensureLive2DAudienceNamesInSpeech(rawSpeechSentence, options.audienceLines)
+          ? ensureLive2DAudienceNamesInSpeech(
+              ensureLive2DPaidAcknowledgementInSpeech(rawSpeechSentence, options.audienceLines),
+              options.audienceLines
+            )
           : rawSpeechSentence;
         if (!speechSentence) return;
+        notifyFirstSentenceReady();
         const sentenceIndex = queuedSpeechCount;
         let captionToken = 0;
         const normalizePreparedCaption = (caption) => {
           const visibleCaption = visibleYachiyoText(caption);
           return sentenceIndex === 0
-            ? ensureLive2DAudienceNamesInSpeech(visibleCaption, options.audienceLines)
+            ? ensureLive2DAudienceNamesInSpeech(
+                ensureLive2DPaidAcknowledgementInCaption(visibleCaption, options.audienceLines),
+                options.audienceLines
+              )
             : visibleCaption;
         };
         const pairedCaption = Promise.resolve(sentence.captionReady || sentence.caption || '')
@@ -1193,6 +1258,9 @@ async function performStreamingLiveTurn(message, options = {}) {
           };
         };
         preparedCaption.ready.then((visibleSentence) => {
+          emitLiveTurnTelemetry(options, 'caption-ready', {
+            outcome: visibleSentence ? 'ready' : 'empty'
+          });
           preparedCaptionTranscript.resolve(sentenceIndex, visibleSentence);
           publishPreparedCaption(visibleSentence);
           return visibleSentence;
@@ -1225,6 +1293,7 @@ async function performStreamingLiveTurn(message, options = {}) {
         };
         liveDirector.status = 'speaking';
         queuedSpeechCount += 1;
+        emitLiveTurnTelemetry(options, 'tts-queued');
         let speechLineQueued = false;
         const playbackPromise = Promise.resolve(options.enqueueAfter)
           .then(() => {
@@ -1242,13 +1311,21 @@ async function performStreamingLiveTurn(message, options = {}) {
               sourceLang: sentence.sourceLang || undefined,
               startGate: captionPlaybackGate,
               onStart: ({ durationMs }) => {
+                emitLiveTurnTelemetry(options, 'tts-start');
                 showCaption(durationMs);
                 notifyFirstPlaybackStart();
               }
             });
           })
+          .then((playback) => {
+            emitLiveTurnTelemetry(options, 'tts-end', { outcome: 'played' });
+            return playback;
+          })
           .catch((error) => {
             playbackFailed = true;
+            emitLiveTurnTelemetry(options, 'tts-fail', {
+              outcome: error?.name === 'AbortError' ? 'aborted' : 'failed'
+            });
             if (error?.name === 'AbortError') return;
             speechState.value = { status: 'error', error: error.message || 'TTS failed' };
           })
@@ -1528,6 +1605,8 @@ async function runLiveTurn(trigger = {}) {
   ) return;
   liveTurnsInFlight += 1;
   const turnSessionId = liveDirectorSessionId;
+  const turnId = uid('live-turn');
+  const telemetryStartedAt = Date.now();
   const turnAbortController = new AbortController();
   liveDirectorAbortControllers.add(turnAbortController);
   let settleGenerationBarrier = null;
@@ -1538,6 +1617,10 @@ async function runLiveTurn(trigger = {}) {
     liveDirector.running &&
     turnSessionId === liveDirectorSessionId &&
     !turnAbortController.signal.aborted
+  );
+  const prefetchTrigger = createLive2DPrefetchWindowTrigger(
+    () => openLivePlaybackPrefetchWindow(generationSettled),
+    { isActive: isCurrentTurn }
   );
   liveDirector.status = playbackPrefetch && speechState.value.status === 'playing'
     ? 'speaking'
@@ -1559,6 +1642,12 @@ async function runLiveTurn(trigger = {}) {
   const musicRequestedBy = musicRequesterFromAudience(audienceLines);
   audienceQueue.value = audienceTurn.remaining;
   audienceViewerState.markPending(audienceLines);
+  emitLiveReplyTelemetry({
+    stage: 'selected',
+    turnId,
+    ...liveReplyTelemetrySummary(audienceLines),
+    queueDepth: audienceQueue.value.length
+  });
   const unsettledAudienceLines = new Set(audienceLines);
   const settleAudienceLines = (entries, replied) => {
     const targets = (Array.isArray(entries) ? entries : [])
@@ -1582,6 +1671,9 @@ async function runLiveTurn(trigger = {}) {
   const settleRemainingAudience = (replied) => {
     settleAudienceLines([...unsettledAudienceLines], replied);
   };
+  const settlePaidAudienceAfterPlaybackStarts = () => {
+    settleAudienceLines(live2DPaidAudienceEntries(audienceLines), true);
+  };
   try {
     const shouldSpeak = Boolean(liveDirector.autoVoice && speechPlayer);
     const generation = await liveTurnPipeline.runGeneration(async () => {
@@ -1590,14 +1682,17 @@ async function runLiveTurn(trigger = {}) {
           liveDirector.status = 'thinking';
         }
         return performStreamingLiveTurn(buildLiveDirectorPrompt(audienceLines, { streaming: true }), {
+          turnId,
+          telemetryStartedAt,
           requestedBy: musicRequestedBy,
           audienceLines,
           interTurnPauseMs,
           allowConcurrent: playbackPrefetch,
           enqueueAfter: trigger?.enqueueAfter,
+          onFirstSentenceReady: () => prefetchTrigger.sentenceReady(),
           onFirstPlaybackStart: () => {
-            if (!isCurrentTurn()) return;
-            openLivePlaybackPrefetchWindow(generationSettled);
+            settlePaidAudienceAfterPlaybackStarts();
+            prefetchTrigger.playbackStarted();
           },
           signal: turnAbortController.signal,
           isCurrent: isCurrentTurn
@@ -1733,6 +1828,11 @@ function submitAudienceLine(text, meta = {}) {
   audienceQueue.value = queued.queue;
   if (queued.accepted) {
     if (!meta.viewerArrivalRecorded) audienceViewerState.recordArrival(queued.entry);
+    emitLiveReplyTelemetry({
+      stage: 'audience-arrived',
+      ...liveReplyTelemetrySummary([queued.entry]),
+      queueDepth: audienceQueue.value.length
+    });
     routeAudienceMusicRequest(value, meta, queued.entry);
   }
   pushLog('audience', value, meta);

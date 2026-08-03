@@ -44,6 +44,8 @@ const FOLLOWUP_MAX_CHUNK_UNIT_LIMIT = 42;
 const CAPTION_TRANSLATION_TIMEOUT_MS = 6000;
 export const LIVE2D_LLM_REQUEST_TIMEOUT_MS = 60_000;
 export const LIVE2D_LLM_STREAM_IDLE_TIMEOUT_MS = 15_000;
+export const LIVE2D_LLM_RECOVERY_REQUEST_TIMEOUT_MS = 8_000;
+export const LIVE2D_LLM_RECOVERY_STREAM_IDLE_TIMEOUT_MS = 6_000;
 const SEMANTIC_EMOTION_ID_LIST = [
   ...semanticExpressionIds().filter((id) => id !== 'bsmile'),
   'happy',
@@ -1330,40 +1332,21 @@ export function live2DControlSystemPrompt() {
 export function live2DStreamingControlSystemPrompt() {
   return [
     'You are controlling a Live2D character named Yachiyo.',
-    'This is a low-latency bilingual streaming turn. Output one compact semantic BEAT, then the Japanese spoken VOICE immediately, followed by its matching Simplified Chinese CAPTION. Output final CONTROL JSON at the end.',
-    'Output format must be exactly:',
+    'This is a low-latency bilingual streaming turn. Speak in 1-2 short sentences.',
+    'For each sentence output exactly three single lines in this order:',
     'BEAT: {"emotion":"happy","intensity":0.68,"actions":[{"type":"look_at_chat","duration":0.9},{"type":"smile","duration":1.2}],"speech_style":{"speed":1.06,"pitch":0.06,"pause":"bright"}}',
-    'VOICE: first short Japanese phrase, 8-14 kana/characters if possible, such as うん、聞いてるよ、 or えへへ、いいね、.',
-    'CAPTION: the matching natural Simplified Chinese caption, such as 嗯，我在听哦。',
-    'BEAT: {"emotion":"smug","intensity":0.72,"actions":[{"type":"smirk","duration":1.1},{"type":"lean_in","duration":1.0,"delay":0.08}],"speech_style":{"speed":1.04,"pitch":0.05,"pause":"teasing"}}',
-    'For TTS stability, do not use tiny fragments; the first VOICE should include at least one short phrase, not only a filler.',
-    'VOICE: next natural Japanese clause or short sentence, normally about 18-32 Japanese characters.',
-    'CAPTION: the matching natural Simplified Chinese clause, normally about 12-28 Chinese characters.',
-    'VOICE: combine tiny comma clauses instead of making every comma its own TTS chunk; prefer one stable phrase over many tiny fragments.',
-    `CONTROL: {"reply":"all Japanese VOICE text without labels","caption":"all matching Simplified Chinese CAPTION text without labels","acknowledgedIndexes":[],"emotion":"${SEMANTIC_EMOTION_ID_LIST}","intensity":0.72,"actions":[{"type":"look_at_chat","duration":1.2},{"type":"smirk","duration":2.0}],"interruptPolicy":{"mode":"blend","priority":4},"speech_style":{"speed":1.05,"pitch":0.08,"pause":"playful"},"music":null,"memory_writes":[]}`,
-    'Each BEAT must be a single-line JSON object and must appear immediately before the VOICE it controls. Its CAPTION must be the next line after that VOICE.',
-    'BEAT contains only semantic fields: emotion, intensity, actions, and speech_style. Keep it short so the first VOICE can start quickly.',
-    'Emit the first BEAT and Japanese VOICE before generating its CAPTION, so GPT-SoVITS preparation starts without waiting for Chinese caption tokens. Do not wait for CONTROL before speaking.',
-    'Avoid standalone ultra-short VOICE lines like only うん、 あっ、 えへへ、. Attach a few spoken words so each chunk is stable for TTS.',
-    'Keep the first VOICE line low-latency; after that, prioritize smooth GPT-SoVITS quality and natural sentence rhythm.',
-    'VOICE lines must contain only natural Japanese dialogue so GPT-SoVITS can synthesize them directly without an extra translation request.',
-    'CAPTION lines must contain only matching natural Simplified Chinese dialogue. Keep viewer names consistent between CAPTION and VOICE.',
-    'Never put BEAT JSON, stage directions, parenthesized action hints, asterisk actions, action labels, pose descriptions, or JSON in CAPTION or VOICE.',
-    'CONTROL must be one JSON object after the CONTROL label. Its reply must exactly match all spoken VOICE text, and its caption must exactly match all CAPTION text.',
-    'Choose 2-5 semantic actions across the turn that match the spoken meaning and mood. Per-BEAT actions may be 1-3 concise semantic actions.',
-    'Use only semantic emotion ids and semantic actions. Do not output raw Live2D parameters, VTube Studio parameter ids, expression file names, live2d.parameters, parameterTargets, or pose descriptions.',
-    `Good action combos: ${behaviorActionComboPrompt()}.`,
-    'Use intensity 0.45-0.85 for normal talking, 0.85-1.0 for punchlines or surprise.',
-    'Optional interruptPolicy controls action orchestration: mode blend for normal replies, replace for urgent reactions, protect for a beat that should complete; priority is 0-10.',
-    'Optional music controls the song request engine in the final CONTROL only. Use it only when the user explicitly asks for music; otherwise set music to null. Examples: {"action":"request","query":"song title artist"}, {"provider":"netease-cloud","action":"request","query":"song title artist"}, {"provider":"local-library","action":"request","query":"song title artist"}, {"action":"play_next","query":"song title artist"}, {"action":"skip"}, {"action":"pause"}, {"action":"resume"}, {"action":"stop"}, {"action":"queue"}. The runtime may use a local music library, NetEase Cloud Music, or Apple Music; never include tokens, cookies, or credentials.',
-    'When the user names NetEase, 网易云, 163, or 云音乐, set final CONTROL music.provider to "netease-cloud". When they explicitly say local file/library, set provider to "local-library". Otherwise omit provider and let Settings choose.',
-    'For every audience or conversational song request, put {"action":"request","query":"song title artist"} in final CONTROL music JSON so it joins the FIFO queue. This includes 点歌, 来一首, 加歌, 排歌, 立即播放, 现在放, 给我放, 我要听, 想听, 听一下, 听一首, and 放一首. Never use play_now for audience text; play_now is reserved for a host pressing an explicit manual control outside the LLM. If the audience explicitly asks to put it next, use play_next, which must not interrupt the current track.',
-    'Only when a durable, low-risk memory is clearly confirmed, include memory_writes items with scope, type, title, text, optional episode, facts, foresight, importance, confidence, and tags. Otherwise use an empty array.',
-    'Memory facts must be atomic and verifiable. Foresight must be conservative, evidence-based, and include confidence when useful.',
-    'Never propose secrets, API keys, sensitive personal data, raw chat dumps, guesses about a user, or negative personality labels as memory.',
-    semanticExpressionPromptCatalog(),
-    semanticActionPromptCatalog(),
-    'The execution layer maps semantic emotions to expression presets, VTube Studio expressions, and fine motion overlays.'
+    'VOICE: one complete natural Japanese phrase or sentence for GPT-SoVITS, normally 12-32 Japanese characters.',
+    'CAPTION: its complete matching natural Simplified Chinese subtitle; it must never be empty.',
+    `After all sentences output one line: CONTROL: {"reply":"all Japanese VOICE text","caption":"all Chinese CAPTION text","acknowledgedIndexes":[],"emotion":"${SEMANTIC_EMOTION_ID_LIST}","intensity":0.72,"actions":[{"type":"look_at_chat","duration":1.2},{"type":"smile","duration":1.2}],"interruptPolicy":{"mode":"blend","priority":4},"speech_style":{"speed":1.05,"pitch":0.08,"pause":"playful"},"music":null,"memory_writes":[]}`,
+    'Emit the first compact BEAT and VOICE immediately. Do not wait for CAPTION or CONTROL before emitting VOICE.',
+    'VOICE contains only Japanese dialogue. CAPTION contains only matching Simplified Chinese dialogue. Use exactly the same viewer display names in both.',
+    'Do not output tiny filler-only VOICE chunks. Do not quote a viewer message verbatim; respond to its meaning.',
+    'Never put JSON, stage directions, parentheses, asterisk actions, pose descriptions, or action labels in VOICE or CAPTION.',
+    'Use 1-3 concise semantic actions per BEAT from: look_at_chat, smile, nod, head_tilt, sway, breathe, bounce, lean_in, wave, wink, smirk, surprised.',
+    'CONTROL reply and caption must exactly concatenate the emitted VOICE and CAPTION lines. Include every actually addressed 1-based audience index in acknowledgedIndexes, especially every gift, superchat, or guard purchase.',
+    'For any explicit song request, including 点歌, 我要听, 想听, 听一首, 来一首, 唱一首, or 放一首, set music to {"action":"request","query":"song title artist"}; FIFO requests must not interrupt the current track. Use play_next only when explicitly requested.',
+    'If NetEase/网易云/163/云音乐 is named, add "provider":"netease-cloud". Never include a URL, token, cookie, or credential.',
+    'Use memory_writes only for durable, low-risk, verified facts; otherwise use []. Never store secrets, raw chat dumps, guesses, or sensitive personal data.'
   ].join('\n');
 }
 
@@ -1377,6 +1360,19 @@ export function clearLive2DLLMHistory() {
   pendingHistorySettlements.clear();
   nextHistorySettlementSequence = historyRequestSequence + 1;
   writeJson(HISTORY_KEY, []);
+}
+
+export function live2DCompactRecoverySystemPrompt() {
+  return [
+    'You are Yachiyo, a warm and playful Japanese-speaking AI VTuber.',
+    'This is a latency recovery attempt. Reply immediately and concisely.',
+    'Output exactly three single lines and no Markdown:',
+    'VOICE: one natural Japanese sentence that names the selected viewers and responds without repeating their messages verbatim.',
+    'CAPTION: one matching natural Simplified Chinese subtitle using the same viewer names.',
+    'CONTROL: {"reply":"same Japanese sentence","caption":"same Chinese subtitle","acknowledgedIndexes":[1],"emotion":"neutral","actions":[{"type":"look_at_chat"},{"type":"smile"}],"music":null,"memory_writes":[]}',
+    'For a gift, thank the viewer. Include every selected 1-based index in acknowledgedIndexes.',
+    'Never output action hints, private data, raw chat text, or explanations.'
+  ].join('\n');
 }
 
 async function requestLive2DControlInternal(message, options = {}, historyReservation = null) {
@@ -1477,13 +1473,17 @@ async function requestLive2DControlStreamInternal(message, handlers = {}, histor
   const signal = handlers.signal;
   const requestWatchdog = handlers.requestWatchdog;
   throwIfLive2DRequestAborted(signal);
-  const history = readLive2DLLMHistory();
+  const history = handlers.fastRecovery ? readLive2DLLMHistory().slice(-2) : readLive2DLLMHistory();
   const memoryContext = handlers.memoryContext || {};
-  const memoryPrompt = await buildLive2DMemoryPrompt(message, memoryContext);
+  const memoryPrompt = handlers.fastRecovery ? '' : await buildLive2DMemoryPrompt(message, memoryContext);
   throwIfLive2DRequestAborted(signal);
-  const visionContext = await buildLive2DVisionPrompt();
+  const visionContext = handlers.fastRecovery
+    ? { prompt: '', payload: null }
+    : await buildLive2DVisionPrompt();
   throwIfLive2DRequestAborted(signal);
-  const systemPrompt = [yachiyoCorePersonalityPrompt(), settings.systemPrompt, memoryPrompt, visionContext.prompt, live2DStreamingControlSystemPrompt()].filter(Boolean).join('\n\n');
+  const systemPrompt = handlers.fastRecovery
+    ? live2DCompactRecoverySystemPrompt()
+    : [yachiyoCorePersonalityPrompt(), settings.systemPrompt, memoryPrompt, visionContext.prompt, live2DStreamingControlSystemPrompt()].filter(Boolean).join('\n\n');
   const sentenceEmitter = createReplySentenceEmitter(handlers);
   let rawReply = '';
 
@@ -1590,4 +1590,154 @@ export async function requestLive2DControlStream(message, handlers = {}) {
   } finally {
     if (!inheritedWatchdog) requestWatchdog.cleanup();
   }
+}
+
+function normalizedRecoveryAudienceLines(handlers = {}) {
+  const lines = Array.isArray(handlers.audienceLines) ? handlers.audienceLines : [];
+  if (lines.length) return lines.slice(0, 20);
+  const viewers = Array.isArray(handlers.memoryContext?.viewers) ? handlers.memoryContext.viewers : [];
+  return viewers.slice(0, 20).map((viewer) => ({
+    messageType: 'danmu',
+    userName: viewer?.userName || viewer?.name || ''
+  }));
+}
+
+function safeRecoveryViewerName(value, fallbackIndex) {
+  const name = String(value || '')
+    .replace(/[\r\n\t]/g, ' ')
+    .replace(/[<>\[\]{}"'`]/g, '')
+    .trim()
+    .slice(0, 32);
+  return name || `視聴者${fallbackIndex}`;
+}
+
+function buildLocalLive2DRecovery(message, handlers = {}) {
+  const audienceLines = normalizedRecoveryAudienceLines(handlers);
+  const names = audienceLines.map((line, index) => safeRecoveryViewerName(line?.userName, index + 1));
+  const acknowledgedIndexes = audienceLines.map((_line, index) => index + 1);
+  const giftNames = audienceLines
+    .map((line, index) => (/gift|superchat|guard/i.test(String(line?.messageType || '')) ? names[index] : ''))
+    .filter(Boolean);
+  const addressedNames = names.length ? names : ['みんな'];
+  const japaneseNames = addressedNames.map((name) => `${name}さん`).join('、');
+  const chineseNames = addressedNames.join('、');
+  const reply = giftNames.length
+    ? `${japaneseNames}、温かい応援をありがとう。少し考え込んじゃったけど、ちゃんと届いているよ！`
+    : `${japaneseNames}、待たせてごめんね。コメントはちゃんと届いているよ、ここから一緒に話そう！`;
+  const caption = giftNames.length
+    ? `${chineseNames}，谢谢你们温暖的支持。刚才稍微想久了一点，但心意已经好好收到了！`
+    : `${chineseNames}，让你们久等了。弹幕已经好好收到了，我们接着一起聊吧！`;
+  const live2d = inferLive2DIntentFromText(reply) || normalizeLive2DIntent({
+    emotion: 'smile',
+    intensity: 0.62,
+    actions: [{ type: 'look_at_chat', duration: 1.1 }, { type: 'smile', duration: 1.2 }]
+  });
+  const raw = {
+    recovery: 'local-fallback',
+    acknowledgedIndexes
+  };
+  return {
+    reply,
+    caption,
+    live2d,
+    music: null,
+    acknowledgedIndexes,
+    memoryWrites: [],
+    raw
+  };
+}
+
+function isCallerAborted(handlers = {}) {
+  return Boolean(handlers.signal?.aborted);
+}
+
+function partialStreamingRecoveryResult(message, handlers, sentences) {
+  const reply = sentences.map((sentence) => sentence.text).filter(Boolean).join('');
+  if (!reply) return null;
+  const caption = sentences.map((sentence) => sentence.caption).filter(Boolean).join('');
+  const audienceLines = normalizedRecoveryAudienceLines(handlers);
+  const result = {
+    reply,
+    caption,
+    live2d: sentences.at(-1)?.live2d || inferLive2DIntentFromText(reply),
+    music: null,
+    acknowledgedIndexes: audienceLines.map((_line, index) => index + 1),
+    memoryWrites: [],
+    raw: { recovery: 'partial-stream' }
+  };
+  const reservation = createLive2DHistoryReservation();
+  reservation.commit(message, reply, () => recordLive2DSessionMemoryTurn({
+    source: 'llm-control',
+    input: message,
+    reply,
+    emotion: result.live2d?.emotion || result.live2d?.expression || 'neutral'
+  }));
+  return result;
+}
+
+export async function requestLive2DControlStreamWithRecovery(message, handlers = {}) {
+  const emittedSentences = [];
+  const onSentence = (sentence) => {
+    emittedSentences.push(sentence);
+    handlers.onSentence?.(sentence);
+  };
+  const baseHandlers = { ...handlers, onSentence };
+  try {
+    return await requestLive2DControlStream(message, baseHandlers);
+  } catch (primaryError) {
+    if (isCallerAborted(handlers)) throw primaryError;
+    const partial = partialStreamingRecoveryResult(message, handlers, emittedSentences);
+    if (partial) {
+      handlers.onRecovery?.({ phase: 'partial-stream', error: primaryError });
+      handlers.onDone?.(partial);
+      return partial;
+    }
+  }
+
+  handlers.onRecovery?.({ phase: 'compact-retry' });
+  const retrySentences = [];
+  const retryHandlers = {
+    ...handlers,
+    fastRecovery: true,
+    requestTimeoutMs: handlers.recoveryRequestTimeoutMs ?? LIVE2D_LLM_RECOVERY_REQUEST_TIMEOUT_MS,
+    streamIdleTimeoutMs: handlers.recoveryStreamIdleTimeoutMs ?? LIVE2D_LLM_RECOVERY_STREAM_IDLE_TIMEOUT_MS,
+    onSentence: (sentence) => {
+      retrySentences.push(sentence);
+      handlers.onSentence?.(sentence);
+    }
+  };
+  try {
+    return await requestLive2DControlStream(message, retryHandlers);
+  } catch (recoveryError) {
+    if (isCallerAborted(handlers)) throw recoveryError;
+    const partial = partialStreamingRecoveryResult(message, handlers, retrySentences);
+    if (partial) {
+      handlers.onRecovery?.({ phase: 'partial-stream', error: recoveryError });
+      handlers.onDone?.(partial);
+      return partial;
+    }
+  }
+
+  handlers.onRecovery?.({ phase: 'local-fallback' });
+  const fallback = buildLocalLive2DRecovery(message, handlers);
+  handlers.onSentence?.({
+    index: 1,
+    text: fallback.reply,
+    caption: fallback.caption,
+    captionReady: Promise.resolve(fallback.caption),
+    sourceLang: 'ja',
+    emotion: fallback.live2d?.emotion || fallback.live2d?.expression || 'smile',
+    speechStyle: fallback.live2d?.speechStyle || SPEECH_STYLE_BY_EMOTION.smile,
+    live2d: fallback.live2d,
+    beat: null
+  });
+  const reservation = createLive2DHistoryReservation();
+  reservation.commit(message, fallback.reply, () => recordLive2DSessionMemoryTurn({
+    source: 'llm-control',
+    input: message,
+    reply: fallback.reply,
+    emotion: fallback.live2d?.emotion || fallback.live2d?.expression || 'smile'
+  }));
+  handlers.onDone?.(fallback);
+  return fallback;
 }

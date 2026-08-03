@@ -50,6 +50,15 @@ function defaultDatabasePath() {
   );
 }
 
+function defaultTelemetryDirectory() {
+  const localAppData = process.env.LOCALAPPDATA || path.join(
+    process.env.USERPROFILE || 'C:\\Users\\Public',
+    'AppData',
+    'Local'
+  );
+  return path.join(localAppData, 'YachiyoLive2DStudio', 'diagnostics');
+}
+
 function defaultOutputPath() {
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
   return path.resolve('output', `live-reply-monitor-${stamp}.jsonl`);
@@ -185,7 +194,49 @@ function readStageSnapshot(databasePath, sessionStart) {
   }
 }
 
-function stageStatus(snapshot, nowMs, serviceHealth) {
+function readLiveReplyTelemetry(telemetryDirectory, sessionStart) {
+  if (!fs.existsSync(telemetryDirectory)) return [];
+  const startMs = Date.parse(sessionStart) || 0;
+  const events = [];
+  for (const name of fs.readdirSync(telemetryDirectory)) {
+    if (!/^live-reply-telemetry-\d{8}\.jsonl$/i.test(name)) continue;
+    const filePath = path.join(telemetryDirectory, name);
+    for (const line of fs.readFileSync(filePath, 'utf8').split(/\r?\n/)) {
+      if (!line.trim()) continue;
+      try {
+        const event = JSON.parse(line);
+        const timestampMs = Date.parse(event.timestamp || event.receivedAt || '');
+        if (!Number.isFinite(timestampMs) || timestampMs < startMs) continue;
+        events.push({
+          timestampMs,
+          stage: String(event.stage || ''),
+          turnId: String(event.turnId || ''),
+          audienceCount: Number(event.audienceCount) || 0,
+          paidCount: Number(event.paidCount) || 0,
+          queueDepth: Number(event.queueDepth) || 0,
+          durationMs: Number(event.durationMs) || 0,
+          attempt: Number(event.attempt) || 0,
+          outcome: String(event.outcome || '')
+        });
+      } catch {
+        // Ignore partially written or legacy diagnostic lines.
+      }
+    }
+  }
+  return events.sort((left, right) => left.timestampMs - right.timestampMs);
+}
+
+function liveReplyTelemetrySnapshot(events) {
+  const stages = {};
+  const latest = {};
+  for (const event of events) {
+    stages[event.stage] = (stages[event.stage] || 0) + 1;
+    latest[event.stage] = new Date(event.timestampMs).toISOString();
+  }
+  return { stages, latest };
+}
+
+function stageStatus(snapshot, nowMs, serviceHealth, telemetry = null) {
   const latestIncoming = Date.parse(snapshot.incoming.latest || '') || 0;
   const latestTrace = Date.parse(snapshot.traces.latest || '') || 0;
   const latestReply = Date.parse(snapshot.replies.latest || '') || 0;
@@ -198,6 +249,16 @@ function stageStatus(snapshot, nowMs, serviceHealth) {
     (serviceHealth?.missingPorts?.length || 0) > 0
   );
   if (serviceFailed) return 'service_stall';
+  const telemetryStages = telemetry?.stages || {};
+  if (Object.keys(telemetryStages).length) {
+    const latestAudience = Date.parse(telemetry.latest?.['audience-arrived'] || '') || 0;
+    const latestSelected = Date.parse(telemetry.latest?.selected || '') || 0;
+    const latestLlmStart = Date.parse(telemetry.latest?.['llm-start'] || '') || 0;
+    const latestFirstSentence = Date.parse(telemetry.latest?.['first-sentence'] || '') || 0;
+    if (latestAudience > latestSelected && nowMs - latestAudience >= 45_000) return 'scheduler_stall';
+    if (latestLlmStart > latestFirstSentence && nowMs - latestLlmStart >= 30_000) return 'llm_generation_stall';
+    return 'healthy';
+  }
   if (latestIncoming > latestTrace && nowMs - latestTrace >= 45_000) return 'scheduler_stall';
   if (latestTrace > latestReply && nowMs - latestReply >= 60_000) return 'llm_generation_stall';
   return 'healthy';
@@ -208,7 +269,62 @@ function percentile(sorted, ratio) {
   return sorted[Math.min(sorted.length - 1, Math.floor((sorted.length - 1) * ratio))];
 }
 
-function buildSessionSummary(databasePath, sessionStart) {
+function buildLiveReplyTelemetrySummary(events) {
+  const snapshot = liveReplyTelemetrySnapshot(events);
+  const turns = new Map();
+  const recovery = {};
+  for (const event of events) {
+    if (event.stage === 'recovery') {
+      recovery[event.outcome || 'unknown'] = (recovery[event.outcome || 'unknown'] || 0) + 1;
+    }
+    if (!event.turnId) continue;
+    const turn = turns.get(event.turnId) || {
+      audienceCount: 0,
+      paidCount: 0,
+      firstSentenceMs: 0,
+      firstAudioMs: 0,
+      completed: false,
+      failed: false
+    };
+    turn.audienceCount = Math.max(turn.audienceCount, event.audienceCount);
+    turn.paidCount = Math.max(turn.paidCount, event.paidCount);
+    if (event.stage === 'first-sentence' && !turn.firstSentenceMs) turn.firstSentenceMs = event.durationMs;
+    if (event.stage === 'tts-start' && !turn.firstAudioMs) turn.firstAudioMs = event.durationMs;
+    if (event.stage === 'tts-end') turn.completed = true;
+    if (event.stage === 'tts-fail') turn.failed = true;
+    turns.set(event.turnId, turn);
+  }
+  const firstSentence = [...turns.values()]
+    .map((turn) => turn.firstSentenceMs)
+    .filter((value) => value > 0)
+    .sort((left, right) => left - right);
+  const firstAudio = [...turns.values()]
+    .map((turn) => turn.firstAudioMs)
+    .filter((value) => value > 0)
+    .sort((left, right) => left - right);
+  const latency = (values) => ({
+    samples: values.length,
+    p50Sec: Math.round(percentile(values, 0.5) / 100) / 10,
+    p95Sec: Math.round(percentile(values, 0.95) / 100) / 10,
+    p99Sec: Math.round(percentile(values, 0.99) / 100) / 10,
+    maxSec: Math.round((values.at(-1) || 0) / 100) / 10,
+    over30Sec: values.filter((value) => value >= 30_000).length
+  });
+  return {
+    events: events.length,
+    turns: turns.size,
+    selectedAudience: [...turns.values()].reduce((total, turn) => total + turn.audienceCount, 0),
+    selectedPaid: [...turns.values()].reduce((total, turn) => total + turn.paidCount, 0),
+    completedTurns: [...turns.values()].filter((turn) => turn.completed).length,
+    failedTurns: [...turns.values()].filter((turn) => turn.failed).length,
+    stages: snapshot.stages,
+    recovery,
+    firstSentence: latency(firstSentence),
+    firstAudio: latency(firstAudio)
+  };
+}
+
+function buildSessionSummary(databasePath, sessionStart, telemetryEvents = []) {
   const database = openDatabase(databasePath);
   try {
     const incoming = database.prepare(`
@@ -285,7 +401,8 @@ function buildSessionSummary(databasePath, sessionStart) {
         end: new Date(item.end).toISOString(),
         attempts: item.attempts,
         durationSec: Math.round((item.end - item.start) / 100) / 10
-      }))
+      })),
+      lifecycle: buildLiveReplyTelemetrySummary(telemetryEvents)
     };
   } finally {
     database.close();
@@ -308,6 +425,7 @@ const idleEndMinutes = boundedNumber(
   24 * 60
 );
 const databasePath = path.resolve(args.database || defaultDatabasePath());
+const telemetryDirectory = path.resolve(args['telemetry-dir'] || defaultTelemetryDirectory());
 const outputPath = args['stdout-only'] ? '' : path.resolve(args.output || defaultOutputPath());
 const pidFile = path.resolve(args['pid-file'] || path.join('output', 'live-reply-monitor.pid'));
 
@@ -365,7 +483,9 @@ async function sample() {
   const nowMs = Date.now();
   await refreshRuntime(nowMs);
   const snapshot = readStageSnapshot(databasePath, sessionStart);
-  const status = stageStatus(snapshot, nowMs, serviceHealth);
+  const telemetryEvents = readLiveReplyTelemetry(telemetryDirectory, sessionStart);
+  const telemetry = liveReplyTelemetrySnapshot(telemetryEvents);
+  const status = stageStatus(snapshot, nowMs, serviceHealth, telemetry);
   const delta = previousSnapshot
     ? {
         incoming: snapshot.incoming.count - previousSnapshot.incoming.count,
@@ -390,6 +510,7 @@ async function sample() {
       trace: snapshot.traces.latest,
       reply: snapshot.replies.latest
     },
+    lifecycle: telemetry,
     service: serviceHealth
   };
   const shouldPrint = (
@@ -416,7 +537,11 @@ async function finish(reason) {
   stopping = true;
   let summary = null;
   try {
-    summary = buildSessionSummary(databasePath, sessionStart);
+    summary = buildSessionSummary(
+      databasePath,
+      sessionStart,
+      readLiveReplyTelemetry(telemetryDirectory, sessionStart)
+    );
   } catch (error) {
     summary = { error: String(error?.message || error).slice(0, 240) };
   }
@@ -438,6 +563,7 @@ emit({
   pid: process.pid,
   sessionStart,
   databasePath,
+  telemetryDirectory,
   outputPath: outputPath || null,
   intervalMs,
   runtimeCheckMs,

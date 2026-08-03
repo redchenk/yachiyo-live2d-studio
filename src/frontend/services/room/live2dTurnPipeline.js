@@ -1,3 +1,22 @@
+export function createLive2DPrefetchWindowTrigger(openWindow, options = {}) {
+  const open = typeof openWindow === 'function' ? openWindow : () => {};
+  const isActive = typeof options.isActive === 'function' ? options.isActive : () => true;
+  let opened = false;
+
+  const tryOpen = (source) => {
+    if (opened || !isActive()) return false;
+    opened = true;
+    open(source);
+    return true;
+  };
+
+  return {
+    sentenceReady: () => tryOpen('sentence-ready'),
+    playbackStarted: () => tryOpen('playback-started'),
+    isOpened: () => opened
+  };
+}
+
 export function createLive2DTurnPipeline(options = {}) {
   const onPlaybackIdle = typeof options.onPlaybackIdle === 'function'
     ? options.onPlaybackIdle

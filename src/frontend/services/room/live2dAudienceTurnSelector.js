@@ -363,11 +363,17 @@ export function selectLive2DAudienceTurn(queue, options = {}) {
   } else if (options.randomizeCount === false || limit === 1) {
     targetCount = limit;
   } else {
+    const highTrafficThreshold = Math.max(
+      limit,
+      Math.round(finiteNumber(options.highTrafficThreshold, 8))
+    );
     const singleViewerProbability = Math.min(
       1,
       Math.max(0, finiteNumber(options.singleViewerProbability, DEFAULT_SINGLE_VIEWER_PROBABILITY))
     );
-    targetCount = clampedRandom(rng) < singleViewerProbability ? 1 : limit;
+    targetCount = candidates.length >= highTrafficThreshold
+      ? limit
+      : (clampedRandom(rng) < singleViewerProbability ? 1 : limit);
   }
   targetCount = Math.max(
     targetCount,
@@ -540,6 +546,48 @@ export function live2DAudienceDisplayNames(entries = []) {
     .filter(Boolean))].slice(0, DEFAULT_MAX_VIEWERS_PER_TURN);
 }
 
+export function live2DPaidAudienceEntries(entries = []) {
+  return (Array.isArray(entries) ? entries : []).filter(isPaidBilibiliMessage);
+}
+
+export function ensureLive2DPaidAcknowledgementInSpeech(text, entries = []) {
+  const value = asText(text);
+  if (!value) return '';
+  const paidNames = [...new Set(live2DPaidAudienceEntries(entries)
+    .map((entry) => asText(entry?.userName))
+    .filter(Boolean))].slice(0, DEFAULT_MAX_VIEWERS_PER_TURN);
+  if (!paidNames.length) return value;
+  const normalized = value.normalize('NFKC').toLocaleLowerCase();
+  const missingNames = paidNames.filter((name) => (
+    !normalized.includes(name.normalize('NFKC').toLocaleLowerCase())
+  ));
+  const hasThankYou = /(ありがとう|ありがと|感謝|応援.{0,8}(?:嬉|うれ)|谢谢|感謝|多谢)/iu.test(value);
+  if (hasThankYou && !missingNames.length) return value;
+  const names = (hasThankYou ? missingNames : paidNames).map((name) => `${name}さん`).join('、');
+  return hasThankYou
+    ? `${names}、${value}`
+    : `${names}、応援をありがとう。${value}`;
+}
+
+export function ensureLive2DPaidAcknowledgementInCaption(text, entries = []) {
+  const value = asText(text);
+  if (!value) return '';
+  const paidNames = [...new Set(live2DPaidAudienceEntries(entries)
+    .map((entry) => asText(entry?.userName))
+    .filter(Boolean))].slice(0, DEFAULT_MAX_VIEWERS_PER_TURN);
+  if (!paidNames.length) return value;
+  const normalized = value.normalize('NFKC').toLocaleLowerCase();
+  const missingNames = paidNames.filter((name) => (
+    !normalized.includes(name.normalize('NFKC').toLocaleLowerCase())
+  ));
+  const hasThankYou = /(谢谢|感謝|多谢|感谢|ありがとう|ありがと)/iu.test(value);
+  if (hasThankYou && !missingNames.length) return value;
+  const names = hasThankYou ? missingNames.join('、') : paidNames.join('、');
+  return hasThankYou
+    ? `${names}，${value}`
+    : `${names}，谢谢你的支持。${value}`;
+}
+
 export function resolveLive2DAudienceAcknowledgements(entries = [], indexes = []) {
   const audience = (Array.isArray(entries) ? entries : [])
     .slice(0, DEFAULT_MAX_VIEWERS_PER_TURN);
@@ -547,9 +595,13 @@ export function resolveLive2DAudienceAcknowledgements(entries = [], indexes = []
   const explicitIndexes = [...new Set(rawIndexes
     .map((value) => Math.round(Number(value)))
     .filter((value) => Number.isFinite(value) && value >= 1 && value <= audience.length))];
-  const acknowledgedIndexes = explicitIndexes.length
-    ? explicitIndexes
-    : (audience.length ? [1] : []);
+  const paidIndexes = audience
+    .map((entry, index) => (isPaidBilibiliMessage(entry) ? index + 1 : 0))
+    .filter(Boolean);
+  const acknowledgedIndexes = [...new Set([
+    ...(explicitIndexes.length ? explicitIndexes : (audience.length ? [1] : [])),
+    ...paidIndexes
+  ])].sort((left, right) => left - right);
   const acknowledgedIndexSet = new Set(acknowledgedIndexes);
   return {
     acknowledged: audience.filter((_, index) => acknowledgedIndexSet.has(index + 1)),

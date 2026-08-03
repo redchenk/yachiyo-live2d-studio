@@ -2,7 +2,10 @@ import assert from 'node:assert/strict';
 import {
   enqueueLive2DAudienceEntry,
   ensureLive2DAudienceNamesInSpeech,
+  ensureLive2DPaidAcknowledgementInSpeech,
+  ensureLive2DPaidAcknowledgementInCaption,
   formatLive2DAudiencePromptEntry,
+  live2DPaidAudienceEntries,
   requeueLive2DAudienceTurn,
   resolveLive2DAudienceAcknowledgements,
   selectLive2DBilibiliMessages,
@@ -293,6 +296,28 @@ assert.equal(twoViewerTurn.selected.length, 2);
 assert.equal(new Set(twoViewerTurn.selected.map((entry) => entry.userId)).size, 2);
 assert.equal(twoViewerTurn.remaining.length, 1);
 
+const highTrafficQueue = Array.from({ length: 8 }, (_unused, index) => (
+  enqueueLive2DAudienceEntry([], `high traffic ${index}`, {
+    source: 'bilibili',
+    bilibili: {
+      id: `high-traffic-${index}`,
+      userId: `high-traffic-viewer-${index}`,
+      userName: `Viewer${index}`
+    }
+  }, { now }).entry
+));
+const highTrafficTurn = selectLive2DAudienceTurn(highTrafficQueue, {
+  limit: 2,
+  rng: () => 0,
+  now
+});
+assert.equal(
+  highTrafficTurn.selected.length,
+  2,
+  'a high backlog must always use both reply targets even when the low-traffic RNG picks one'
+);
+assert.equal(new Set(highTrafficTurn.selected.map((entry) => entry.userId)).size, 2);
+
 const firstMessageEntry = enqueueLive2DAudienceEntry([], 'same weight a', {
   source: 'bilibili',
   bilibili: { id: 'first-message', userId: 'first-viewer' }
@@ -457,6 +482,51 @@ const fallbackAcknowledgements = resolveLive2DAudienceAcknowledgements(
 assert.deepEqual(fallbackAcknowledgements.acknowledged.map((entry) => entry.id), ['ack-a']);
 assert.deepEqual(fallbackAcknowledgements.unacknowledged.map((entry) => entry.id), ['ack-b']);
 assert.equal(fallbackAcknowledgements.usedFallback, true);
+
+const paidAcknowledgements = resolveLive2DAudienceAcknowledgements([
+  { id: 'paid-gift', userName: 'GiftViewer', messageType: 'gift' },
+  { id: 'ordinary-chat', userName: 'ChatViewer', messageType: 'danmu' }
+], [2]);
+assert.deepEqual(
+  paidAcknowledgements.acknowledgedIndexes,
+  [1, 2],
+  'selected paid events must be acknowledged even when CONTROL omits their index'
+);
+assert.deepEqual(
+  paidAcknowledgements.unacknowledged,
+  [],
+  'a paid event that was included in spoken targets must never be silently requeued'
+);
+assert.deepEqual(
+  live2DPaidAudienceEntries([
+    { id: 'paid-gift', messageType: 'gift' },
+    { id: 'paid-sc', messageType: 'superchat' },
+    { id: 'ordinary-chat', messageType: 'danmu' }
+  ]).map((entry) => entry.id),
+  ['paid-gift', 'paid-sc'],
+  'playback-start settlement must target paid events only'
+);
+assert.equal(
+  ensureLive2DPaidAcknowledgementInSpeech('次の話題に行こう！', [
+    { userName: 'GiftViewer', messageType: 'gift' }
+  ]),
+  'GiftViewerさん、応援をありがとう。次の話題に行こう！',
+  'a selected paid event must receive an audible thank-you even when the model omits one'
+);
+assert.equal(
+  ensureLive2DPaidAcknowledgementInSpeech('GiftViewerさん、プレゼントをありがとう！', [
+    { userName: 'GiftViewer', messageType: 'gift' }
+  ]),
+  'GiftViewerさん、プレゼントをありがとう！',
+  'an existing natural thank-you must not be duplicated'
+);
+assert.equal(
+  ensureLive2DPaidAcknowledgementInCaption('我们继续下一个话题吧！', [
+    { userName: 'GiftViewer', messageType: 'gift' }
+  ]),
+  'GiftViewer，谢谢你的支持。我们继续下一个话题吧！',
+  'the forced audible thank-you must have a matching Chinese subtitle'
+);
 
 assert.equal(
   ensureLive2DAudienceNamesInSpeech('今晚也要开心哦。', [
