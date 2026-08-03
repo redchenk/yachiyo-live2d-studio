@@ -43,9 +43,12 @@ internal static class Live2DStudioLauncher
             using (var server = new LocalStudioServer(repoRoot, port, Live2DPath))
             {
                 server.Start();
-                Application.EnableVisualStyles();
-                Application.SetCompatibleTextRenderingDefault(false);
-                Application.Run(new StudioWindow(server.Url, repoRoot));
+                using (var monitor = LiveReplyHealthMonitor.Start(repoRoot, port))
+                {
+                    Application.EnableVisualStyles();
+                    Application.SetCompatibleTextRenderingDefault(false);
+                    Application.Run(new StudioWindow(server.Url, repoRoot));
+                }
             }
 
             return 0;
@@ -237,6 +240,11 @@ internal static class Live2DStudioLauncher
         return string.Empty;
     }
 
+    internal static string FindLiveReplyMonitorNodeExecutable(string repoRoot)
+    {
+        return FindMemoryNodeExecutable(repoRoot);
+    }
+
     private static bool CanLoadMemoryNativeModule(string nodeExe, string repoRoot)
     {
         try
@@ -264,6 +272,111 @@ internal static class Live2DStudioLauncher
         catch
         {
             return false;
+        }
+    }
+}
+
+internal sealed class LiveReplyHealthMonitor : IDisposable
+{
+    private readonly Process process;
+    private readonly string stopFile;
+    private bool disposed;
+
+    private LiveReplyHealthMonitor(Process process, string stopFile)
+    {
+        this.process = process;
+        this.stopFile = stopFile ?? string.Empty;
+    }
+
+    public static LiveReplyHealthMonitor Start(string repoRoot, int appPort)
+    {
+        Process child = null;
+        string signalPath = string.Empty;
+        try
+        {
+            var scriptPath = Path.Combine(repoRoot, "tools", "live2d-studio", "monitor-live-reply-health.mjs");
+            if (!File.Exists(scriptPath))
+            {
+                Trace.TraceWarning("Live reply monitor script is missing: " + scriptPath);
+                return new LiveReplyHealthMonitor(null, string.Empty);
+            }
+            var nodeExe = Live2DStudioLauncher.FindLiveReplyMonitorNodeExecutable(repoRoot);
+            if (string.IsNullOrWhiteSpace(nodeExe) || !File.Exists(nodeExe))
+            {
+                Trace.TraceWarning("A compatible Node.js runtime for the live reply monitor was not found.");
+                return new LiveReplyHealthMonitor(null, string.Empty);
+            }
+            var outputDirectory = Path.Combine(repoRoot, "output");
+            Directory.CreateDirectory(outputDirectory);
+            signalPath = Path.Combine(
+                outputDirectory,
+                "live-reply-monitor-" + Process.GetCurrentProcess().Id + ".stop");
+            if (File.Exists(signalPath)) File.Delete(signalPath);
+
+            var start = new ProcessStartInfo
+            {
+                FileName = nodeExe,
+                Arguments = Quote(scriptPath) +
+                    " --app-port " + Math.Max(1, Math.Min(65535, appPort)) +
+                    " --parent-pid " + Process.GetCurrentProcess().Id +
+                    " --stop-file " + Quote(signalPath) +
+                    " --startup-grace-ms 90000 --quiet",
+                WorkingDirectory = repoRoot,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                WindowStyle = ProcessWindowStyle.Hidden
+            };
+            child = new Process { StartInfo = start, EnableRaisingEvents = true };
+            if (!child.Start())
+            {
+                child.Dispose();
+                return new LiveReplyHealthMonitor(null, signalPath);
+            }
+            return new LiveReplyHealthMonitor(child, signalPath);
+        }
+        catch (Exception ex)
+        {
+            Trace.TraceWarning("Live reply monitor failed to start: " + ex.Message);
+            if (child != null) child.Dispose();
+            return new LiveReplyHealthMonitor(null, signalPath);
+        }
+    }
+
+    private static string Quote(string value)
+    {
+        return "\"" + (value ?? string.Empty).Replace("\"", "\\\"") + "\"";
+    }
+
+    public void Dispose()
+    {
+        if (disposed) return;
+        disposed = true;
+        try
+        {
+            if (!string.IsNullOrWhiteSpace(stopFile))
+            {
+                File.WriteAllText(stopFile, "stop", Encoding.UTF8);
+            }
+            if (process != null && !process.HasExited && !process.WaitForExit(8000))
+            {
+                try { process.Kill(); } catch { }
+            }
+        }
+        catch (Exception ex)
+        {
+            Trace.TraceWarning("Live reply monitor failed to stop cleanly: " + ex.Message);
+            if (process != null)
+            {
+                try { if (!process.HasExited) process.Kill(); } catch { }
+            }
+        }
+        finally
+        {
+            if (process != null) process.Dispose();
+            if (!string.IsNullOrWhiteSpace(stopFile) && File.Exists(stopFile))
+            {
+                try { File.Delete(stopFile); } catch { }
+            }
         }
     }
 }

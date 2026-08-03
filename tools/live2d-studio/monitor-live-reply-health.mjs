@@ -7,7 +7,8 @@ const DEFAULT_INTERVAL_MS = 5_000;
 const DEFAULT_RUNTIME_CHECK_MS = 30_000;
 const DEFAULT_HEARTBEAT_MS = 60_000;
 const DEFAULT_IDLE_END_MINUTES = 30;
-const REQUIRED_PORTS = [3288, 3299, 9091, 19530];
+const DEFAULT_STARTUP_GRACE_MS = 90_000;
+let requiredPorts = [3288, 3299, 9091, 19530];
 
 function parseArgs(argv) {
   const result = {};
@@ -15,7 +16,7 @@ function parseArgs(argv) {
     const token = argv[index];
     if (!token.startsWith('--')) continue;
     const name = token.slice(2);
-    if (['once', 'stdout-only', 'no-idle-exit'].includes(name)) {
+    if (['once', 'stdout-only', 'no-idle-exit', 'quiet'].includes(name)) {
       result[name] = true;
       continue;
     }
@@ -68,7 +69,7 @@ function readWindowsRuntime() {
   const script = [
     "$ErrorActionPreference='SilentlyContinue'",
     "$app=Get-Process -Name 'Start-Live2D-Studio' | Sort-Object StartTime -Descending | Select-Object -First 1",
-    `$required=@(${REQUIRED_PORTS.join(',')})`,
+    `$required=@(${requiredPorts.join(',')})`,
     "$listeners=Get-NetTCPConnection -State Listen | Where-Object { $_.LocalPort -in $required }",
     '[pscustomobject]@{',
     '  appAlive=[bool]$app;',
@@ -101,7 +102,7 @@ function readWindowsRuntime() {
       responding: false,
       workingSetMB: 0,
       ports: [],
-      missingPorts: [...REQUIRED_PORTS],
+      missingPorts: [...requiredPorts],
       probeError: String(error?.message || error).slice(0, 240)
     };
   }
@@ -236,7 +237,14 @@ function liveReplyTelemetrySnapshot(events) {
   return { stages, latest };
 }
 
-function stageStatus(snapshot, nowMs, serviceHealth, telemetry = null) {
+function stageStatus(
+  snapshot,
+  nowMs,
+  serviceHealth,
+  telemetry = null,
+  sessionStartedMs = 0,
+  startupGraceMs = DEFAULT_STARTUP_GRACE_MS
+) {
   const latestIncoming = Date.parse(snapshot.incoming.latest || '') || 0;
   const latestTrace = Date.parse(snapshot.traces.latest || '') || 0;
   const latestReply = Date.parse(snapshot.replies.latest || '') || 0;
@@ -248,7 +256,10 @@ function stageStatus(snapshot, nowMs, serviceHealth, telemetry = null) {
     !serviceHealth?.milvusReady ||
     (serviceHealth?.missingPorts?.length || 0) > 0
   );
-  if (serviceFailed) return 'service_stall';
+  if (serviceFailed) {
+    if (sessionStartedMs > 0 && nowMs - sessionStartedMs < startupGraceMs) return 'starting';
+    return 'service_stall';
+  }
   const telemetryStages = telemetry?.stages || {};
   if (Object.keys(telemetryStages).length) {
     const latestAudience = Date.parse(telemetry.latest?.['audience-arrived'] || '') || 0;
@@ -410,6 +421,8 @@ function buildSessionSummary(databasePath, sessionStart, telemetryEvents = []) {
 }
 
 const args = parseArgs(process.argv.slice(2));
+const appPort = boundedNumber(args['app-port'], 3288, 1, 65_535);
+requiredPorts = [...new Set([appPort, 3299, 9091, 19530])];
 const intervalMs = boundedNumber(args['interval-ms'], DEFAULT_INTERVAL_MS, 1_000, 60_000);
 const runtimeCheckMs = boundedNumber(
   args['runtime-check-ms'],
@@ -424,14 +437,50 @@ const idleEndMinutes = boundedNumber(
   5,
   24 * 60
 );
+const startupGraceMs = boundedNumber(
+  args['startup-grace-ms'],
+  DEFAULT_STARTUP_GRACE_MS,
+  0,
+  10 * 60_000
+);
 const databasePath = path.resolve(args.database || defaultDatabasePath());
 const telemetryDirectory = path.resolve(args['telemetry-dir'] || defaultTelemetryDirectory());
 const outputPath = args['stdout-only'] ? '' : path.resolve(args.output || defaultOutputPath());
 const pidFile = path.resolve(args['pid-file'] || path.join('output', 'live-reply-monitor.pid'));
+const stopFile = args['stop-file'] ? path.resolve(args['stop-file']) : '';
+const parentPid = boundedNumber(args['parent-pid'], 0, 0, 2_147_483_647);
 
-let runtime = readWindowsRuntime();
+const initialShutdownReason = requestedShutdownReason();
+let runtime = initialShutdownReason
+  ? {
+      appAlive: false,
+      pid: 0,
+      startedUtc: null,
+      responding: false,
+      workingSetMB: 0,
+      ports: [],
+      missingPorts: [...requiredPorts]
+    }
+  : readWindowsRuntime();
 const sessionStart = isoTimestamp(args['session-start'] || runtime.startedUtc) || new Date().toISOString();
-let serviceHealth = await readServiceHealth(runtime);
+const sessionStartedMs = Date.parse(sessionStart) || Date.now();
+let serviceHealth = initialShutdownReason
+  ? {
+      appAlive: false,
+      appResponding: false,
+      pid: 0,
+      startedUtc: null,
+      workingSetMB: 0,
+      ports: [],
+      missingPorts: [...requiredPorts],
+      sqliteReady: false,
+      sqliteIntegrity: '',
+      milvusReady: false,
+      milvusPhase: '',
+      milvusRestartCount: 0,
+      error: 'parent-exit'
+    }
+  : await readServiceHealth(runtime);
 let previousSnapshot = null;
 let previousStatus = '';
 let lastRuntimeCheckAt = Date.now();
@@ -445,7 +494,7 @@ function emit(record, { consoleOutput = false } = {}) {
     fs.mkdirSync(path.dirname(outputPath), { recursive: true });
     fs.appendFileSync(outputPath, `${line}\n`, 'utf8');
   }
-  if (consoleOutput || args.once) process.stdout.write(`${line}\n`);
+  if (!args.quiet && (consoleOutput || args.once)) process.stdout.write(`${line}\n`);
 }
 
 function acquirePidFile() {
@@ -472,6 +521,45 @@ function releasePidFile() {
   }
 }
 
+function stopRequested() {
+  return Boolean(stopFile && fs.existsSync(stopFile));
+}
+
+function parentProcessAlive() {
+  if (parentPid <= 0) return true;
+  try {
+    process.kill(parentPid, 0);
+    return true;
+  } catch (error) {
+    return error?.code === 'EPERM';
+  }
+}
+
+function requestedShutdownReason() {
+  if (stopRequested()) return 'parent-exit';
+  if (!parentProcessAlive()) return 'parent-exit';
+  return '';
+}
+
+function releaseStopFile() {
+  if (!stopFile || !fs.existsSync(stopFile)) return;
+  try {
+    fs.unlinkSync(stopFile);
+  } catch {
+    // The launcher also removes its own stop signal during final cleanup.
+  }
+}
+
+async function waitForNextSample() {
+  const deadline = Date.now() + intervalMs;
+  while (Date.now() < deadline) {
+    const reason = requestedShutdownReason();
+    if (reason) return reason;
+    await new Promise((resolve) => setTimeout(resolve, Math.min(250, deadline - Date.now())));
+  }
+  return requestedShutdownReason();
+}
+
 async function refreshRuntime(nowMs) {
   if (nowMs - lastRuntimeCheckAt < runtimeCheckMs) return;
   runtime = readWindowsRuntime();
@@ -480,12 +568,21 @@ async function refreshRuntime(nowMs) {
 }
 
 async function sample() {
+  const requestedReason = requestedShutdownReason();
+  if (requestedReason) return requestedReason;
   const nowMs = Date.now();
   await refreshRuntime(nowMs);
   const snapshot = readStageSnapshot(databasePath, sessionStart);
   const telemetryEvents = readLiveReplyTelemetry(telemetryDirectory, sessionStart);
   const telemetry = liveReplyTelemetrySnapshot(telemetryEvents);
-  const status = stageStatus(snapshot, nowMs, serviceHealth, telemetry);
+  const status = stageStatus(
+    snapshot,
+    nowMs,
+    serviceHealth,
+    telemetry,
+    sessionStartedMs,
+    startupGraceMs
+  );
   const delta = previousSnapshot
     ? {
         incoming: snapshot.incoming.count - previousSnapshot.incoming.count,
@@ -495,7 +592,7 @@ async function sample() {
     : { incoming: 0, traces: 0, replies: 0 };
   const latestIncomingMs = Date.parse(snapshot.incoming.latest || '') || 0;
   const record = {
-    type: status === 'healthy' ? 'sample' : 'alert',
+    type: status === 'healthy' || status === 'starting' ? 'sample' : 'alert',
     at: new Date(nowMs).toISOString(),
     sessionStart,
     status,
@@ -554,6 +651,7 @@ async function finish(reason) {
     finalService: serviceHealth
   }, { consoleOutput: true });
   releasePidFile();
+  releaseStopFile();
 }
 
 acquirePidFile();
@@ -567,6 +665,9 @@ emit({
   outputPath: outputPath || null,
   intervalMs,
   runtimeCheckMs,
+  appPort,
+  parentPid: parentPid || null,
+  startupGraceMs,
   idleEndMinutes: args['no-idle-exit'] ? null : idleEndMinutes
 }, { consoleOutput: true });
 
@@ -577,7 +678,10 @@ process.once('SIGTERM', () => {
   finish('sigterm').finally(() => process.exit(0));
 });
 
-if (args.once) {
+const startupShutdownReason = requestedShutdownReason();
+if (startupShutdownReason) {
+  await finish(startupShutdownReason);
+} else if (args.once) {
   await sample();
   await finish('once');
 } else {
@@ -594,6 +698,10 @@ if (args.once) {
       await finish(stopReason);
       break;
     }
-    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    const waitStopReason = await waitForNextSample();
+    if (waitStopReason) {
+      await finish(waitStopReason);
+      break;
+    }
   }
 }
