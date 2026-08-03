@@ -418,7 +418,7 @@ export function createLive2DSpeechPlayer({ onState } = {}) {
       await new Promise((resolve, reject) => {
         rejectGateWait = reject;
         currentReject = reject;
-        Promise.resolve(gate).then(resolve, resolve);
+        Promise.resolve(gate).then(resolve, reject);
       });
     } finally {
       if (currentReject === rejectGateWait) currentReject = null;
@@ -443,6 +443,10 @@ export function createLive2DSpeechPlayer({ onState } = {}) {
   }
 
   function normalizeQueueOptions(options = {}) {
+    const startGate = options.startGate;
+    if (startGate && typeof startGate.then === 'function') {
+      Promise.resolve(startGate).catch(() => {});
+    }
     const maxQueueAgeMs = Math.max(0, Number(options.maxQueueAgeMs) || 0);
     const explicitExpiresAt = Number(options.expiresAt);
     const expiresAt = Number.isFinite(explicitExpiresAt) && explicitExpiresAt > 0

@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
 import { createServer } from 'vite';
-import { createLive2DCaptionSynchronizer } from '../../src/frontend/services/room/live2dCaptionSynchronizer.js';
+import {
+  createLive2DCaptionPlaybackGate,
+  createLive2DCaptionSynchronizer,
+  createLive2DPreparedCaption
+} from '../../src/frontend/services/room/live2dCaptionSynchronizer.js';
 
 const store = new Map([
   ['roomTTSSettings', JSON.stringify({
@@ -198,6 +202,42 @@ try {
   gatedAudio.finish();
   await gatedSpeech;
 
+  let missingCaptionSpeechStarted = false;
+  let missingCaptionResult = '';
+  let resolveMissingCaption;
+  const pendingMissingCaption = new Promise((resolve) => {
+    resolveMissingCaption = resolve;
+  });
+  const audioCountBeforeMissingCaption = audios.length;
+  const missingCaptionSpeech = player.enqueue('TTS must not play without a caption', {
+    sourceLang: 'ja',
+    queueGroup: 'live-reply',
+    priority: 100,
+    startGate: createLive2DCaptionPlaybackGate(
+      createLive2DPreparedCaption(pendingMissingCaption)
+    ),
+    onStart: () => {
+      missingCaptionSpeechStarted = true;
+    }
+  }).catch((error) => {
+    missingCaptionResult = error.name;
+    return error.name;
+  });
+  await waitFor(() => audios.length > audioCountBeforeMissingCaption, 'missing-caption speech synthesis');
+  const missingCaptionAudio = audios.at(-1);
+  resolveMissingCaption('');
+  await waitFor(
+    () => missingCaptionSpeechStarted || Boolean(missingCaptionResult),
+    'missing-caption gate decision'
+  );
+  assert.equal(
+    missingCaptionSpeechStarted,
+    false,
+    'a rejected Chinese caption gate must never start TTS playback'
+  );
+  assert.equal(missingCaptionAudio.paused, true);
+  assert.equal(await missingCaptionSpeech, 'AbortError');
+
   let cancelledGateStarted = false;
   const audioCountBeforeCancelledGate = audios.length;
   const cancelledGateSpeech = player.enqueue('Cancelled gated TTS source', {
@@ -247,7 +287,8 @@ try {
 
   const firstReplyEndedAt = Date.now();
   audios.find((audio) => !audio.ended && !audio.paused)?.finish();
-  await new Promise((resolve) => setTimeout(resolve, 0));
+  await Promise.resolve();
+  await Promise.resolve();
   assert.deepEqual(
     pipelinedStarts,
     ['reply-1'],
