@@ -1,9 +1,10 @@
 const DEFAULT_MAX_QUEUE_SIZE = 120;
-const DEFAULT_BILIBILI_MAX_AGE_MS = 30_000;
+const DEFAULT_BILIBILI_MAX_AGE_MS = 45_000;
 const DEFAULT_BILIBILI_PAID_MAX_AGE_MS = 120_000;
 const DEFAULT_MAX_VIEWERS_PER_TURN = 2;
-const DEFAULT_SINGLE_VIEWER_PROBABILITY = 0.5;
-const DEFAULT_REPLY_COOLDOWN_MS = 60_000;
+const DEFAULT_SINGLE_VIEWER_PROBABILITY = 0.35;
+const DEFAULT_HIGH_TRAFFIC_THRESHOLD = 6;
+const DEFAULT_REPLY_COOLDOWN_MS = 40_000;
 const DEFAULT_FIRST_MESSAGE_BONUS = 34;
 const DEFAULT_MAX_WAIT_BONUS = 28;
 const DEFAULT_REPLY_RETRY_GRACE_MS = 45_000;
@@ -365,7 +366,7 @@ export function selectLive2DAudienceTurn(queue, options = {}) {
   } else {
     const highTrafficThreshold = Math.max(
       limit,
-      Math.round(finiteNumber(options.highTrafficThreshold, 8))
+      Math.round(finiteNumber(options.highTrafficThreshold, DEFAULT_HIGH_TRAFFIC_THRESHOLD))
     );
     const singleViewerProbability = Math.min(
       1,

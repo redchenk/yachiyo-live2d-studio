@@ -63,31 +63,31 @@ assert.equal(
     { pendingCount: 1 },
     sequenceRng([0, 0.5])
   ),
-  2_000,
-  'low traffic pause must start at 2 seconds'
+  1_700,
+  'low traffic pause must start at 1.7 seconds'
 );
 assert.equal(
   sampleLive2DDirectorReplyDelay(
     { pendingCount: 4 },
     sequenceRng([0.5, 0.5])
   ),
-  1_950,
-  'normal traffic pause must be sampled from 1.4-2.5 seconds'
+  1_600,
+  'normal traffic pause must be sampled from 1.1-2.1 seconds'
 );
 assert.equal(
   sampleLive2DDirectorReplyDelay(
     { pendingCount: 12 },
     sequenceRng([1, 0.5])
   ),
-  1_500,
-  'high backlog pause must not exceed 1.5 seconds'
+  1_250,
+  'high backlog pause must not exceed 1.25 seconds'
 );
 assert.equal(
   sampleLive2DDirectorReplyDelay(
     { pendingCount: 4 },
     sequenceRng([0.5, 0.05, 0.25])
   ),
-  2_800,
+  2_450,
   'a small share of ordinary turns receive a short extra thinking pause'
 );
 assert.equal(
@@ -95,8 +95,8 @@ assert.equal(
     { pendingCount: 20, priorityPending: true },
     sequenceRng([0.5])
   ),
-  575,
-  'priority audience uses only a short 0.35-0.8 second pause'
+  450,
+  'priority audience uses only a short 0.25-0.65 second pause'
 );
 
 const scheduler = createLive2DDirectorScheduler({
@@ -128,7 +128,7 @@ now += 20_000;
 scheduler.audienceArrived({ turnInFlight: true });
 assert.equal(timers.size, 0);
 scheduler.playbackIdle({ pendingAudience: true, pendingCount: 4 });
-assert.equal(onlyTimer().dueAt, now + 1_950);
+assert.equal(onlyTimer().dueAt, now + 1_600);
 
 const replyGapDueAt = onlyTimer().dueAt;
 now += 300;
@@ -142,7 +142,7 @@ fireNextTimer();
 assert.deepEqual(turns.at(-1), {
   at: replyGapDueAt,
   reason: 'reply-gap',
-  delayMs: 1_950
+  delayMs: 1_600
 });
 
 now += 2_000;
@@ -161,7 +161,7 @@ now = playbackEndedAt;
 scheduler.playbackIdle({ pendingAudience: true, pendingCount: 10 });
 assert.equal(
   onlyTimer().dueAt,
-  playbackEndedAt + 1_175,
+  playbackEndedAt + 950,
   'the human-like gap must be measured from playback idle, not generation completion'
 );
 

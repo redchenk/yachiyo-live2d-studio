@@ -219,6 +219,26 @@ assert.deepEqual(
 assert.deepEqual(freshTurn.remaining, []);
 assert.deepEqual(freshTurn.discarded, []);
 
+const coolingWindowMessage = enqueueLive2DAudienceEntry([], 'still relevant after cooldown', {
+  source: 'bilibili',
+  bilibili: {
+    id: 'cooldown-window-message',
+    type: 'danmu',
+    userId: 'cooldown-window-viewer',
+    timestamp: now - 40_000
+  }
+}, { now }).entry;
+const coolingWindowTurn = selectLive2DAudienceTurn([coolingWindowMessage], {
+  limit: 1,
+  now
+});
+assert.deepEqual(
+  coolingWindowTurn.selected.map((entry) => entry.id),
+  ['cooldown-window-message'],
+  'ordinary messages should remain eligible through the shortened reply cooldown window'
+);
+assert.deepEqual(coolingWindowTurn.discarded, []);
+
 const burstSelection = selectLive2DBilibiliMessages([
   { id: 'ordinary', type: 'danmu', userId: '1', userName: 'A', text: '路过', timestamp: now },
   { id: 'question', type: 'danmu', userId: '2', userName: 'B', text: '今晚会唱歌吗？', timestamp: now },
@@ -296,6 +316,17 @@ assert.equal(twoViewerTurn.selected.length, 2);
 assert.equal(new Set(twoViewerTurn.selected.map((entry) => entry.userId)).size, 2);
 assert.equal(twoViewerTurn.remaining.length, 1);
 
+const increasedCoverageTurn = selectLive2DAudienceTurn(randomCountQueue, {
+  limit: 2,
+  rng: sequenceRng([0.4, 0.1, 0.9]),
+  now
+});
+assert.equal(
+  increasedCoverageTurn.selected.length,
+  2,
+  'ordinary traffic should favor two-viewer turns often enough to improve reply probability'
+);
+
 const highTrafficQueue = Array.from({ length: 8 }, (_unused, index) => (
   enqueueLive2DAudienceEntry([], `high traffic ${index}`, {
     source: 'bilibili',
@@ -317,6 +348,18 @@ assert.equal(
   'a high backlog must always use both reply targets even when the low-traffic RNG picks one'
 );
 assert.equal(new Set(highTrafficTurn.selected.map((entry) => entry.userId)).size, 2);
+
+const moderateTrafficQueue = highTrafficQueue.slice(0, 6);
+const moderateTrafficTurn = selectLive2DAudienceTurn(moderateTrafficQueue, {
+  limit: 2,
+  rng: () => 0,
+  now
+});
+assert.equal(
+  moderateTrafficTurn.selected.length,
+  2,
+  'a moderate backlog must use both reply targets to improve reply coverage'
+);
 
 const firstMessageEntry = enqueueLive2DAudienceEntry([], 'same weight a', {
   source: 'bilibili',
@@ -385,6 +428,22 @@ const cooldownTurn = selectLive2DAudienceTurn([coolingEntry, readyEntry], {
 });
 assert.deepEqual(cooldownTurn.selected.map((entry) => entry.id), ['ready-message']);
 assert.deepEqual(cooldownTurn.remaining.map((entry) => entry.id), ['cooling-message']);
+
+const repeatViewerReadyTurn = selectLive2DAudienceTurn([coolingEntry, readyEntry], {
+  limit: 2,
+  replyCount: 2,
+  rng: () => 0,
+  viewerState: {
+    'cooling-viewer': { lastRepliedAt: now - 45_000 },
+    'ready-viewer': { lastRepliedAt: now - 120_000 }
+  },
+  now
+});
+assert.deepEqual(
+  new Set(repeatViewerReadyTurn.selected.map((entry) => entry.id)),
+  new Set(['cooling-message', 'ready-message']),
+  'a viewer should become eligible again after a shorter natural cooldown'
+);
 
 const deterministicPaidTurn = selectLive2DAudienceTurn([
   enqueueLive2DAudienceEntry([], 'small gift', {
