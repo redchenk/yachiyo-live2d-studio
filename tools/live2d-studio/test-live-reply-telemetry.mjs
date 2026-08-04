@@ -59,6 +59,16 @@ assert.equal(request.options.keepalive, true);
 assert.equal(JSON.parse(request.options.body).text, undefined);
 assert.equal(JSON.parse(request.options.body).stage, 'selected');
 
+for (const stage of ['repetition-suppressed', 'director-start', 'director-stop']) {
+  const lifecycle = sanitizeLive2DReplyTelemetry({
+    stage,
+    outcome: 'stream-idle-timeout',
+    failureKind: 'stream-idle-timeout'
+  }, { now: () => 1_775_000_000_000 });
+  assert.equal(lifecycle.stage, stage);
+  assert.equal(lifecycle.failureKind, 'stream-idle-timeout');
+}
+
 assert.equal(
   sanitizeLive2DReplyTelemetry({ stage: 'not-allowed' }),
   null,

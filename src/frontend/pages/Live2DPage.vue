@@ -28,7 +28,7 @@ import {
   formatLive2DAudiencePromptEntry,
   live2DPaidAudienceEntries,
   requeueLive2DAudienceTurn,
-  resolveLive2DAudienceAcknowledgements,
+  resolveLive2DAudienceTurnOutcome,
   selectLive2DBilibiliMessages,
   selectLive2DAudienceTurn
 } from '../services/room/live2dAudienceTurnSelector';
@@ -77,8 +77,12 @@ import {
   createLive2DTurnPipeline
 } from '../services/room/live2dTurnPipeline';
 import { shouldReadBilibiliDanmakuAloud } from '../services/room/live2dBilibiliReplyPolicy';
-import { createLive2DSpeechPlayer } from '../services/room/live2dSpeech';
+import {
+  classifyLive2DSpeechFailure,
+  createLive2DSpeechPlayer
+} from '../services/room/live2dSpeech';
 import { recordLive2DReplyTelemetry } from '../services/room/live2dReplyTelemetry';
+import { createLive2DReplyRepetitionGuard } from '../services/room/live2dReplyRepetitionGuard';
 import { cleanLive2DReply } from '../services/room/live2dText';
 import { recordLive2DViewerMemoryInteraction } from '../services/room/live2dMemory';
 import {
@@ -199,6 +203,10 @@ const liveDirectorScheduler = createLive2DDirectorScheduler({
 const liveTurnPipeline = createLive2DTurnPipeline({
   maxConcurrentGenerations: 2,
   onPlaybackIdle: () => handleLivePlaybackIdle()
+});
+const liveReplyRepetitionGuard = createLive2DReplyRepetitionGuard({
+  cooldownMs: 90_000,
+  maxEntries: 5
 });
 
 const debugEmotion = computed(() => (
@@ -1064,6 +1072,14 @@ function hasPriorityAudience(entries = audienceQueue.value) {
   return entries.some((entry) => ['superchat', 'gift', 'guard'].includes(entry?.messageType));
 }
 
+function acceptLiveReplySpeech(text, audienceLines = []) {
+  const audience = Array.isArray(audienceLines) ? audienceLines : [];
+  return liveReplyRepetitionGuard.accept(text, {
+    viewerNames: audience.map((entry) => entry?.userName).filter(Boolean),
+    forceAllow: live2DPaidAudienceEntries(audience).length > 0
+  });
+}
+
 function isLiveTurnOperationCurrent(options = {}) {
   if (options.signal?.aborted) return false;
   return typeof options.isCurrent !== 'function' || options.isCurrent();
@@ -1202,7 +1218,8 @@ async function performStreamingLiveTurn(message, options = {}) {
       onRecovery: (event) => {
         emitLiveTurnTelemetry(options, 'recovery', {
           attempt: event?.phase === 'compact-retry' ? 2 : 3,
-          outcome: event?.phase || 'unknown'
+          outcome: event?.phase || 'unknown',
+          failureKind: event?.failureKind || 'unknown'
         });
       },
       onSentence: (sentence) => {
@@ -1215,6 +1232,13 @@ async function performStreamingLiveTurn(message, options = {}) {
             )
           : rawSpeechSentence;
         if (!speechSentence) return;
+        const repetitionDecision = acceptLiveReplySpeech(speechSentence, options.audienceLines);
+        if (!repetitionDecision.accepted) {
+          emitLiveTurnTelemetry(options, 'repetition-suppressed', {
+            outcome: repetitionDecision.reason || 'repeated'
+          });
+          return;
+        }
         notifyFirstSentenceReady();
         const sentenceIndex = queuedSpeechCount;
         let captionToken = 0;
@@ -1323,8 +1347,12 @@ async function performStreamingLiveTurn(message, options = {}) {
           })
           .catch((error) => {
             playbackFailed = true;
+            const failureKind = classifyLive2DSpeechFailure(error, {
+              turnCancelled: Boolean(options.signal?.aborted)
+            });
             emitLiveTurnTelemetry(options, 'tts-fail', {
-              outcome: error?.name === 'AbortError' ? 'aborted' : 'failed'
+              outcome: error?.name === 'AbortError' ? 'aborted' : 'failed',
+              failureKind
             });
             if (error?.name === 'AbortError') return;
             speechState.value = { status: 'error', error: error.message || 'TTS failed' };
@@ -1364,10 +1392,21 @@ async function performStreamingLiveTurn(message, options = {}) {
       }
     }
     if (queuedSpeechCount < 1) {
-      const finalSpeech = ensureLive2DAudienceNamesInSpeech(
+      const finalSpeechCandidate = ensureLive2DAudienceNamesInSpeech(
         visibleYachiyoText(finalResult.reply),
         options.audienceLines
       );
+      const repetitionDecision = acceptLiveReplySpeech(
+        finalSpeechCandidate,
+        options.audienceLines
+      );
+      const finalSpeech = repetitionDecision.accepted ? finalSpeechCandidate : '';
+      if (!repetitionDecision.accepted && repetitionDecision.reason !== 'empty') {
+        emitLiveTurnTelemetry(options, 'repetition-suppressed', {
+          outcome: repetitionDecision.reason || 'repeated'
+        });
+      }
+      if (finalSpeech) {
       const pairedFinalCaption = Promise.resolve(finalResult.caption || '')
         .then((caption) => ensureLive2DAudienceNamesInSpeech(
           visibleYachiyoText(caption),
@@ -1406,6 +1445,8 @@ async function performStreamingLiveTurn(message, options = {}) {
       const finalCaptionReady = preparedCaption.ready.then(publishFinalCaption);
       let finalCaptionToken = 0;
       let finalSpeechLineQueued = false;
+      notifyFirstSentenceReady();
+      emitLiveTurnTelemetry(options, 'tts-queued');
       const finalPlaybackPromise = Promise.resolve(options.enqueueAfter)
         .then(() => {
           throwIfLiveTurnOperationCancelled(options);
@@ -1421,6 +1462,7 @@ async function performStreamingLiveTurn(message, options = {}) {
             startGate: captionPlaybackGate,
             onStart: ({ durationMs }) => {
               if (!isLiveTurnOperationCurrent(options)) return;
+              emitLiveTurnTelemetry(options, 'tts-start');
               const caption = preparedCaption.read();
               finalCaptionToken = speechCaptionSynchronizer.start({
                 fallback: caption,
@@ -1435,8 +1477,19 @@ async function performStreamingLiveTurn(message, options = {}) {
             }
           });
         })
+        .then((playback) => {
+          emitLiveTurnTelemetry(options, 'tts-end', { outcome: 'played' });
+          return playback;
+        })
         .catch((error) => {
           playbackFailed = true;
+          const failureKind = classifyLive2DSpeechFailure(error, {
+            turnCancelled: Boolean(options.signal?.aborted)
+          });
+          emitLiveTurnTelemetry(options, 'tts-fail', {
+            outcome: error?.name === 'AbortError' ? 'aborted' : 'failed',
+            failureKind
+          });
           if (error?.name === 'AbortError') return;
           speechState.value = { status: 'error', error: error.message || 'TTS failed' };
         })
@@ -1448,6 +1501,7 @@ async function performStreamingLiveTurn(message, options = {}) {
         });
       playbackPromises.push(finalPlaybackPromise);
       visibleReply = preparedCaption.read() || visibleYachiyoText(finalResult.caption) || streamedReply;
+      }
     }
 
     llmState.value = {
@@ -1713,10 +1767,19 @@ async function runLiveTurn(trigger = {}) {
       audienceQueue.value = requeueLive2DAudienceTurn(audienceQueue.value, audienceLines);
       return;
     }
-    const acknowledgements = resolveLive2DAudienceAcknowledgements(
+    const acknowledgements = resolveLive2DAudienceTurnOutcome(
       audienceLines,
-      generation.result?.acknowledgedIndexes
+      generation.result
     );
+    if (acknowledgements.suppressed) {
+      const suppressedEntries = settleAudienceLines(acknowledgements.unacknowledged, false);
+      audienceQueue.value = requeueLive2DAudienceTurn(
+        audienceQueue.value,
+        suppressedEntries,
+        acknowledgements.requeueOptions
+      );
+      return;
+    }
     if (acknowledgements.unacknowledged.length) {
       settleAudienceLines(acknowledgements.unacknowledged, false);
       audienceQueue.value = requeueLive2DAudienceTurn(
@@ -1783,12 +1846,15 @@ function startLiveDirector() {
   liveDirector.running = true;
   liveDirector.status = 'starting';
   liveDirector.error = '';
+  liveReplyRepetitionGuard.reset();
+  emitLiveReplyTelemetry({ stage: 'director-start', source: 'live' });
   dispatchCharacterState('listening', { holdMs: 2200, attention: 0.68, arousal: 0.42 });
   pushLog('system', 'Live director started.');
   runLiveTurn();
 }
 
 function stopLiveDirector() {
+  const wasRunning = liveDirector.running;
   liveDirectorSessionId += 1;
   liveDirector.running = false;
   liveDirector.status = 'idle';
@@ -1810,6 +1876,7 @@ function stopLiveDirector() {
     error: ''
   };
   dispatchCharacterState('idle', { holdMs: 1200, attention: 0.32, arousal: 0.28 });
+  if (wasRunning) emitLiveReplyTelemetry({ stage: 'director-stop', source: 'live' });
   pushLog('system', 'Live director stopped.');
 }
 

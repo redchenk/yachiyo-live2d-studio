@@ -39,6 +39,15 @@ export function adaptLive2DInterTurnPauseMs(requestedMs, pendingReplyCount = 0) 
   return baseMs;
 }
 
+export function classifyLive2DSpeechFailure(error, options = {}) {
+  const name = String(error?.name || '').trim();
+  if (name === 'TimeoutError') return 'tts-timeout';
+  if (name === 'AbortError') {
+    return options.turnCancelled ? 'turn-cancelled' : 'playback-aborted';
+  }
+  return 'tts-failed';
+}
+
 function timeoutError(message) {
   const error = new Error(message);
   error.name = 'TimeoutError';

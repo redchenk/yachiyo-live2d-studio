@@ -612,6 +612,30 @@ export function resolveLive2DAudienceAcknowledgements(entries = [], indexes = []
   };
 }
 
+export function resolveLive2DAudienceTurnOutcome(entries = [], result = {}) {
+  const audience = (Array.isArray(entries) ? entries : [])
+    .slice(0, DEFAULT_MAX_VIEWERS_PER_TURN);
+  const suppressed = result?.raw?.recovery === 'local-fallback-suppressed';
+  if (suppressed) {
+    return {
+      acknowledged: [],
+      unacknowledged: audience,
+      acknowledgedIndexes: [],
+      usedFallback: false,
+      suppressed: true,
+      requeueOptions: {
+        retryGraceMs: 120_000,
+        maxReplyRetryCount: 8
+      }
+    };
+  }
+  return {
+    ...resolveLive2DAudienceAcknowledgements(audience, result?.acknowledgedIndexes),
+    suppressed: false,
+    requeueOptions: {}
+  };
+}
+
 export function ensureLive2DAudienceNamesInSpeech(text, entries = []) {
   const value = asText(text);
   if (!value) return '';

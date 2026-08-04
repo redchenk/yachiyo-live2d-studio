@@ -20,8 +20,11 @@ for (const forbidden of ['userName', 'text', 'cookie', 'token', 'apiKey']) {
     `telemetry persistence must not accept ${forbidden}`
   );
 }
-for (const allowed of ['stage', 'turnId', 'audienceCount', 'paidCount', 'queueDepth', 'durationMs']) {
+for (const allowed of ['stage', 'turnId', 'audienceCount', 'paidCount', 'queueDepth', 'durationMs', 'failureKind']) {
   assert.match(method, new RegExp(`"${allowed}"`));
+}
+for (const stage of ['repetition-suppressed', 'director-start', 'director-stop']) {
+  assert.match(source, new RegExp(`"${stage}"`));
 }
 
 console.log('Launcher live reply telemetry checks passed');

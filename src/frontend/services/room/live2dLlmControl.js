@@ -1611,29 +1611,127 @@ function safeRecoveryViewerName(value, fallbackIndex) {
   return name || `視聴者${fallbackIndex}`;
 }
 
+function safeRecoveryGiftName(value) {
+  return String(value || '')
+    .replace(/[\r\n\t]/g, ' ')
+    .replace(/[<>\[\]{}"'`]/g, '')
+    .trim()
+    .slice(0, 32);
+}
+
+const LOCAL_RECOVERY_TEMPLATE_COOLDOWN_MS = 90_000;
+const LOCAL_RECOVERY_ORDINARY_TEMPLATES = Object.freeze([
+  Object.freeze({
+    id: 'ordinary-comment',
+    reply: (names) => `${names}、コメントありがとう。ちゃんと読んだよ。もう少し聞かせてね！`,
+    caption: (names) => `${names}，谢谢你的弹幕，我已经认真看到了。再多说一点给我听吧！`
+  }),
+  Object.freeze({
+    id: 'ordinary-continue',
+    reply: (names) => `${names}、声をかけてくれてありがとう。今の話、続きが気になるな！`,
+    caption: (names) => `${names}，谢谢你来和我说话，我很想听听这个话题的后续！`
+  }),
+  Object.freeze({
+    id: 'ordinary-found',
+    reply: (names) => `${names}、コメント見つけたよ。ここからゆっくり話そうね！`,
+    caption: (names) => `${names}，我看到你的弹幕了，我们从这里慢慢聊吧！`
+  }),
+  Object.freeze({
+    id: 'ordinary-together',
+    reply: (names) => `${names}、メッセージ受け取ったよ。続きも一緒に楽しもう！`,
+    caption: (names) => `${names}，你的消息我收到了，接下来也一起开心地聊吧！`
+  }),
+  Object.freeze({
+    id: 'ordinary-attention',
+    reply: (names) => `${names}、来てくれてありがとう。ちゃんとこちらを見ているよ！`,
+    caption: (names) => `${names}，谢谢你来到这里，我有认真看着你的弹幕！`
+  }),
+  Object.freeze({
+    id: 'ordinary-expand',
+    reply: (names) => `${names}、呼んでくれてありがとう。その話、もう少し広げてみよう！`,
+    caption: (names) => `${names}，谢谢你叫我，我们把这个话题再展开一点吧！`
+  })
+]);
+const LOCAL_RECOVERY_PAID_TEMPLATES = Object.freeze([
+  Object.freeze({
+    id: 'paid-warm',
+    reply: (names, gifts) => `${names}、${gifts}ありがとう。温かい応援、しっかり受け取ったよ！`,
+    caption: (names, gifts) => `${names}，谢谢你的${gifts}，这份温暖的支持我好好收到了！`
+  }),
+  Object.freeze({
+    id: 'paid-happy',
+    reply: (names, gifts) => `${names}、${gifts}本当にありがとう。とっても嬉しいよ！`,
+    caption: (names, gifts) => `${names}，真的谢谢你的${gifts}，我特别开心！`
+  }),
+  Object.freeze({
+    id: 'paid-heart',
+    reply: (names, gifts) => `${names}、${gifts}ありがとう。大切に受け取るね！`,
+    caption: (names, gifts) => `${names}，谢谢你的${gifts}，我会珍惜地收下这份心意！`
+  }),
+  Object.freeze({
+    id: 'paid-energy',
+    reply: (names, gifts) => `${names}、${gifts}ありがとう。元気をたくさんもらったよ！`,
+    caption: (names, gifts) => `${names}，谢谢你的${gifts}，一下子给了我好多能量！`
+  })
+]);
+const localRecoveryTemplateUsage = new Map();
+
+function selectLocalRecoveryTemplate(templates, now, options = {}) {
+  const available = templates.filter((template) => (
+    now - Number(localRecoveryTemplateUsage.get(template.id) || 0) >=
+    LOCAL_RECOVERY_TEMPLATE_COOLDOWN_MS
+  ));
+  let template = available[0] || null;
+  if (!template && options.alwaysReply === true) {
+    template = templates.slice().sort((left, right) => (
+      Number(localRecoveryTemplateUsage.get(left.id) || 0) -
+      Number(localRecoveryTemplateUsage.get(right.id) || 0)
+    ))[0] || null;
+  }
+  if (template) localRecoveryTemplateUsage.set(template.id, now);
+  return template;
+}
+
 function buildLocalLive2DRecovery(message, handlers = {}) {
   const audienceLines = normalizedRecoveryAudienceLines(handlers);
   const names = audienceLines.map((line, index) => safeRecoveryViewerName(line?.userName, index + 1));
-  const acknowledgedIndexes = audienceLines.map((_line, index) => index + 1);
-  const giftNames = audienceLines
-    .map((line, index) => (/gift|superchat|guard/i.test(String(line?.messageType || '')) ? names[index] : ''))
-    .filter(Boolean);
+  const paidLines = audienceLines.filter((line) => (
+    /gift|superchat|guard/i.test(String(line?.messageType || ''))
+  ));
+  const paid = paidLines.length > 0;
+  const now = Number(handlers.now) || Date.now();
+  const template = names.length
+    ? selectLocalRecoveryTemplate(
+        paid ? LOCAL_RECOVERY_PAID_TEMPLATES : LOCAL_RECOVERY_ORDINARY_TEMPLATES,
+        now,
+        { alwaysReply: paid }
+      )
+    : null;
+  const suppressed = !template;
+  const acknowledgedIndexes = suppressed
+    ? []
+    : audienceLines.map((_line, index) => index + 1);
   const addressedNames = names.length ? names : ['みんな'];
   const japaneseNames = addressedNames.map((name) => `${name}さん`).join('、');
   const chineseNames = addressedNames.join('、');
-  const reply = giftNames.length
-    ? `${japaneseNames}、温かい応援をありがとう。少し考え込んじゃったけど、ちゃんと届いているよ！`
-    : `${japaneseNames}、待たせてごめんね。コメントはちゃんと届いているよ、ここから一緒に話そう！`;
-  const caption = giftNames.length
-    ? `${chineseNames}，谢谢你们温暖的支持。刚才稍微想久了一点，但心意已经好好收到了！`
-    : `${chineseNames}，让你们久等了。弹幕已经好好收到了，我们接着一起聊吧！`;
-  const live2d = inferLive2DIntentFromText(reply) || normalizeLive2DIntent({
-    emotion: 'smile',
-    intensity: 0.62,
-    actions: [{ type: 'look_at_chat', duration: 1.1 }, { type: 'smile', duration: 1.2 }]
-  });
+  const giftNames = [...new Set(paidLines
+    .map((line) => safeRecoveryGiftName(line?.giftName))
+    .filter(Boolean))];
+  const japaneseGifts = giftNames.length ? `${giftNames.join('、')}を` : '応援を';
+  const chineseGifts = giftNames.length ? giftNames.join('、') : '支持';
+  const reply = suppressed ? '' : template.reply(japaneseNames, japaneseGifts);
+  const caption = suppressed ? '' : template.caption(chineseNames, chineseGifts);
+  const live2d = suppressed
+    ? null
+    : inferLive2DIntentFromText(reply) || normalizeLive2DIntent({
+        emotion: 'smile',
+        intensity: 0.62,
+        actions: [{ type: 'look_at_chat', duration: 1.1 }, { type: 'smile', duration: 1.2 }]
+      });
   const raw = {
-    recovery: 'local-fallback',
+    recovery: suppressed ? 'local-fallback-suppressed' : 'local-fallback',
+    synthetic: true,
+    templateId: template?.id || '',
     acknowledgedIndexes
   };
   return {
@@ -1643,12 +1741,33 @@ function buildLocalLive2DRecovery(message, handlers = {}) {
     music: null,
     acknowledgedIndexes,
     memoryWrites: [],
-    raw
+    raw,
+    suppressed
   };
 }
 
 function isCallerAborted(handlers = {}) {
   return Boolean(handlers.signal?.aborted);
+}
+
+export function classifyLive2DLLMRecoveryFailure(error) {
+  const name = String(error?.name || '').trim();
+  const message = String(error?.message || '').toLowerCase();
+  if (name === 'TimeoutError' || error?.code === 'LIVE2D_LLM_TIMEOUT') {
+    return message.includes('stream stopped responding')
+      ? 'stream-idle-timeout'
+      : 'request-timeout';
+  }
+  if (name === 'AbortError') return 'aborted';
+  const httpStatus = message.match(/\b(?:llm|http)\s*([1-5]\d{2})\b/u)?.[1];
+  if (httpStatus) {
+    if (httpStatus === '429') return 'http-429';
+    if (httpStatus === '401' || httpStatus === '403') return `http-${httpStatus}`;
+    if (httpStatus.startsWith('5')) return 'http-5xx';
+    return 'http-error';
+  }
+  if (name === 'TypeError' || /network|fetch|connection|socket/u.test(message)) return 'network';
+  return 'unknown';
 }
 
 function partialStreamingRecoveryResult(message, handlers, sentences) {
@@ -1677,6 +1796,8 @@ function partialStreamingRecoveryResult(message, handlers, sentences) {
 
 export async function requestLive2DControlStreamWithRecovery(message, handlers = {}) {
   const emittedSentences = [];
+  let primaryFailure = null;
+  let recoveryFailure = null;
   const onSentence = (sentence) => {
     emittedSentences.push(sentence);
     handlers.onSentence?.(sentence);
@@ -1686,15 +1807,23 @@ export async function requestLive2DControlStreamWithRecovery(message, handlers =
     return await requestLive2DControlStream(message, baseHandlers);
   } catch (primaryError) {
     if (isCallerAborted(handlers)) throw primaryError;
+    primaryFailure = primaryError;
     const partial = partialStreamingRecoveryResult(message, handlers, emittedSentences);
     if (partial) {
-      handlers.onRecovery?.({ phase: 'partial-stream', error: primaryError });
+      handlers.onRecovery?.({
+        phase: 'partial-stream',
+        error: primaryError,
+        failureKind: classifyLive2DLLMRecoveryFailure(primaryError)
+      });
       handlers.onDone?.(partial);
       return partial;
     }
   }
 
-  handlers.onRecovery?.({ phase: 'compact-retry' });
+  handlers.onRecovery?.({
+    phase: 'compact-retry',
+    failureKind: classifyLive2DLLMRecoveryFailure(primaryFailure)
+  });
   const retrySentences = [];
   const retryHandlers = {
     ...handlers,
@@ -1710,34 +1839,37 @@ export async function requestLive2DControlStreamWithRecovery(message, handlers =
     return await requestLive2DControlStream(message, retryHandlers);
   } catch (recoveryError) {
     if (isCallerAborted(handlers)) throw recoveryError;
+    recoveryFailure = recoveryError;
     const partial = partialStreamingRecoveryResult(message, handlers, retrySentences);
     if (partial) {
-      handlers.onRecovery?.({ phase: 'partial-stream', error: recoveryError });
+      handlers.onRecovery?.({
+        phase: 'partial-stream',
+        error: recoveryError,
+        failureKind: classifyLive2DLLMRecoveryFailure(recoveryError)
+      });
       handlers.onDone?.(partial);
       return partial;
     }
   }
 
-  handlers.onRecovery?.({ phase: 'local-fallback' });
   const fallback = buildLocalLive2DRecovery(message, handlers);
-  handlers.onSentence?.({
-    index: 1,
-    text: fallback.reply,
-    caption: fallback.caption,
-    captionReady: Promise.resolve(fallback.caption),
-    sourceLang: 'ja',
-    emotion: fallback.live2d?.emotion || fallback.live2d?.expression || 'smile',
-    speechStyle: fallback.live2d?.speechStyle || SPEECH_STYLE_BY_EMOTION.smile,
-    live2d: fallback.live2d,
-    beat: null
+  handlers.onRecovery?.({
+    phase: fallback.raw?.recovery || 'local-fallback',
+    failureKind: classifyLive2DLLMRecoveryFailure(recoveryFailure || primaryFailure)
   });
-  const reservation = createLive2DHistoryReservation();
-  reservation.commit(message, fallback.reply, () => recordLive2DSessionMemoryTurn({
-    source: 'llm-control',
-    input: message,
-    reply: fallback.reply,
-    emotion: fallback.live2d?.emotion || fallback.live2d?.expression || 'smile'
-  }));
+  if (!fallback.suppressed) {
+    handlers.onSentence?.({
+      index: 1,
+      text: fallback.reply,
+      caption: fallback.caption,
+      captionReady: Promise.resolve(fallback.caption),
+      sourceLang: 'ja',
+      emotion: fallback.live2d?.emotion || fallback.live2d?.expression || 'smile',
+      speechStyle: fallback.live2d?.speechStyle || SPEECH_STYLE_BY_EMOTION.smile,
+      live2d: fallback.live2d,
+      beat: null
+    });
+  }
   handlers.onDone?.(fallback);
   return fallback;
 }

@@ -8,6 +8,7 @@ import {
   live2DPaidAudienceEntries,
   requeueLive2DAudienceTurn,
   resolveLive2DAudienceAcknowledgements,
+  resolveLive2DAudienceTurnOutcome,
   selectLive2DBilibiliMessages,
   selectLive2DAudienceTurn
 } from '../../src/frontend/services/room/live2dAudienceTurnSelector.js';
@@ -541,6 +542,19 @@ const fallbackAcknowledgements = resolveLive2DAudienceAcknowledgements(
 assert.deepEqual(fallbackAcknowledgements.acknowledged.map((entry) => entry.id), ['ack-a']);
 assert.deepEqual(fallbackAcknowledgements.unacknowledged.map((entry) => entry.id), ['ack-b']);
 assert.equal(fallbackAcknowledgements.usedFallback, true);
+
+const suppressedOutcome = resolveLive2DAudienceTurnOutcome(
+  acknowledgementAudience,
+  {
+    acknowledgedIndexes: [],
+    raw: { recovery: 'local-fallback-suppressed', synthetic: true }
+  }
+);
+assert.deepEqual(suppressedOutcome.acknowledged, []);
+assert.deepEqual(suppressedOutcome.unacknowledged, acknowledgementAudience);
+assert.equal(suppressedOutcome.suppressed, true);
+assert.ok(suppressedOutcome.requeueOptions.maxReplyRetryCount >= 6);
+assert.ok(suppressedOutcome.requeueOptions.retryGraceMs >= 90_000);
 
 const paidAcknowledgements = resolveLive2DAudienceAcknowledgements([
   { id: 'paid-gift', userName: 'GiftViewer', messageType: 'gift' },

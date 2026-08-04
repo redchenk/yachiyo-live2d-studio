@@ -98,7 +98,31 @@ function sanitizeStoredDirectorInput(value) {
     .trim();
 }
 
+const OBSOLETE_SYNTHETIC_RECOVERY_PATTERNS = Object.freeze([
+  /待たせてごめんね[\s\S]{0,100}コメントはちゃんと届いているよ/u,
+  /让你们久等了[\s\S]{0,100}弹幕已经好好收到了/u,
+  /少し考え込んじゃったけど[\s\S]{0,100}ちゃんと届いているよ/u,
+  /刚才稍微想久了一点[\s\S]{0,100}心意已经好好收到了/u
+]);
+
+export function isLive2DObsoleteSyntheticRecoveryText(value) {
+  const text = String(value || '').replace(/\s+/g, ' ').trim();
+  return Boolean(text) && OBSOLETE_SYNTHETIC_RECOVERY_PATTERNS.some((pattern) => pattern.test(text));
+}
+
+function isObsoleteSyntheticRecoveryNote(note = {}) {
+  if (!note || typeof note !== 'object') return false;
+  return isLive2DObsoleteSyntheticRecoveryText([
+    note.title,
+    note.summary,
+    note.content,
+    ...(Array.isArray(note.facts) ? note.facts : []),
+    ...(Array.isArray(note.foresight) ? note.foresight.map((item) => item?.content || item?.text || item) : [])
+  ].filter(Boolean).join('\n'));
+}
+
 function sanitizeMemoryReferenceText(value, maxLength = 240) {
+  if (isLive2DObsoleteSyntheticRecoveryText(value)) return '';
   return asText(sanitizeStoredDirectorInput(value), maxLength);
 }
 
@@ -122,6 +146,7 @@ function sanitizeSessionTurn(turn = {}) {
   if (!turn || typeof turn !== 'object') return null;
   const input = sanitizeStoredDirectorInput(turn.input || turn.message || '');
   const reply = sanitizeStoredSpokenReply(turn.reply || '');
+  if (isLive2DObsoleteSyntheticRecoveryText(reply)) return null;
   if (!input && !reply) return null;
   return { ...turn, input, reply };
 }
@@ -531,7 +556,9 @@ export async function searchLive2DMemory(inputText, options = {}) {
     }, 2000);
     const result = await response.json().catch(() => ({}));
     if (!response.ok || !result.success || !Array.isArray(result.notes)) return [];
-    const notes = result.notes.slice(0, settings.maxNotesPerTurn);
+    const notes = result.notes
+      .filter((note) => !isObsoleteSyntheticRecoveryNote(note))
+      .slice(0, settings.maxNotesPerTurn);
     notes.recollection = result.recollection || null;
     return notes;
   } catch (_) {
@@ -540,7 +567,9 @@ export async function searchLive2DMemory(inputText, options = {}) {
 }
 
 export function formatMemoryPrompt(notes = []) {
-  const usableNotes = Array.isArray(notes) ? notes.filter(Boolean).slice(0, 8) : [];
+  const usableNotes = Array.isArray(notes)
+    ? notes.filter((note) => note && !isObsoleteSyntheticRecoveryNote(note)).slice(0, 8)
+    : [];
   if (!usableNotes.length) return '';
 
   const recollection = notes.recollection || null;

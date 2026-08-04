@@ -96,6 +96,7 @@ let player = null;
 try {
   const {
     adaptLive2DInterTurnPauseMs,
+    classifyLive2DSpeechFailure,
     createLive2DSpeechPlayer
   } = await server.ssrLoadModule(
     '/src/frontend/services/room/live2dSpeech.js'
@@ -109,6 +110,16 @@ try {
     'even a heavy reply backlog must preserve a human-perceptible pause'
   );
   assert.equal(adaptLive2DInterTurnPauseMs(240, 4), 240);
+  assert.equal(classifyLive2DSpeechFailure({ name: 'TimeoutError' }), 'tts-timeout');
+  assert.equal(
+    classifyLive2DSpeechFailure({ name: 'AbortError' }, { turnCancelled: true }),
+    'turn-cancelled'
+  );
+  assert.equal(
+    classifyLive2DSpeechFailure({ name: 'AbortError' }, { turnCancelled: false }),
+    'playback-aborted'
+  );
+  assert.equal(classifyLive2DSpeechFailure(new Error('decode failed')), 'tts-failed');
   player = createLive2DSpeechPlayer();
 
   const firstAudience = player.enqueue('第一条弹幕', {

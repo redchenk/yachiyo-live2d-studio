@@ -8,7 +8,10 @@ const LIVE_REPLY_TELEMETRY_STAGES = new Set([
   'tts-start',
   'tts-end',
   'tts-fail',
-  'recovery'
+  'recovery',
+  'repetition-suppressed',
+  'director-start',
+  'director-stop'
 ]);
 
 const ALLOWED_SOURCES = new Set(['bilibili', 'manual', 'asr', 'live', 'unknown']);
@@ -45,6 +48,7 @@ export function sanitizeLive2DReplyTelemetry(event = {}, options = {}) {
   const source = safeEnum(event.source, ALLOWED_SOURCES);
   const messageType = safeEnum(event.messageType, ALLOWED_MESSAGE_TYPES);
   const outcome = safeToken(event.outcome, 48).toLowerCase();
+  const failureKind = safeToken(event.failureKind, 48).toLowerCase();
   if (turnId) payload.turnId = turnId;
   if (source) payload.source = source;
   if (messageType) payload.messageType = messageType;
@@ -59,6 +63,7 @@ export function sanitizeLive2DReplyTelemetry(event = {}, options = {}) {
     if (value !== undefined) payload[key] = value;
   }
   if (outcome) payload.outcome = outcome;
+  if (failureKind) payload.failureKind = failureKind;
   return payload;
 }
 

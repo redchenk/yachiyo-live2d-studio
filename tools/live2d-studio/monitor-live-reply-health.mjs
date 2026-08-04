@@ -2,6 +2,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import Database from 'better-sqlite3';
+import {
+  liveReplyMonitorRecordType,
+  liveReplyMonitorShouldPrint,
+  resolveLiveReplyMonitorStatus
+} from './live-reply-monitor-policy.mjs';
 
 const DEFAULT_INTERVAL_MS = 5_000;
 const DEFAULT_RUNTIME_CHECK_MS = 30_000;
@@ -217,7 +222,8 @@ function readLiveReplyTelemetry(telemetryDirectory, sessionStart) {
           queueDepth: Number(event.queueDepth) || 0,
           durationMs: Number(event.durationMs) || 0,
           attempt: Number(event.attempt) || 0,
-          outcome: String(event.outcome || '')
+          outcome: String(event.outcome || ''),
+          failureKind: String(event.failureKind || '')
         });
       } catch {
         // Ignore partially written or legacy diagnostic lines.
@@ -237,44 +243,6 @@ function liveReplyTelemetrySnapshot(events) {
   return { stages, latest };
 }
 
-function stageStatus(
-  snapshot,
-  nowMs,
-  serviceHealth,
-  telemetry = null,
-  sessionStartedMs = 0,
-  startupGraceMs = DEFAULT_STARTUP_GRACE_MS
-) {
-  const latestIncoming = Date.parse(snapshot.incoming.latest || '') || 0;
-  const latestTrace = Date.parse(snapshot.traces.latest || '') || 0;
-  const latestReply = Date.parse(snapshot.replies.latest || '') || 0;
-  const serviceFailed = (
-    !serviceHealth?.appAlive ||
-    !serviceHealth?.appResponding ||
-    !serviceHealth?.sqliteReady ||
-    serviceHealth?.sqliteIntegrity !== 'ok' ||
-    !serviceHealth?.milvusReady ||
-    (serviceHealth?.missingPorts?.length || 0) > 0
-  );
-  if (serviceFailed) {
-    if (sessionStartedMs > 0 && nowMs - sessionStartedMs < startupGraceMs) return 'starting';
-    return 'service_stall';
-  }
-  const telemetryStages = telemetry?.stages || {};
-  if (Object.keys(telemetryStages).length) {
-    const latestAudience = Date.parse(telemetry.latest?.['audience-arrived'] || '') || 0;
-    const latestSelected = Date.parse(telemetry.latest?.selected || '') || 0;
-    const latestLlmStart = Date.parse(telemetry.latest?.['llm-start'] || '') || 0;
-    const latestFirstSentence = Date.parse(telemetry.latest?.['first-sentence'] || '') || 0;
-    if (latestAudience > latestSelected && nowMs - latestAudience >= 45_000) return 'scheduler_stall';
-    if (latestLlmStart > latestFirstSentence && nowMs - latestLlmStart >= 30_000) return 'llm_generation_stall';
-    return 'healthy';
-  }
-  if (latestIncoming > latestTrace && nowMs - latestTrace >= 45_000) return 'scheduler_stall';
-  if (latestTrace > latestReply && nowMs - latestReply >= 60_000) return 'llm_generation_stall';
-  return 'healthy';
-}
-
 function percentile(sorted, ratio) {
   if (!sorted.length) return 0;
   return sorted[Math.min(sorted.length - 1, Math.floor((sorted.length - 1) * ratio))];
@@ -284,9 +252,13 @@ function buildLiveReplyTelemetrySummary(events) {
   const snapshot = liveReplyTelemetrySnapshot(events);
   const turns = new Map();
   const recovery = {};
+  const failureKinds = {};
   for (const event of events) {
     if (event.stage === 'recovery') {
       recovery[event.outcome || 'unknown'] = (recovery[event.outcome || 'unknown'] || 0) + 1;
+    }
+    if (event.failureKind) {
+      failureKinds[event.failureKind] = (failureKinds[event.failureKind] || 0) + 1;
     }
     if (!event.turnId) continue;
     const turn = turns.get(event.turnId) || {
@@ -330,6 +302,7 @@ function buildLiveReplyTelemetrySummary(events) {
     failedTurns: [...turns.values()].filter((turn) => turn.failed).length,
     stages: snapshot.stages,
     recovery,
+    failureKinds,
     firstSentence: latency(firstSentence),
     firstAudio: latency(firstAudio)
   };
@@ -575,14 +548,14 @@ async function sample() {
   const snapshot = readStageSnapshot(databasePath, sessionStart);
   const telemetryEvents = readLiveReplyTelemetry(telemetryDirectory, sessionStart);
   const telemetry = liveReplyTelemetrySnapshot(telemetryEvents);
-  const status = stageStatus(
+  const status = resolveLiveReplyMonitorStatus({
     snapshot,
     nowMs,
     serviceHealth,
     telemetry,
     sessionStartedMs,
     startupGraceMs
-  );
+  });
   const delta = previousSnapshot
     ? {
         incoming: snapshot.incoming.count - previousSnapshot.incoming.count,
@@ -592,7 +565,7 @@ async function sample() {
     : { incoming: 0, traces: 0, replies: 0 };
   const latestIncomingMs = Date.parse(snapshot.incoming.latest || '') || 0;
   const record = {
-    type: status === 'healthy' || status === 'starting' ? 'sample' : 'alert',
+    type: liveReplyMonitorRecordType(status, previousStatus),
     at: new Date(nowMs).toISOString(),
     sessionStart,
     status,
@@ -610,11 +583,13 @@ async function sample() {
     lifecycle: telemetry,
     service: serviceHealth
   };
-  const shouldPrint = (
-    status !== previousStatus ||
-    status !== 'healthy' ||
-    nowMs - lastHeartbeatAt >= heartbeatMs
-  );
+  const shouldPrint = liveReplyMonitorShouldPrint({
+    status,
+    previousStatus,
+    nowMs,
+    lastHeartbeatAt,
+    heartbeatMs
+  });
   emit(record, { consoleOutput: shouldPrint });
   if (shouldPrint) lastHeartbeatAt = nowMs;
   previousSnapshot = snapshot;

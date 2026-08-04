@@ -1122,7 +1122,8 @@ internal static class DesktopApiProxy
     private static readonly HashSet<string> LiveReplyTelemetryAllowedStages = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
     {
         "audience-arrived", "selected", "llm-start", "first-sentence", "caption-ready",
-        "tts-queued", "tts-start", "tts-end", "tts-fail", "recovery"
+        "tts-queued", "tts-start", "tts-end", "tts-fail", "recovery",
+        "repetition-suppressed", "director-start", "director-stop"
     };
     private static Process memoryDataServiceProcess;
     private static Process asrServiceProcess;
@@ -1322,6 +1323,7 @@ internal static class DesktopApiProxy
             AddLiveReplyTelemetryString(input, output, "source", 24);
             AddLiveReplyTelemetryString(input, output, "messageType", 24);
             AddLiveReplyTelemetryString(input, output, "outcome", 48);
+            AddLiveReplyTelemetryString(input, output, "failureKind", 48);
             AddLiveReplyTelemetryNumber(input, output, "audienceCount", 20);
             AddLiveReplyTelemetryNumber(input, output, "paidCount", 20);
             AddLiveReplyTelemetryNumber(input, output, "queueDepth", 100000);
