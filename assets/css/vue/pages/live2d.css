@@ -1687,7 +1687,7 @@ body.vue-live2d-route {
 }
 
 .live2d-caption p {
-    font-size: clamp(0.98rem, 1.34vw, 1.28rem);
+    font-size: clamp(1.35rem, 2vw, 1.85rem);
     line-height: 1.42;
 }
 
