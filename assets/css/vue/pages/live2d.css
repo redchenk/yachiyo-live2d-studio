@@ -2447,6 +2447,137 @@ body.vue-live2d-route {
     box-shadow: 0 0 9px rgba(56, 232, 165, 0.62);
 }
 
+.live2d-continuous-asr-btn {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: 0.68rem;
+    padding: 0.62rem 0.72rem;
+    border: 1px solid rgba(164, 184, 225, 0.14);
+    border-radius: 10px;
+    color: var(--live2d-muted);
+    background: rgba(3, 7, 18, 0.34);
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+    transition: border-color 160ms ease, background 160ms ease, color 160ms ease;
+}
+
+.live2d-continuous-asr-btn:hover {
+    border-color: rgba(78, 230, 255, 0.3);
+    background: rgba(78, 230, 255, 0.06);
+}
+
+.live2d-continuous-asr-btn.active {
+    border-color: rgba(78, 230, 255, 0.46);
+    color: rgba(220, 252, 255, 0.96);
+    background: linear-gradient(110deg, rgba(78, 230, 255, 0.14), rgba(154, 118, 255, 0.1));
+    box-shadow: inset 0 0 0 1px rgba(78, 230, 255, 0.06);
+}
+
+.live2d-continuous-asr-btn > span {
+    min-width: 0;
+    display: grid;
+    gap: 0.12rem;
+}
+
+.live2d-continuous-asr-btn strong,
+.live2d-continuous-asr-btn small {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.live2d-continuous-asr-btn strong {
+    color: var(--live2d-ink);
+    font-size: 0.76rem;
+}
+
+.live2d-continuous-asr-btn small {
+    color: var(--live2d-faint);
+    font-size: 0.64rem;
+}
+
+.yachiyo-music-tool-status.disabled {
+    color: rgba(255, 225, 232, 0.78);
+    background: rgba(136, 67, 84, 0.3);
+    border-color: rgba(255, 153, 177, 0.22);
+}
+
+.yachiyo-music-tool-status.disabled i {
+    background: #ff8ba8;
+    box-shadow: 0 0 0 3px rgba(255, 139, 168, 0.12);
+}
+
+.yachiyo-music-preferences {
+    display: grid;
+    gap: 10px;
+    padding: 12px;
+    border: 1px solid rgba(198, 187, 255, 0.14);
+    border-radius: 14px;
+    background: rgba(22, 20, 48, 0.52);
+}
+
+.yachiyo-music-request-switch,
+.yachiyo-music-volume {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+}
+
+.yachiyo-music-request-switch input {
+    position: absolute;
+    opacity: 0;
+    pointer-events: none;
+}
+
+.yachiyo-music-request-switch > span {
+    width: 34px;
+    height: 20px;
+    flex: 0 0 auto;
+    padding: 2px;
+    border-radius: 999px;
+    background: rgba(151, 145, 190, 0.34);
+    transition: background 160ms ease;
+}
+
+.yachiyo-music-request-switch > span::after {
+    content: '';
+    display: block;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: #fff;
+    transition: transform 160ms ease;
+}
+
+.yachiyo-music-request-switch input:checked + span {
+    background: linear-gradient(135deg, #8e7cff, #ff81b6);
+}
+
+.yachiyo-music-request-switch input:checked + span::after {
+    transform: translateX(14px);
+}
+
+.yachiyo-music-request-switch strong,
+.yachiyo-music-volume > span,
+.yachiyo-music-volume > strong {
+    color: rgba(248, 246, 255, 0.9);
+    font-size: 12px;
+}
+
+.yachiyo-music-volume input {
+    min-width: 0;
+    flex: 1;
+    accent-color: #a98cff;
+}
+
+.yachiyo-music-volume > strong {
+    width: 38px;
+    text-align: right;
+}
+
 .yachiyo-music-account {
     display: grid;
     grid-template-columns: 2rem minmax(0, 1fr) auto;

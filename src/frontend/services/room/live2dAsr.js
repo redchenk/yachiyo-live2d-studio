@@ -1,4 +1,7 @@
-import { readRoomASRSettings } from './roomSettings';
+import {
+  readRoomASRSettings,
+  writeRoomASRSettings
+} from './roomSettings';
 
 const ASR_FETCH_TIMEOUT_MS = 45000;
 const SCRIPT_PROCESSOR_BUFFER_SIZE = 4096;
@@ -33,6 +36,69 @@ function flattenSamples(chunks) {
   for (const chunk of chunks) {
     output.set(chunk, offset);
     offset += chunk.length;
+  }
+  return output;
+}
+
+export function normalizeLive2DAsrText(value) {
+  return String(value || '')
+    .normalize('NFKC')
+    .replace(/\s+/g, ' ')
+    .replace(/(?<=\p{Script=Han})\s+(?=\p{Script=Han})/gu, '')
+    .replace(/\b(?:[a-z]\s+)+[a-z]\b/giu, (letters) => letters.replace(/\s+/g, ''))
+    .replace(/\s+([，。！？、,.!?])/gu, '$1')
+    .trim();
+}
+
+export function selectLive2DAsrTranscript(payload = {}) {
+  const alternatives = [
+    ...(Array.isArray(payload?.alternatives) ? payload.alternatives : []),
+    ...(Array.isArray(payload?.result?.alternatives) ? payload.result.alternatives : [])
+  ].filter((item) => String(item?.text || '').trim());
+  const best = alternatives.sort((left, right) => (
+    Number(right?.confidence) - Number(left?.confidence)
+  ))[0];
+  return normalizeLive2DAsrText(best?.text || payload?.text || payload?.result?.text || '');
+}
+
+export function prepareLive2DAsrSamples(samples, sampleRate, options = {}) {
+  const source = samples instanceof Float32Array ? samples : new Float32Array(samples || []);
+  if (!source.length) return source;
+  const inputGain = clamp(options.inputGain, 0, 4, 1);
+  const trimThreshold = clamp(options.trimThreshold, 0, 0.2, 0.008);
+  const paddingSamples = Math.max(
+    0,
+    Math.round((Number(sampleRate) || 16000) * clamp(options.paddingMs, 0, 1000, 120) / 1000)
+  );
+  const amplified = new Float32Array(source.length);
+  let mean = 0;
+  for (const sample of source) mean += Number(sample) || 0;
+  mean /= source.length;
+  let first = -1;
+  let last = -1;
+  for (let index = 0; index < source.length; index += 1) {
+    const sample = Math.max(-1, Math.min(1, ((Number(source[index]) || 0) - mean) * inputGain));
+    amplified[index] = sample;
+    if (Math.abs(sample) >= trimThreshold) {
+      if (first < 0) first = index;
+      last = index;
+    }
+  }
+  if (first < 0 || last < first) return amplified;
+  const start = Math.max(0, first - paddingSamples);
+  const end = Math.min(amplified.length, last + paddingSamples + 1);
+  const trimmed = amplified.slice(start, end);
+  let peak = 0;
+  for (const sample of trimmed) peak = Math.max(peak, Math.abs(sample));
+  const targetPeak = clamp(options.targetPeak, 0.2, 0.98, 0.86);
+  const maxNormalizationGain = clamp(options.maxNormalizationGain, 1, 64, 16);
+  const normalizationGain = peak > 0
+    ? Math.min(maxNormalizationGain, targetPeak / peak)
+    : 1;
+  if (normalizationGain <= 1.001) return trimmed;
+  const output = new Float32Array(trimmed.length);
+  for (let index = 0; index < trimmed.length; index += 1) {
+    output[index] = Math.max(-1, Math.min(1, trimmed[index] * normalizationGain));
   }
   return output;
 }
@@ -117,6 +183,7 @@ async function requestVoskRecognition(wavBlob, settings) {
       modelPath: settings.modelPath,
       sampleRate: settings.sampleRate,
       words: settings.words,
+      maxAlternatives: settings.maxAlternatives,
       audioFormat: 'wav',
       audioBase64
     })
@@ -128,6 +195,27 @@ async function requestVoskRecognition(wavBlob, settings) {
   return payload.data || payload;
 }
 
+async function transcribeCapturedSamples(captured, inputSampleRate, settings, inputGain, elapsedMs) {
+  if (captured.length < Math.max(1600, inputSampleRate * 0.16)) return null;
+  const sampleRate = Math.round(clamp(settings.sampleRate, 8000, 48000, 16000));
+  const downsampled = downsampleBuffer(captured, inputSampleRate, sampleRate);
+  const samples = prepareLive2DAsrSamples(downsampled, sampleRate, {
+    inputGain,
+    trimThreshold: Math.max(0.004, Number(settings.vadThreshold) * 0.6),
+    paddingMs: 140,
+    targetPeak: 0.86,
+    maxNormalizationGain: 16
+  });
+  if (samples.length < Math.max(1600, sampleRate * 0.12)) return null;
+  const wavBlob = encodeWav(samples, sampleRate);
+  const result = await requestVoskRecognition(wavBlob, {
+    ...settings,
+    sampleRate
+  });
+  const text = selectLive2DAsrTranscript(result);
+  return { ...result, text, elapsedMs };
+}
+
 export function createLive2DAsrRecorder({ onState, onResult } = {}) {
   let stream = null;
   let audioContext = null;
@@ -135,8 +223,19 @@ export function createLive2DAsrRecorder({ onState, onResult } = {}) {
   let processor = null;
   let chunks = [];
   let startedAt = 0;
+  let segmentStartedAt = 0;
+  let speechStartedAt = 0;
+  let lastSpeechAt = 0;
+  let lastLevelAt = 0;
   let maxTimer = 0;
   let recording = false;
+  let continuous = false;
+  let suppressed = false;
+  let pendingRecognitions = 0;
+  let destroyed = false;
+  let activeSettings = readRoomASRSettings();
+  let inputGain = activeSettings.inputGain;
+  let recognitionTail = Promise.resolve();
 
   function cleanup() {
     window.clearTimeout(maxTimer);
@@ -160,15 +259,77 @@ export function createLive2DAsrRecorder({ onState, onResult } = {}) {
     }
   }
 
-  async function start() {
-    const settings = readRoomASRSettings();
-    if (!settings.enabled) throw new Error('ASR is disabled in settings.');
+  function resetSegment(now = performance.now()) {
+    chunks = [];
+    segmentStartedAt = now;
+    speechStartedAt = 0;
+    lastSpeechAt = 0;
+  }
+
+  function listeningState(patch = {}) {
+    return {
+      status: recording ? 'listening' : 'idle',
+      continuous,
+      transcribing: pendingRecognitions > 0,
+      suppressed,
+      ...patch
+    };
+  }
+
+  function enqueueContinuousRecognition(segmentChunks, inputSampleRate, elapsedMs) {
+    if (!segmentChunks.length) return recognitionTail;
+    const captured = flattenSamples(segmentChunks);
+    const settings = { ...activeSettings };
+    const segmentGain = inputGain;
+    pendingRecognitions += 1;
+    setState(onState, listeningState({ error: '' }));
+    recognitionTail = recognitionTail
+      .then(async () => {
+        const result = await transcribeCapturedSamples(
+          captured,
+          inputSampleRate,
+          settings,
+          segmentGain,
+          elapsedMs
+        );
+        if (!destroyed && result?.text) onResult?.(result);
+        return result;
+      })
+      .catch((error) => {
+        if (!destroyed) {
+          setState(onState, listeningState({
+            error: error?.message || 'ASR failed'
+          }));
+        }
+        return null;
+      })
+      .finally(() => {
+        pendingRecognitions = Math.max(0, pendingRecognitions - 1);
+        if (!destroyed) setState(onState, listeningState({ error: '' }));
+      });
+    return recognitionTail;
+  }
+
+  function flushContinuousSegment(now, inputSampleRate) {
+    const segmentChunks = chunks;
+    const elapsedMs = Math.max(0, now - (speechStartedAt || segmentStartedAt));
+    resetSegment(now);
+    return enqueueContinuousRecognition(segmentChunks, inputSampleRate, elapsedMs);
+  }
+
+  async function start(options = {}) {
+    activeSettings = readRoomASRSettings();
+    if (!activeSettings.enabled) throw new Error('ASR is disabled in settings.');
     if (recording) return;
 
     const AudioContextClass = window.AudioContext || window.webkitAudioContext;
     if (!AudioContextClass) throw new Error('This browser does not support WebAudio recording.');
     if (!navigator.mediaDevices?.getUserMedia) throw new Error('Microphone capture is unavailable.');
 
+    destroyed = false;
+    continuous = options.continuous === true;
+    suppressed = false;
+    inputGain = Number.isFinite(Number(inputGain)) ? inputGain : activeSettings.inputGain;
     stream = await navigator.mediaDevices.getUserMedia({
       audio: {
         channelCount: 1,
@@ -180,67 +341,150 @@ export function createLive2DAsrRecorder({ onState, onResult } = {}) {
     audioContext = new AudioContextClass();
     source = audioContext.createMediaStreamSource(stream);
     processor = audioContext.createScriptProcessor(SCRIPT_PROCESSOR_BUFFER_SIZE, 1, 1);
-    chunks = [];
     startedAt = performance.now();
     recording = true;
+    resetSegment(startedAt);
 
     processor.onaudioprocess = (event) => {
       if (!recording) return;
+      const now = performance.now();
       const input = event.inputBuffer.getChannelData(0);
-      chunks.push(new Float32Array(input));
-      event.outputBuffer.getChannelData(0).fill(0);
+      event.outputBuffer?.getChannelData?.(0)?.fill(0);
+      if (suppressed) {
+        resetSegment(now);
+        if (now - lastLevelAt >= 80) {
+          lastLevelAt = now;
+          setState(onState, listeningState({ level: 0 }));
+        }
+        return;
+      }
+      const copy = new Float32Array(input);
+      chunks.push(copy);
+      let sumSquares = 0;
+      for (const sample of copy) {
+        const amplified = Math.max(-1, Math.min(1, sample * inputGain));
+        sumSquares += amplified * amplified;
+      }
+      const rms = Math.sqrt(sumSquares / Math.max(1, copy.length));
+      if (now - lastLevelAt >= 80) {
+        lastLevelAt = now;
+        setState(onState, listeningState({ level: Math.min(1, rms * 8) }));
+      }
+      if (!continuous) return;
+
+      const speaking = rms >= activeSettings.vadThreshold;
+      if (speaking) {
+        if (!speechStartedAt) speechStartedAt = now;
+        lastSpeechAt = now;
+      }
+      const speechDuration = lastSpeechAt > 0 && speechStartedAt > 0
+        ? lastSpeechAt - speechStartedAt
+        : 0;
+      const silenceDuration = lastSpeechAt > 0 ? now - lastSpeechAt : 0;
+      const segmentDuration = now - segmentStartedAt;
+      const completedBySilence = (
+        speechStartedAt > 0 &&
+        speechDuration >= activeSettings.minSpeechMs &&
+        silenceDuration >= activeSettings.continuousSilenceMs
+      );
+      const completedByLimit = speechStartedAt > 0 && segmentDuration >= activeSettings.continuousMaxSegmentMs;
+      if (completedBySilence || completedByLimit) {
+        flushContinuousSegment(now, audioContext?.sampleRate || activeSettings.sampleRate);
+      } else if (!speechStartedAt && segmentDuration >= 1000) {
+        resetSegment(now);
+      }
     };
     source.connect(processor);
     processor.connect(audioContext.destination);
 
-    maxTimer = window.setTimeout(() => {
-      stop().catch(() => {});
-    }, clamp(settings.maxRecordMs, 1500, 60000, 12000));
-    setState(onState, { status: 'listening', error: '', text: '' });
+    if (!continuous) {
+      maxTimer = window.setTimeout(() => {
+        stop().catch(() => {});
+      }, clamp(activeSettings.maxRecordMs, 1500, 60000, 12000));
+    }
+    setState(onState, listeningState({ error: '', text: '', level: 0 }));
   }
 
   async function stop() {
     if (!recording) return null;
-    const settings = readRoomASRSettings();
+    const wasContinuous = continuous;
+    const settings = { ...activeSettings };
     const inputSampleRate = audioContext?.sampleRate || settings.sampleRate;
     const elapsedMs = Math.max(0, performance.now() - startedAt);
-    recording = false;
-    setState(onState, { status: 'transcribing', error: '' });
-
     const captured = flattenSamples(chunks);
+    const shouldTranscribeTail = !suppressed && captured.length > 0 && (!wasContinuous || speechStartedAt > 0);
+    recording = false;
+    continuous = false;
     cleanup();
-    if (captured.length < Math.max(1600, inputSampleRate * 0.16)) {
-      setState(onState, { status: 'idle', error: 'No speech captured.' });
+
+    if (wasContinuous) {
+      if (shouldTranscribeTail) {
+        enqueueContinuousRecognition([captured], inputSampleRate, elapsedMs);
+      }
+      await recognitionTail;
+      setState(onState, listeningState({ error: '', level: 0 }));
       return null;
     }
 
-    const sampleRate = Math.round(clamp(settings.sampleRate, 8000, 48000, 16000));
-    const samples = downsampleBuffer(captured, inputSampleRate, sampleRate);
-    const wavBlob = encodeWav(samples, sampleRate);
-    const result = await requestVoskRecognition(wavBlob, {
-      ...settings,
-      sampleRate
-    });
-    const text = String(result.text || '').trim();
-    setState(onState, { status: 'idle', error: '', text, elapsedMs });
-    if (text) onResult?.({ ...result, text, elapsedMs });
+    setState(onState, { status: 'transcribing', continuous: false, error: '' });
+    if (!shouldTranscribeTail) {
+      setState(onState, { status: 'idle', continuous: false, error: 'No speech captured.' });
+      return null;
+    }
+    const result = await transcribeCapturedSamples(
+      captured,
+      inputSampleRate,
+      settings,
+      inputGain,
+      elapsedMs
+    );
+    const text = result?.text || '';
+    setState(onState, { status: 'idle', continuous: false, error: '', text, elapsedMs, level: 0 });
+    if (text) onResult?.(result);
     return result;
+  }
+
+  function setInputGain(value, options = {}) {
+    inputGain = clamp(value, 0, 4, 1);
+    if (options.persist !== false) {
+      activeSettings = writeRoomASRSettings({
+        ...readRoomASRSettings(),
+        inputGain
+      });
+    }
+    return inputGain;
+  }
+
+  function setSuppressed(value) {
+    suppressed = Boolean(value);
+    if (suppressed) resetSegment();
+    if (recording) setState(onState, listeningState({ level: 0 }));
+    return suppressed;
   }
 
   function isRecording() {
     return recording;
   }
 
+  function isContinuous() {
+    return recording && continuous;
+  }
+
   function destroy() {
+    destroyed = true;
     recording = false;
+    continuous = false;
     cleanup();
-    setState(onState, { status: 'idle', error: '' });
+    setState(onState, { status: 'idle', continuous: false, error: '', level: 0 });
   }
 
   return {
     start,
     stop,
+    setInputGain,
+    setSuppressed,
     isRecording,
+    isContinuous,
     destroy
   };
 }

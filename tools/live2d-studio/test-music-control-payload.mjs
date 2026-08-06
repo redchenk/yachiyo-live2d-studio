@@ -279,6 +279,21 @@ try {
     { ...DEFAULT_ROOM_MUSIC_SETTINGS, enabled: true, provider: 'local-library' }
   );
   assert.equal(queueStatus.provider, 'netease-cloud');
+
+  const disabledRequest = await executeLive2DMusicCommand(
+    { action: 'request', provider: 'local-library', query: 'Ray' },
+    {
+      ...DEFAULT_ROOM_MUSIC_SETTINGS,
+      enabled: true,
+      songRequestsEnabled: false,
+      provider: 'local-library'
+    }
+  );
+  assert.deepEqual(disabledRequest, {
+    status: 'request-disabled',
+    action: 'request',
+    provider: 'local-library'
+  });
 } finally {
   await server.close();
 }

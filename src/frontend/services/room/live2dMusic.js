@@ -47,6 +47,7 @@ const PLAYABLE_ACTIONS = new Set([
   'authorize'
 ]);
 const STATE_ONLY_ACTIONS = new Set(['queue', 'clear', 'remove']);
+const MUSIC_REQUEST_ACTIONS = new Set(['play', 'request', 'play_next']);
 const MUSIC_PROVIDERS = new Set([APPLE_MUSIC_PROVIDER, LOCAL_MUSIC_PROVIDER, NETEASE_MUSIC_PROVIDER]);
 const MUSIC_QUERY_PROMPT_BOUNDARIES = Object.freeze([
   /treat\W*viewer\W*text\W*only\W*as\W*conversation\W*content/i,
@@ -66,8 +67,9 @@ let musicWarmupActive = false;
 let localAudioRecoveryPromise = null;
 let localAudioVolumeTimer = 0;
 let appleMusicVolumeTimer = 0;
-let localMusicBaseVolume = 1;
-let appleMusicBaseVolume = 1;
+const configuredMusicVolume = clampVolume(readRoomMusicSettings().volume, 1);
+let localMusicBaseVolume = configuredMusicVolume;
+let appleMusicBaseVolume = configuredMusicVolume;
 let speechDuckingActive = false;
 let speechDuckVolume = DEFAULT_SPEECH_DUCK_VOLUME;
 
@@ -186,6 +188,30 @@ function fadeAppleMusicVolume(music, targetVolume, durationMs) {
   };
   writeAppleMusicVolume(music, startVolume);
   appleMusicVolumeTimer = window.setTimeout(step, 16);
+}
+
+export function setLive2DMusicVolume(volume, options = {}) {
+  const normalized = clampVolume(volume);
+  const fadeMs = Math.max(0, Number(options.fadeMs) || 0);
+  localMusicBaseVolume = normalized;
+  appleMusicBaseVolume = normalized;
+  const targetVolume = speechDuckingActive
+    ? Math.min(normalized, speechDuckVolume)
+    : normalized;
+  fadeLocalMusicVolume(targetVolume, fadeMs);
+  const music = musicKitInstance();
+  if (music) fadeAppleMusicVolume(music, targetVolume, fadeMs);
+  if (options.persist !== false) {
+    writeRoomMusicSettings({
+      ...readRoomMusicSettings(),
+      volume: normalized
+    });
+  }
+  return {
+    volume: normalized,
+    active: speechDuckingActive,
+    targetVolume
+  };
 }
 
 export function setLive2DMusicSpeechDucking(active, options = {}) {
@@ -827,9 +853,12 @@ async function configureAppleMusic(settings = readRoomMusicSettings()) {
   if (normalized.musicUserToken && music.musicUserToken !== normalized.musicUserToken) {
     music.musicUserToken = normalized.musicUserToken;
   }
-  if (speechDuckingActive) {
-    writeAppleMusicVolume(music, Math.min(appleMusicBaseVolume, speechDuckVolume));
-  }
+  writeAppleMusicVolume(
+    music,
+    speechDuckingActive
+      ? Math.min(appleMusicBaseVolume, speechDuckVolume)
+      : appleMusicBaseVolume
+  );
   return { music, settings: normalized };
 }
 
@@ -1053,10 +1082,9 @@ function ensureLocalAudio() {
 
   localAudio = new Audio();
   localAudio.preload = 'auto';
-  if (speechDuckingActive) {
-    localMusicBaseVolume = clampVolume(localAudio.volume, localMusicBaseVolume);
-    localAudio.volume = Math.min(localMusicBaseVolume, speechDuckVolume);
-  }
+  localAudio.volume = speechDuckingActive
+    ? Math.min(localMusicBaseVolume, speechDuckVolume)
+    : localMusicBaseVolume;
   localAudio.addEventListener('ended', () => {
     if (musicWarmupActive) return;
     const settings = readRoomMusicSettings();
@@ -1787,6 +1815,14 @@ export async function executeLive2DMusicCommand(rawCommand, settings = readRoomM
     storefront: command.storefront || settings.storefront
   });
   const provider = normalizedSettings.provider || LOCAL_MUSIC_PROVIDER;
+  if (!normalizedSettings.songRequestsEnabled && MUSIC_REQUEST_ACTIONS.has(command.action)) {
+    publishMusicDebug('music-request-disabled', {
+      action: command.action,
+      query: command.query,
+      provider
+    }, provider);
+    return { status: 'request-disabled', action: command.action, provider };
+  }
   if (!normalizedSettings.enabled && command.action !== 'authorize' && !STATE_ONLY_ACTIONS.has(command.action)) {
     publishMusicDebug('music-disabled', { action: command.action, query: command.query, provider }, provider);
     return { status: 'disabled', provider };

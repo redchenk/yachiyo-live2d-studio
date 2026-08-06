@@ -44,6 +44,8 @@ try {
     }),
     {
       enabled: true,
+      songRequestsEnabled: true,
+      volume: 1,
       provider: 'local-library',
       developerToken: '',
       musicUserToken: '',
@@ -82,6 +84,8 @@ try {
     }),
     {
       enabled: true,
+      songRequestsEnabled: true,
+      volume: 1,
       provider: 'netease-cloud',
       developerToken: '',
       musicUserToken: '',
@@ -109,6 +113,9 @@ try {
       blacklist: ''
     }
   );
+  assert.equal(normalizeRoomMusicSettings({ songRequestsEnabled: false }).songRequestsEnabled, false);
+  assert.equal(normalizeRoomMusicSettings({ volume: 2 }).volume, 1);
+  assert.equal(normalizeRoomMusicSettings({ volume: -1 }).volume, 0);
 
   const candidates = [
     { songId: 'loose', title: 'Cloud Nine', artist: 'Other Artist', durationMs: 220000 },

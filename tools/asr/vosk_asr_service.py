@@ -77,10 +77,22 @@ def recognize(repo_root, payload):
     recognizer = KaldiRecognizer(model, sample_rate)
     if payload.get("words"):
         recognizer.SetWords(True)
+    max_alternatives = clamp_int(payload.get("maxAlternatives"), 0, 0, 10)
+    if max_alternatives > 0:
+        recognizer.SetMaxAlternatives(max_alternatives)
     recognizer.AcceptWaveform(pcm)
     result = json.loads(recognizer.FinalResult() or "{}")
+    alternatives = sorted(
+        (
+            item
+            for item in result.get("alternatives", [])
+            if isinstance(item, dict) and str(item.get("text") or "").strip()
+        ),
+        key=lambda item: float(item.get("confidence") or 0),
+        reverse=True,
+    )
     return {
-        "text": str(result.get("text") or "").strip(),
+        "text": str((alternatives[0].get("text") if alternatives else result.get("text")) or "").strip(),
         "result": result,
         "sampleRate": sample_rate,
         "modelPath": model_path,

@@ -115,7 +115,13 @@ export const DEFAULT_ROOM_ASR_SETTINGS = {
   sampleRate: 16000,
   maxRecordMs: 12000,
   endpoint: '/api/asr',
-  words: false
+  words: false,
+  inputGain: 1,
+  vadThreshold: 0.012,
+  continuousSilenceMs: 650,
+  continuousMaxSegmentMs: 9000,
+  minSpeechMs: 300,
+  maxAlternatives: 3
 };
 
 export const DEFAULT_ROOM_MODEL_SETTINGS = {
@@ -168,6 +174,8 @@ export const DEFAULT_ROOM_MEMORY_SETTINGS = {
 
 export const DEFAULT_ROOM_MUSIC_SETTINGS = {
   enabled: true,
+  songRequestsEnabled: true,
+  volume: 1,
   provider: 'netease-cloud',
   developerToken: '',
   musicUserToken: '',
@@ -389,7 +397,28 @@ export function normalizeRoomASRSettings(settings = {}) {
     sampleRate: Math.round(asNumber(merged.sampleRate, DEFAULT_ROOM_ASR_SETTINGS.sampleRate, 8000, 48000)),
     maxRecordMs: Math.round(asNumber(merged.maxRecordMs, DEFAULT_ROOM_ASR_SETTINGS.maxRecordMs, 1500, 60000)),
     endpoint: asText(merged.endpoint) || DEFAULT_ROOM_ASR_SETTINGS.endpoint,
-    words: asBoolean(merged.words)
+    words: asBoolean(merged.words),
+    inputGain: asNumber(merged.inputGain, DEFAULT_ROOM_ASR_SETTINGS.inputGain, 0, 4),
+    vadThreshold: asNumber(merged.vadThreshold, DEFAULT_ROOM_ASR_SETTINGS.vadThreshold, 0.002, 0.2),
+    continuousSilenceMs: Math.round(asNumber(
+      merged.continuousSilenceMs,
+      DEFAULT_ROOM_ASR_SETTINGS.continuousSilenceMs,
+      250,
+      3000
+    )),
+    continuousMaxSegmentMs: Math.round(asNumber(
+      merged.continuousMaxSegmentMs,
+      DEFAULT_ROOM_ASR_SETTINGS.continuousMaxSegmentMs,
+      2000,
+      30000
+    )),
+    minSpeechMs: Math.round(asNumber(merged.minSpeechMs, DEFAULT_ROOM_ASR_SETTINGS.minSpeechMs, 120, 3000)),
+    maxAlternatives: Math.round(asNumber(
+      merged.maxAlternatives,
+      DEFAULT_ROOM_ASR_SETTINGS.maxAlternatives,
+      0,
+      10
+    ))
   };
 }
 
@@ -523,6 +552,10 @@ export function normalizeRoomMusicSettings(settings = {}) {
   const legacyManualDefaultNeteaseApi = /^http:\/\/(127\.0\.0\.1|localhost):3000$/i.test(rawNeteaseApiUrl);
   return {
     enabled: asBoolean(merged.enabled),
+    songRequestsEnabled: merged.songRequestsEnabled === undefined
+      ? DEFAULT_ROOM_MUSIC_SETTINGS.songRequestsEnabled
+      : asBoolean(merged.songRequestsEnabled),
+    volume: asNumber(merged.volume, DEFAULT_ROOM_MUSIC_SETTINGS.volume, 0, 1),
     provider,
     developerToken: String(merged.developerToken || '').trim(),
     musicUserToken: String(merged.musicUserToken || '').trim(),

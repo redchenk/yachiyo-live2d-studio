@@ -171,10 +171,19 @@ async function recognize(input) {
     if (input.words && typeof recognizer.setWords === 'function') {
       recognizer.setWords(true);
     }
+    const maxAlternatives = clampInt(input.maxAlternatives, 0, 0, 10);
+    if (maxAlternatives > 0 && typeof recognizer.setMaxAlternatives === 'function') {
+      recognizer.setMaxAlternatives(maxAlternatives);
+    }
     recognizer.acceptWaveform(pcm);
     const result = normalizeVoskResult(recognizer.finalResult());
+    const alternatives = Array.isArray(result.alternatives)
+      ? result.alternatives
+          .filter((item) => String(item?.text || '').trim())
+          .sort((left, right) => Number(right?.confidence) - Number(left?.confidence))
+      : [];
     return {
-      text: String(result.text || '').trim(),
+      text: String(alternatives[0]?.text || result.text || '').trim(),
       result,
       sampleRate,
       modelPath: resolveModelPath(input.modelPath)

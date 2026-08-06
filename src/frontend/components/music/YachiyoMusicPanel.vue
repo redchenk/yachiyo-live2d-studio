@@ -4,6 +4,7 @@ import TsIcon from '../TsIcon.vue';
 import {
   executeLive2DMusicCommand,
   searchLive2DMusic,
+  setLive2DMusicVolume,
   warmupLive2DMusicPlayback
 } from '../../services/room/live2dMusic';
 import {
@@ -14,7 +15,10 @@ import {
   yachiyoMusicAdapter,
   yachiyoSourceToLive2DProvider
 } from '../../services/room/yachiyoMusicAdapter';
-import { readRoomMusicSettings } from '../../services/room/roomSettings';
+import {
+  readRoomMusicSettings,
+  writeRoomMusicSettings
+} from '../../services/room/roomSettings';
 import {
   checkNeteaseMusicQrLogin,
   clearLegacyNeteaseMusicCredentials,
@@ -33,6 +37,8 @@ const providerOptions = Object.freeze([
 
 const settings = readRoomMusicSettings();
 const provider = ref(settings.provider || 'netease-cloud');
+const songRequestsEnabled = ref(settings.songRequestsEnabled !== false);
+const volumePercent = ref(Math.round(Number(settings.volume ?? 1) * 100));
 const query = ref('');
 const searchResults = ref([]);
 const queueState = ref(readLive2DMusicQueueState());
@@ -110,6 +116,7 @@ function resultMessage(result = {}) {
   if (result.status === 'queued') return `已点歌：${title}${result.position ? `（队列第 ${result.position} 位）` : ''}`;
   if (result.status === 'duplicate') return `歌曲已在队列中：${title}`;
   if (result.status === 'queue-full') return '点歌队列已满';
+  if (result.status === 'request-disabled') return '点歌功能已关闭';
   if (result.status === 'paused') return '音乐已暂停';
   if (result.status === 'resumed') return '继续播放';
   if (result.status === 'stopped') return '音乐已停止';
@@ -117,6 +124,21 @@ function resultMessage(result = {}) {
   if (result.status === 'cleared') return '点歌队列已清空';
   if (result.status === 'removed') return '已从队列移除';
   return `音乐状态：${result.status || '已更新'}`;
+}
+
+function updateSongRequestsEnabled() {
+  const saved = writeRoomMusicSettings({
+    ...readRoomMusicSettings(),
+    songRequestsEnabled: songRequestsEnabled.value
+  });
+  songRequestsEnabled.value = saved.songRequestsEnabled;
+  message.value = saved.songRequestsEnabled ? '点歌功能已开启' : '点歌功能已关闭';
+}
+
+function updateMusicVolume() {
+  const normalized = Math.min(100, Math.max(0, Math.round(Number(volumePercent.value) || 0)));
+  volumePercent.value = normalized;
+  setLive2DMusicVolume(normalized / 100, { fadeMs: 80 });
 }
 
 function syncQueue(event = null) {
@@ -336,6 +358,7 @@ watch(provider, (nextProvider) => {
 });
 
 onMounted(() => {
+  setLive2DMusicVolume(volumePercent.value / 100, { fadeMs: 0, persist: false });
   window.addEventListener(LIVE2D_MUSIC_QUEUE_EVENT, syncQueue);
   syncQueue();
   loadNeteaseAccount();
@@ -354,11 +377,40 @@ onUnmounted(() => {
         <span>Yachiyo Music</span>
         <strong>{{ playbackStatus }}</strong>
       </div>
-      <span class="yachiyo-music-tool-status" title="LLM 可通过 music_control 接口调用">
+      <span
+        class="yachiyo-music-tool-status"
+        :class="{ disabled: !songRequestsEnabled }"
+        :title="songRequestsEnabled ? '观众与 LLM 可以点歌' : '观众与 LLM 点歌已关闭'"
+      >
         <i aria-hidden="true"></i>
-        LLM 已连接
+        {{ songRequestsEnabled ? '点歌已开启' : '点歌已关闭' }}
       </span>
     </header>
+
+    <section class="yachiyo-music-preferences" aria-label="音乐播放设置">
+      <label class="yachiyo-music-request-switch">
+        <input
+          v-model="songRequestsEnabled"
+          type="checkbox"
+          @change="updateSongRequestsEnabled"
+        >
+        <span aria-hidden="true"></span>
+        <strong>允许观众和 LLM 点歌</strong>
+      </label>
+      <label class="yachiyo-music-volume">
+        <span>音乐音量</span>
+        <input
+          v-model.number="volumePercent"
+          type="range"
+          min="0"
+          max="100"
+          step="1"
+          aria-label="音乐音量"
+          @input="updateMusicVolume"
+        >
+        <strong>{{ volumePercent }}%</strong>
+      </label>
+    </section>
 
     <section v-if="isNeteaseProvider" class="yachiyo-music-account" aria-label="网易云音乐账号">
       <div class="yachiyo-music-account-avatar" aria-hidden="true">
@@ -474,7 +526,7 @@ onUnmounted(() => {
             type="button"
             title="加入点歌队列"
             :aria-label="`点歌：${trackTitle(track)}`"
-            :disabled="Boolean(busy)"
+            :disabled="Boolean(busy) || !songRequestsEnabled"
             @click="requestTrack(track, 'request')"
           >
             点歌
@@ -566,7 +618,7 @@ onUnmounted(() => {
           </button>
         </article>
       </div>
-      <p v-else>队列为空，普通点歌会按先来后到播放。</p>
+      <p v-else>{{ songRequestsEnabled ? '队列为空，普通点歌会按先来后到播放。' : '点歌已关闭，主播仍可手动立即播放。' }}</p>
     </section>
   </section>
 </template>

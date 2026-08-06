@@ -193,12 +193,14 @@ const server = await createServer({
 try {
   const {
     executeLive2DMusicCommand,
+    setLive2DMusicVolume,
     setLive2DMusicSpeechDucking,
     syncLive2DMusicSpeechDucking,
     warmupLive2DMusicPlayback
   } = await server.ssrLoadModule('/src/frontend/services/room/live2dMusic.js');
   const {
-    DEFAULT_ROOM_MUSIC_SETTINGS
+    DEFAULT_ROOM_MUSIC_SETTINGS,
+    readRoomMusicSettings
   } = await server.ssrLoadModule('/src/frontend/services/room/roomSettings.js');
   const {
     readLive2DMusicQueueState,
@@ -224,6 +226,20 @@ try {
     { active: false, duckVolume: 0.08, targetVolume: 1 }
   );
   assert.equal(latestAudio.volume, 1);
+
+  assert.deepEqual(
+    setLive2DMusicVolume(0.42, { fadeMs: 0 }),
+    { volume: 0.42, active: false, targetVolume: 0.42 }
+  );
+  assert.equal(latestAudio.volume, 0.42, 'the volume control must update the real local audio element');
+  assert.equal(appleMusic.volume, 0.42, 'the volume control must update the real MusicKit player');
+  assert.equal(readRoomMusicSettings().volume, 0.42, 'the selected music volume must survive an app restart');
+  setLive2DMusicSpeechDucking(true, { fadeMs: 0 });
+  assert.equal(latestAudio.volume, 0.08);
+  setLive2DMusicSpeechDucking(false, { fadeMs: 0 });
+  assert.equal(latestAudio.volume, 0.42, 'speech ducking must restore the user-selected volume');
+  assert.equal(appleMusic.volume, 0.42, 'MusicKit must restore the user-selected volume');
+  setLive2DMusicVolume(1, { fadeMs: 0 });
 
   const recoveryClock = installFakeWindowClock();
   try {
