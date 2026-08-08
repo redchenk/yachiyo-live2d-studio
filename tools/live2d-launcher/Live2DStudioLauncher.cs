@@ -382,6 +382,15 @@ internal static class Live2DStudioLauncher
             candidates.Add(cached);
         }
 
+        var privateCandidates = FindPrivateWebView2RuntimeCandidates();
+        foreach (var candidate in privateCandidates)
+        {
+            if (seen.Add(candidate))
+            {
+                candidates.Add(candidate);
+            }
+        }
+
         var roots = new[]
         {
             Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86), "Microsoft", "EdgeWebView", "Application"),
@@ -410,6 +419,36 @@ internal static class Live2DStudioLauncher
         candidates.AddRange(discovered);
         candidates.Add(string.Empty);
         return candidates;
+    }
+
+    private static List<string> FindPrivateWebView2RuntimeCandidates()
+    {
+        var discovered = new List<string>();
+        var root = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "YachiyoLive2DStudio",
+            "WebView2Runtime");
+        if (!Directory.Exists(root)) return discovered;
+
+        try
+        {
+            if (IsWebView2RuntimeFolder(root))
+            {
+                discovered.Add(root);
+            }
+            foreach (var directory in Directory.GetDirectories(root))
+            {
+                if (IsWebView2RuntimeFolder(directory))
+                {
+                    discovered.Add(directory);
+                }
+            }
+        }
+        catch
+        {
+        }
+        discovered.Sort(CompareWebView2RuntimeFoldersDescending);
+        return discovered;
     }
 
     private static int CompareWebView2RuntimeFoldersDescending(string left, string right)

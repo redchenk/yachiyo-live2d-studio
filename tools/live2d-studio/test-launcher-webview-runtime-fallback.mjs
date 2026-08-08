@@ -26,6 +26,16 @@ assert.match(
   /WaitForExit\s*\(\s*\d+/,
   'runtime health probes must have a bounded timeout'
 );
+assert.match(
+  launcherSource,
+  /LocalApplicationData[\s\S]*?YachiyoLive2DStudio[\s\S]*?WebView2Runtime/,
+  'the launcher must discover an app-private Fixed Version Runtime that cannot be removed by Evergreen updates'
+);
+assert.match(
+  launcherSource,
+  /FindPrivateWebView2RuntimeCandidates/,
+  'app-private runtime discovery must be isolated from the system Evergreen candidate scan'
+);
 assert.doesNotMatch(
   launcherSource,
   /Directory\.Delete\([^;]*YachiyoLive2DStudio[^;]*WebView2/,
