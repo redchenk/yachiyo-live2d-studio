@@ -1,44 +1,43 @@
-# Game Broadcast UI Design QA
+# External Game Layout Design QA
 
 ## Evidence
 
-- Source visual truth: `C:\Users\lenovo\AppData\Local\Temp\yachiyo-game-ui-qa\chat-reference-1280x720.jpg`
-- Implementation screenshot: `C:\Users\lenovo\AppData\Local\Temp\yachiyo-game-ui-qa\game-implementation-1280x720.jpg`
-- Side-by-side comparison: `C:\Users\lenovo\AppData\Local\Temp\yachiyo-game-ui-qa\scene-comparison-2560x720.jpg`
+- Source visual truth: `C:\Users\lenovo\AppData\Local\Temp\yachiyo-game-ui-qa\game-implementation-1280x720.jpg`
+- Implementation screenshot: `C:\Users\lenovo\AppData\Local\Temp\yachiyo-game-ui-qa\game-external-layout-normalized-1280x720.png`
+- Side-by-side comparison: `C:\Users\lenovo\AppData\Local\Temp\yachiyo-game-ui-qa\external-layout-normalized-comparison-2560x720.png`
 - Viewport: 1280 x 720 CSS pixels, desktop 16:9.
-- Pixel normalization: each source capture is 1280 x 720 pixels at the same browser viewport and density; the comparison is a lossless side-by-side placement at 2560 x 720 with no scaling.
-- State: chat scene idle versus game scene idle before a game window is selected.
+- Pixel normalization: source and implementation are both 1280 x 720 pixels at the same browser viewport and density. The comparison places them side by side at 2560 x 720 without scaling.
+- State: game scene idle with the same AI host control panel visible. The intended difference is the removal of the built-in capture empty state and controls.
 
 ## Findings
 
 - No remaining P0, P1, or P2 findings.
-- Fonts and typography: the scene switcher, capture instructions, and status controls inherit the existing studio font stack and optical weights. Hierarchy and truncation remain consistent with the chat scene.
-- Spacing and layout rhythm: the existing navigation rail and control console keep their dimensions. The game stage remains the dominant region, while the Live2D model, caption, and empty-state instructions occupy separate safe zones.
-- Colors and visual tokens: new controls reuse the existing cyan active state, dark panels, border opacity, corner radii, and elevation treatment. Contrast remains readable against both the empty canvas and future game video.
-- Image quality and asset fidelity: the Live2D canvas is reused without raster substitution. Game content is rendered from the native display-capture video stream. All new interface icons come from the existing icon library.
-- Copy and content: scene names, capture instructions, audio behavior, fit modes, replacement, and stop actions are explicit and concise.
+- Fonts and typography: the scene switcher, stage status, caption, and control console are unchanged. Removing capture copy leaves no orphaned or mismatched text.
+- Spacing and layout rhythm: navigation, stage, control console, Live2D host position, and caption safe area retain the approved dimensions. The former capture instructions are gone, leaving a clean external-game region to the left of the host.
+- Colors and visual tokens: the game canvas keeps the existing dark neutral surface and cyan scene state. No new colors, borders, shadows, or decorative layers were introduced.
+- Image quality and asset fidelity: the Live2D canvas remains native and unchanged. No game preview, placeholder asset, video element, or approximate capture illustration is rendered.
+- Copy and content: all built-in capture instructions and actions were removed. The remaining scene labels and live status match the existing studio vocabulary.
 
 ## Focused Region Comparison
 
-The stage header, empty game-capture state, Live2D主播位, and caption safe area were inspected at full resolution. Additional crops were unnecessary because all new text and controls were readable in the 1280 x 720 capture.
+The empty game region, the Live2D host boundary, and the caption/model junction were inspected at full 1280 x 720 resolution. A separate crop was not needed because these three surfaces are large and clearly readable in the normalized side-by-side comparison.
 
 ## Comparison History
 
-1. Initial P2: the Live2D model overlapped the centered empty-state instructions in game mode.
-2. Fix: shifted empty-state content into the left safe zone, reduced its maximum copy width, and reduced the game-mode model footprint to `min(21vw, 350px)` by `min(62vh, 610px)`.
-3. Post-fix evidence: the final 1280 x 720 comparison shows clear separation between instructions, Live2D主播位, caption, and control console.
+1. The first capture showed the Settings overlay while the source showed the AI host panel. This was a state mismatch rather than a product defect.
+2. The Settings overlay was closed and the implementation was recaptured in the same game-idle state as the source.
+3. The normalized comparison shows only the intended change: capture controls are removed and the game region is unobstructed. No P0, P1, or P2 issue was found after normalization.
 
 ## Interaction Verification
 
-- Chat and game scene buttons update their pressed states.
-- The game-capture component remains mounted while hidden in chat mode, so an active stream is not discarded by scene switching.
-- The selected scene survives a page reload.
-- Game capture lifecycle, 60fps target constraints, muted preview, track-ended handling, and cleanup pass automated tests.
-- The actual system window picker was not opened during automated visual QA because it requires the user's explicit window selection.
-- Browser console errors checked: none.
+- Chat and game scene buttons still update their pressed states.
+- The selected scene still survives a page reload.
+- No game-capture component, video element, or display-capture API remains in the live page.
+- The Live2D host, captions, navigation, and AI host console remain mounted in game mode.
+- Browser console errors checked: none. One existing Vite browser-compatibility warning about `fs` remains unrelated to this change.
 
 ## Follow-up Polish
 
-- P3: after the user supplies a representative game window, the model scale and caption width can be tuned per game HUD if desired.
+- P3: the exact external game-source crop can be tuned later for a specific title's HUD after the third-party composition is visible.
 
 final result: passed

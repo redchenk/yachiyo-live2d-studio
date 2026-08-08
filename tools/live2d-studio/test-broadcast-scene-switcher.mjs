@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import { createServer } from 'vite';
 
 const values = new Map([['yachiyo:live2d:broadcastScene', 'game']]);
@@ -32,6 +33,15 @@ try {
   assert.equal(writeLive2DBroadcastScene('chat', { storage, eventTarget }), 'chat');
   assert.equal(storage.getItem('yachiyo:live2d:broadcastScene'), 'chat');
   assert.equal(changedScene, 'chat');
+
+  const [pageSource, sceneStyles] = await Promise.all([
+    readFile('src/frontend/pages/Live2DPage.vue', 'utf8'),
+    readFile('assets/css/vue/pages/live2d.css', 'utf8')
+  ]);
+  assert.doesNotMatch(pageSource, /Live2DGameCapturePanel|getDisplayMedia/);
+  assert.doesNotMatch(sceneStyles, /live2d-game-capture/);
+  assert.match(sceneStyles, /data-broadcast-scene="game"[^}]*\.live2d-model[\s\S]*?right:\s*-/);
+  assert.match(sceneStyles, /data-broadcast-scene="game"[^}]*\.live2d-broadcast-hud[\s\S]*?right:\s*min\(/);
 
   console.log('Broadcast scene switcher checks passed');
 } finally {

@@ -1743,187 +1743,9 @@ body.vue-live2d-route {
     color: var(--live2d-cyan);
 }
 
-.live2d-scene-switcher button:focus-visible,
-.live2d-game-capture button:focus-visible {
+.live2d-scene-switcher button:focus-visible {
     outline: 2px solid rgba(78, 230, 255, 0.76);
     outline-offset: 2px;
-}
-
-.live2d-game-capture {
-    position: absolute;
-    inset: 0;
-    z-index: 0;
-    overflow: hidden;
-    color: var(--live2d-ink);
-    background: #02040b;
-}
-
-.live2d-game-capture-video {
-    width: 100%;
-    height: 100%;
-    display: block;
-    background: #02040b;
-}
-
-.live2d-game-capture-video.fit-contain {
-    object-fit: contain;
-}
-
-.live2d-game-capture-video.fit-cover {
-    object-fit: cover;
-}
-
-.live2d-game-capture-empty {
-    position: absolute;
-    inset: 0;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 0.9rem;
-    padding: 5rem min(34vw, 27rem) 7rem 2rem;
-    text-align: center;
-    background: rgba(4, 8, 20, 0.92);
-}
-
-.live2d-game-capture-icon {
-    width: 4rem;
-    height: 4rem;
-    display: grid;
-    place-items: center;
-    border: 1px solid rgba(78, 230, 255, 0.24);
-    border-radius: 14px;
-    color: var(--live2d-cyan);
-    background: rgba(78, 230, 255, 0.08);
-    box-shadow: 0 18px 48px rgba(0, 0, 0, 0.24);
-}
-
-.live2d-game-capture-empty > div {
-    max-width: 19rem;
-    display: grid;
-    gap: 0.38rem;
-}
-
-.live2d-game-capture-empty strong {
-    font-size: 1rem;
-    font-weight: 920;
-}
-
-.live2d-game-capture-empty p,
-.live2d-game-capture-empty small {
-    margin: 0;
-    color: var(--live2d-muted);
-    font-size: 0.76rem;
-    line-height: 1.55;
-}
-
-.live2d-game-capture-empty small {
-    color: var(--live2d-faint);
-}
-
-.live2d-game-capture-primary {
-    min-height: 2.55rem;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    gap: 0.48rem;
-    border: 1px solid rgba(78, 230, 255, 0.34);
-    border-radius: 9px;
-    padding: 0 1rem;
-    color: #fff;
-    background: rgba(78, 230, 255, 0.14);
-    box-shadow: 0 12px 30px rgba(0, 0, 0, 0.24);
-    font: inherit;
-    font-size: 0.76rem;
-    font-weight: 900;
-    cursor: pointer;
-}
-
-.live2d-game-capture-primary:hover:not(:disabled) {
-    border-color: rgba(78, 230, 255, 0.58);
-    background: rgba(78, 230, 255, 0.2);
-}
-
-.live2d-game-capture-primary:disabled {
-    cursor: wait;
-    opacity: 0.72;
-}
-
-.live2d-game-capture-toolbar {
-    position: absolute;
-    top: 3.75rem;
-    left: 0.8rem;
-    right: 0.8rem;
-    z-index: 6;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 1rem;
-    padding: 0.48rem 0.58rem;
-    border: 1px solid rgba(164, 184, 225, 0.14);
-    border-radius: 9px;
-    background: rgba(4, 8, 19, 0.68);
-    box-shadow: 0 14px 36px rgba(0, 0, 0, 0.22);
-    backdrop-filter: blur(18px) saturate(1.06);
-}
-
-.live2d-game-capture-toolbar > div,
-.live2d-game-capture-toolbar > div > span,
-.live2d-game-capture-toolbar nav {
-    min-width: 0;
-    display: flex;
-    align-items: center;
-}
-
-.live2d-game-capture-toolbar > div {
-    gap: 0.5rem;
-}
-
-.live2d-game-capture-toolbar > div > svg {
-    flex: none;
-    color: var(--live2d-green);
-}
-
-.live2d-game-capture-toolbar > div > span {
-    display: grid;
-    gap: 0.04rem;
-}
-
-.live2d-game-capture-toolbar strong,
-.live2d-game-capture-toolbar small {
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
-.live2d-game-capture-toolbar strong {
-    color: rgba(248, 251, 255, 0.92);
-    font-size: 0.68rem;
-    letter-spacing: 0.08em;
-}
-
-.live2d-game-capture-toolbar small {
-    color: var(--live2d-muted);
-    font-size: 0.65rem;
-}
-
-.live2d-game-capture-toolbar nav {
-    flex: none;
-    gap: 0.8rem;
-}
-
-.live2d-game-capture-toolbar .live2d-mini-btn {
-    gap: 0.3rem;
-    color: rgba(229, 237, 251, 0.72);
-}
-
-.live2d-game-capture-toolbar .live2d-mini-btn:hover {
-    color: #fff;
-}
-
-.live2d-game-capture-toolbar .live2d-mini-btn.danger:hover {
-    color: #ff9eb8;
 }
 
 .live2d-page[data-broadcast-scene="game"] {
@@ -1987,9 +1809,6 @@ body.vue-live2d-route {
         right: min(25vw, 14rem);
     }
 
-    .live2d-game-capture-empty {
-        padding-right: min(28vw, 18rem);
-    }
 }
 
 @media (max-width: 720px) {
@@ -2008,23 +1827,6 @@ body.vue-live2d-route {
 
     .live2d-scene-switcher button span {
         font-size: 0.64rem;
-    }
-
-    .live2d-game-capture-toolbar {
-        top: 5.45rem;
-    }
-
-    .live2d-game-capture-empty {
-        padding-right: 7.5rem;
-        padding-left: 1rem;
-    }
-
-    .live2d-game-capture-toolbar nav {
-        gap: 0.55rem;
-    }
-
-    .live2d-game-capture-toolbar nav span {
-        display: none;
     }
 
     .live2d-page[data-broadcast-scene="game"] .live2d-model {

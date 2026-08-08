@@ -1,7 +1,6 @@
 <script setup>
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
 import TsIcon from '../components/TsIcon.vue';
-import Live2DGameCapturePanel from '../components/Live2DGameCapturePanel.vue';
 import YachiyoMusicPanel from '../components/music/YachiyoMusicPanel.vue';
 import { useLive2D } from '../composables/room/useLive2D';
 import {
@@ -2289,7 +2288,6 @@ onUnmounted(() => {
           </button>
         </div>
       </header>
-      <Live2DGameCapturePanel v-show="broadcastScene === 'game'" />
       <div
         id="live2d-container"
         ref="modelContainerRef"
