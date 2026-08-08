@@ -1,6 +1,7 @@
 <script setup>
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
 import TsIcon from '../components/TsIcon.vue';
+import Live2DGameCapturePanel from '../components/Live2DGameCapturePanel.vue';
 import YachiyoMusicPanel from '../components/music/YachiyoMusicPanel.vue';
 import { useLive2D } from '../composables/room/useLive2D';
 import {
@@ -20,6 +21,10 @@ import {
   readRoomLive2DDebugState
 } from '../services/room/live2dDebug';
 import { createLive2DAsrRecorder } from '../services/room/live2dAsr';
+import {
+  readLive2DBroadcastScene,
+  writeLive2DBroadcastScene
+} from '../services/room/live2dBroadcastScene';
 import {
   enqueueLive2DAudienceEntry,
   ensureLive2DAudienceNamesInSpeech,
@@ -106,6 +111,7 @@ const audienceInput = ref('');
 const audienceQueue = ref([]);
 const showLog = ref([]);
 const messagesExpanded = ref(false);
+const broadcastScene = ref(readLive2DBroadcastScene());
 const activeControlSection = ref('interaction');
 const activeMotionTab = ref('expression');
 const muted = ref(false);
@@ -1968,6 +1974,10 @@ async function toggleAudienceAsr() {
   }
 }
 
+function switchBroadcastScene(scene) {
+  broadcastScene.value = writeLive2DBroadcastScene(scene);
+}
+
 async function toggleContinuousAudienceAsr() {
   if (!asrRecorder) return;
   warmupLive2DMusicPlayback().catch(() => {});
@@ -2237,6 +2247,7 @@ onUnmounted(() => {
     class="live2d-page"
     :class="{ 'model-hidden': modelHidden, 'model-locked': modelLocked }"
     :data-live-state="liveDirector.running ? 'on' : 'off'"
+    :data-broadcast-scene="broadcastScene"
     aria-label="Yachiyo Live2D Studio"
   >
     <div class="live2d-backdrop" aria-hidden="true"></div>
@@ -2245,10 +2256,30 @@ onUnmounted(() => {
         <div class="live2d-stage-title">
           <span class="live2d-stage-dot" :class="{ active: live2d.ready.value }"></span>
           <div>
-            <strong>{{ liveDirector.running ? 'ON AIR' : 'Broadcast Stage' }}</strong>
+            <strong>{{ broadcastScene === 'game' ? 'GAME LIVE' : (liveDirector.running ? 'ON AIR' : 'Broadcast Stage') }}</strong>
             <small>{{ statusLabel }}</small>
           </div>
         </div>
+        <nav class="live2d-scene-switcher" aria-label="直播场景">
+          <button
+            type="button"
+            :class="{ active: broadcastScene === 'chat' }"
+            :aria-pressed="broadcastScene === 'chat' ? 'true' : 'false'"
+            @click="switchBroadcastScene('chat')"
+          >
+            <TsIcon name="message" :size="15" />
+            <span>聊天直播</span>
+          </button>
+          <button
+            type="button"
+            :class="{ active: broadcastScene === 'game' }"
+            :aria-pressed="broadcastScene === 'game' ? 'true' : 'false'"
+            @click="switchBroadcastScene('game')"
+          >
+            <TsIcon name="gamepad" :size="15" />
+            <span>游戏直播</span>
+          </button>
+        </nav>
         <div class="live2d-stage-actions">
           <button class="live2d-icon-btn" type="button" title="刷新模型状态" aria-label="刷新模型状态" @click="runGreeting">
             <TsIcon name="refresh" :size="18" />
@@ -2258,6 +2289,7 @@ onUnmounted(() => {
           </button>
         </div>
       </header>
+      <Live2DGameCapturePanel v-show="broadcastScene === 'game'" />
       <div
         id="live2d-container"
         ref="modelContainerRef"

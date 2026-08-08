@@ -1,40 +1,44 @@
-**Source Visual Truth**
-- `C:\Users\lenovo\.codex\generated_images\019f13f9-ab29-7890-b4c3-82894ecdb29c\ig_06801650d6ab24b4016a432952dc588190866e2522f16cd1bc.png`
+# Game Broadcast UI Design QA
 
-**Implementation Evidence**
-- Desktop screenshot: `E:\visualstudio\yachiyo-live2d-studio\output\product-design\broadcast-stage-first-desktop-v4.png`
-- Mobile screenshot: `E:\visualstudio\yachiyo-live2d-studio\output\product-design\broadcast-stage-first-mobile-v4.png`
-- Full-view comparison: `E:\visualstudio\yachiyo-live2d-studio\output\product-design\broadcast-stage-first-comparison-v4.png`
-- Focused comparison: `E:\visualstudio\yachiyo-live2d-studio\output\product-design\broadcast-stage-first-right-panel-comparison-v4.png`
-- Viewports: desktop 1440x1024, mobile 390x844.
-- State: Live2D stage loaded, settings drawer closed, OFF AIR / READY, expression tab visible.
+## Evidence
 
-**Findings**
-- No P0/P1/P2 findings remain.
-- Fonts and typography: the implementation keeps the existing app type stack and uses tighter weights for labels and controls. It matches the target hierarchy: status is dominant, control labels are compact, and the stage caption is readable without hero-scale text.
-- Spacing and layout rhythm: the desktop implementation preserves the reference structure with an icon-first left rail, large framed stage, compact right control panel, and bottom caption HUD. Mobile now keeps the model head and hair ornaments fully visible, with the control panel below the stage and no horizontal overflow observed.
-- Colors and visual tokens: the palette follows the reference's cyan readiness signal, violet primary action, dark glass surfaces, and restrained linework while using the project's existing tokens.
-- Image quality and asset fidelity: the Live2D model and room background render as real app assets, not placeholders. No target imagery was replaced with CSS art or fake image stand-ins.
-- Copy and content: the implementation preserves the existing product copy and controls, including Chinese labels from the app. Some text appears encoded in the current source, but the UI redesign did not introduce new copy corruption.
-- Icons and interactions: the existing icon system remains functional for navigation, refresh, fullscreen, settings, live action, voice toggle, expression tabs, music, and quick actions. The settings drawer can still open and close.
+- Source visual truth: `C:\Users\lenovo\AppData\Local\Temp\yachiyo-game-ui-qa\chat-reference-1280x720.jpg`
+- Implementation screenshot: `C:\Users\lenovo\AppData\Local\Temp\yachiyo-game-ui-qa\game-implementation-1280x720.jpg`
+- Side-by-side comparison: `C:\Users\lenovo\AppData\Local\Temp\yachiyo-game-ui-qa\scene-comparison-2560x720.jpg`
+- Viewport: 1280 x 720 CSS pixels, desktop 16:9.
+- Pixel normalization: each source capture is 1280 x 720 pixels at the same browser viewport and density; the comparison is a lossless side-by-side placement at 2560 x 720 with no scaling.
+- State: chat scene idle versus game scene idle before a game window is selected.
 
-**Patches Made Since Previous QA Pass**
-- Reduced the stage status chip into a lightweight broadcast overlay.
-- Tightened right-panel vertical spacing and surface opacity.
-- Rebalanced mobile stage/control heights.
-- Resized and repositioned the Live2D model on mobile so the face, hair, and head ornaments are no longer clipped.
+## Findings
 
-**Open Questions**
-- The concept image includes a bottom studio bar and recent-comments list. The implementation keeps the existing product surface instead of inventing new controls, so those concept-only elements are intentionally not added.
+- No remaining P0, P1, or P2 findings.
+- Fonts and typography: the scene switcher, capture instructions, and status controls inherit the existing studio font stack and optical weights. Hierarchy and truncation remain consistent with the chat scene.
+- Spacing and layout rhythm: the existing navigation rail and control console keep their dimensions. The game stage remains the dominant region, while the Live2D model, caption, and empty-state instructions occupy separate safe zones.
+- Colors and visual tokens: new controls reuse the existing cyan active state, dark panels, border opacity, corner radii, and elevation treatment. Contrast remains readable against both the empty canvas and future game video.
+- Image quality and asset fidelity: the Live2D canvas is reused without raster substitution. Game content is rendered from the native display-capture video stream. All new interface icons come from the existing icon library.
+- Copy and content: scene names, capture instructions, audio behavior, fit modes, replacement, and stop actions are explicit and concise.
 
-**Implementation Checklist**
-- Keep all existing Live2D, music, motion, settings, and quick-action behavior intact.
-- Preserve the large stage-first desktop layout.
-- Keep mobile model framing complete and uncropped.
-- Do not stage generated screenshot artifacts or unrelated model item files.
+## Focused Region Comparison
 
-**Follow-up Polish**
-- Consider a future localization cleanup for mojibake labels already present in the source.
-- Consider adding an optional recent-comment list if the product later needs a persistent chat monitor in the right panel.
+The stage header, empty game-capture state, Live2D主播位, and caption safe area were inspected at full resolution. Additional crops were unnecessary because all new text and controls were readable in the 1280 x 720 capture.
+
+## Comparison History
+
+1. Initial P2: the Live2D model overlapped the centered empty-state instructions in game mode.
+2. Fix: shifted empty-state content into the left safe zone, reduced its maximum copy width, and reduced the game-mode model footprint to `min(21vw, 350px)` by `min(62vh, 610px)`.
+3. Post-fix evidence: the final 1280 x 720 comparison shows clear separation between instructions, Live2D主播位, caption, and control console.
+
+## Interaction Verification
+
+- Chat and game scene buttons update their pressed states.
+- The game-capture component remains mounted while hidden in chat mode, so an active stream is not discarded by scene switching.
+- The selected scene survives a page reload.
+- Game capture lifecycle, 60fps target constraints, muted preview, track-ended handling, and cleanup pass automated tests.
+- The actual system window picker was not opened during automated visual QA because it requires the user's explicit window selection.
+- Browser console errors checked: none.
+
+## Follow-up Polish
+
+- P3: after the user supplies a representative game window, the model scale and caption width can be tuned per game HUD if desired.
 
 final result: passed
