@@ -27,6 +27,11 @@ internal static class Live2DStudioLauncher
         {
             ServicePointManager.SecurityProtocol |= SecurityProtocolType.Tls12;
 
+            if (HasArgument(args, "--webview2-probe"))
+            {
+                return RunWebView2Probe(args);
+            }
+
             var repoRoot = FindRepoRoot(AppDomain.CurrentDomain.BaseDirectory);
             if (!EnsureBuilt(repoRoot))
             {
@@ -38,6 +43,22 @@ internal static class Live2DStudioLauncher
                 return 1;
             }
 
+            var browserExecutableFolder = ResolveWorkingWebView2BrowserFolder();
+            if (browserExecutableFolder == null)
+            {
+                throw new InvalidOperationException(
+                    "No working Microsoft Edge WebView2 Runtime was found. " +
+                    "The installed Runtime may have been interrupted during an update. " +
+                    "Repair Microsoft Edge WebView2 Runtime and restart Yachiyo Live2D Studio.");
+            }
+            if (!string.IsNullOrWhiteSpace(browserExecutableFolder))
+            {
+                Environment.SetEnvironmentVariable(
+                    "WEBVIEW2_BROWSER_EXECUTABLE_FOLDER",
+                    browserExecutableFolder,
+                    EnvironmentVariableTarget.Process);
+            }
+
             var preferredPort = ParsePort(args, DefaultPort);
             var port = FindAvailablePort(preferredPort);
             using (var server = new LocalStudioServer(repoRoot, port, Live2DPath))
@@ -47,7 +68,7 @@ internal static class Live2DStudioLauncher
                 {
                     Application.EnableVisualStyles();
                     Application.SetCompatibleTextRenderingDefault(false);
-                    Application.Run(new StudioWindow(server.Url, repoRoot));
+                    Application.Run(new StudioWindow(server.Url, repoRoot, browserExecutableFolder));
                 }
             }
 
@@ -274,6 +295,255 @@ internal static class Live2DStudioLauncher
             return false;
         }
     }
+
+    private static bool HasArgument(string[] args, string expected)
+    {
+        foreach (var arg in args ?? new string[0])
+        {
+            if (string.Equals(arg, expected, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static string GetArgumentValue(string[] args, string name, string fallback)
+    {
+        for (var i = 0; i < (args == null ? 0 : args.Length); i++)
+        {
+            var arg = args[i] ?? string.Empty;
+            var prefix = name + "=";
+            if (arg.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            {
+                return arg.Substring(prefix.Length);
+            }
+            if (string.Equals(arg, name, StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
+            {
+                return args[i + 1] ?? fallback;
+            }
+        }
+        return fallback;
+    }
+
+    private static int RunWebView2Probe(string[] args)
+    {
+        var browserFolderValue = GetArgumentValue(args, "--browser-folder", "__DEFAULT__");
+        var browserExecutableFolder = string.Equals(
+            browserFolderValue,
+            "__DEFAULT__",
+            StringComparison.OrdinalIgnoreCase)
+            ? string.Empty
+            : browserFolderValue;
+        var profileFolder = GetArgumentValue(
+            args,
+            "--profile-folder",
+            Path.Combine(Path.GetTempPath(), "YachiyoLive2DStudio", "WebView2Probe", "default"));
+        if (!string.IsNullOrWhiteSpace(browserExecutableFolder))
+        {
+            Environment.SetEnvironmentVariable(
+                "WEBVIEW2_BROWSER_EXECUTABLE_FOLDER",
+                browserExecutableFolder,
+                EnvironmentVariableTarget.Process);
+        }
+
+        Application.EnableVisualStyles();
+        Application.SetCompatibleTextRenderingDefault(false);
+        using (var probe = new WebView2ProbeWindow(browserExecutableFolder, profileFolder))
+        {
+            Application.Run(probe);
+            return probe.Succeeded ? 0 : 1;
+        }
+    }
+
+    internal static string ResolveWorkingWebView2BrowserFolder()
+    {
+        var candidates = FindWebView2RuntimeCandidates();
+        foreach (var candidate in candidates)
+        {
+            var label = string.IsNullOrWhiteSpace(candidate) ? "default" : candidate;
+            var passed = ProbeWebView2Runtime(candidate);
+            LogLauncherEvent("WebView2 probe " + (passed ? "passed: " : "failed: ") + label);
+            if (!passed) continue;
+            CacheWorkingWebView2Runtime(candidate);
+            return candidate;
+        }
+        LogLauncherEvent("No WebView2 Runtime candidate passed the startup probe.");
+        return null;
+    }
+
+    private static List<string> FindWebView2RuntimeCandidates()
+    {
+        var candidates = new List<string>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var cached = ReadCachedWebView2Runtime();
+        if (IsWebView2RuntimeFolder(cached) && seen.Add(cached))
+        {
+            candidates.Add(cached);
+        }
+
+        var roots = new[]
+        {
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86), "Microsoft", "EdgeWebView", "Application"),
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Microsoft", "EdgeWebView", "Application"),
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Microsoft", "EdgeWebView", "Application")
+        };
+        var discovered = new List<string>();
+        foreach (var root in roots)
+        {
+            if (!Directory.Exists(root)) continue;
+            try
+            {
+                foreach (var directory in Directory.GetDirectories(root))
+                {
+                    if (IsWebView2RuntimeFolder(directory) && seen.Add(directory))
+                    {
+                        discovered.Add(directory);
+                    }
+                }
+            }
+            catch
+            {
+            }
+        }
+        discovered.Sort(CompareWebView2RuntimeFoldersDescending);
+        candidates.AddRange(discovered);
+        candidates.Add(string.Empty);
+        return candidates;
+    }
+
+    private static int CompareWebView2RuntimeFoldersDescending(string left, string right)
+    {
+        Version leftVersion;
+        Version rightVersion;
+        var leftParsed = Version.TryParse(Path.GetFileName(left), out leftVersion);
+        var rightParsed = Version.TryParse(Path.GetFileName(right), out rightVersion);
+        if (leftParsed && rightParsed) return rightVersion.CompareTo(leftVersion);
+        if (leftParsed) return -1;
+        if (rightParsed) return 1;
+        return string.Compare(right, left, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsWebView2RuntimeFolder(string path)
+    {
+        return !string.IsNullOrWhiteSpace(path) &&
+               File.Exists(Path.Combine(path, "msedgewebview2.exe"));
+    }
+
+    private static bool ProbeWebView2Runtime(string browserExecutableFolder)
+    {
+        try
+        {
+            var runtimeName = string.IsNullOrWhiteSpace(browserExecutableFolder)
+                ? "default"
+                : Path.GetFileName(browserExecutableFolder);
+            var safeRuntimeName = SanitizePathSegment(runtimeName);
+            var profileFolder = Path.Combine(
+                Path.GetTempPath(),
+                "YachiyoLive2DStudio",
+                "WebView2Probe",
+                safeRuntimeName);
+            Directory.CreateDirectory(profileFolder);
+            var browserValue = string.IsNullOrWhiteSpace(browserExecutableFolder)
+                ? "__DEFAULT__"
+                : browserExecutableFolder;
+            var start = new ProcessStartInfo
+            {
+                FileName = Application.ExecutablePath,
+                Arguments = "--webview2-probe --browser-folder " + QuoteArgument(browserValue) +
+                            " --profile-folder " + QuoteArgument(profileFolder),
+                WorkingDirectory = AppDomain.CurrentDomain.BaseDirectory,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                WindowStyle = ProcessWindowStyle.Hidden
+            };
+            if (!string.IsNullOrWhiteSpace(browserExecutableFolder))
+            {
+                start.EnvironmentVariables["WEBVIEW2_BROWSER_EXECUTABLE_FOLDER"] = browserExecutableFolder;
+            }
+            using (var process = Process.Start(start))
+            {
+                if (!process.WaitForExit(12000))
+                {
+                    try { process.Kill(); } catch { }
+                    return false;
+                }
+                return process.ExitCode == 0;
+            }
+        }
+        catch (Exception ex)
+        {
+            LogLauncherEvent("WebView2 probe exception: " + ex.GetType().Name + ": " + ex.Message);
+            return false;
+        }
+    }
+
+    private static string SanitizePathSegment(string value)
+    {
+        var builder = new StringBuilder();
+        foreach (var character in value ?? string.Empty)
+        {
+            builder.Append(Array.IndexOf(Path.GetInvalidFileNameChars(), character) >= 0 ? '_' : character);
+        }
+        return builder.Length > 0 ? builder.ToString() : "default";
+    }
+
+    private static string QuoteArgument(string value)
+    {
+        return "\"" + (value ?? string.Empty).Replace("\"", "\\\"") + "\"";
+    }
+
+    private static string WebView2RuntimeCachePath()
+    {
+        return Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "YachiyoLive2DStudio",
+            "working-webview2-runtime.txt");
+    }
+
+    private static string ReadCachedWebView2Runtime()
+    {
+        try
+        {
+            var path = WebView2RuntimeCachePath();
+            return File.Exists(path) ? File.ReadAllText(path).Trim() : string.Empty;
+        }
+        catch
+        {
+            return string.Empty;
+        }
+    }
+
+    private static void CacheWorkingWebView2Runtime(string browserExecutableFolder)
+    {
+        if (string.IsNullOrWhiteSpace(browserExecutableFolder)) return;
+        try
+        {
+            var path = WebView2RuntimeCachePath();
+            Directory.CreateDirectory(Path.GetDirectoryName(path));
+            File.WriteAllText(path, browserExecutableFolder);
+        }
+        catch
+        {
+        }
+    }
+
+    internal static void LogLauncherEvent(string message)
+    {
+        try
+        {
+            var directory = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "YachiyoLive2DStudio");
+            Directory.CreateDirectory(directory);
+            File.AppendAllText(
+                Path.Combine(directory, "launcher.log"),
+                DateTimeOffset.Now.ToString("O") + " " + message + Environment.NewLine);
+        }
+        catch
+        {
+        }
+    }
 }
 
 internal sealed class LiveReplyHealthMonitor : IDisposable
@@ -381,17 +651,62 @@ internal sealed class LiveReplyHealthMonitor : IDisposable
     }
 }
 
+internal sealed class WebView2ProbeWindow : Form
+{
+    private readonly WebView2 webView;
+
+    public WebView2ProbeWindow(string browserExecutableFolder, string profileFolder)
+    {
+        ShowInTaskbar = false;
+        FormBorderStyle = FormBorderStyle.FixedToolWindow;
+        WindowState = FormWindowState.Minimized;
+        Opacity = 0;
+        webView = new WebView2
+        {
+            Dock = DockStyle.Fill,
+            CreationProperties = new CoreWebView2CreationProperties
+            {
+                BrowserExecutableFolder = browserExecutableFolder,
+                UserDataFolder = profileFolder
+            }
+        };
+        Controls.Add(webView);
+        Shown += OnShown;
+    }
+
+    public bool Succeeded { get; private set; }
+
+    private async void OnShown(object sender, EventArgs e)
+    {
+        try
+        {
+            await webView.EnsureCoreWebView2Async(null);
+            Succeeded = webView.CoreWebView2 != null;
+        }
+        catch
+        {
+            Succeeded = false;
+        }
+        finally
+        {
+            Close();
+        }
+    }
+}
+
 internal sealed class StudioWindow : Form
 {
     private readonly string url;
     private readonly string repoRoot;
+    private readonly string browserExecutableFolder;
     private readonly WebView2 webView;
     private readonly Label errorLabel;
 
-    public StudioWindow(string url, string repoRoot)
+    public StudioWindow(string url, string repoRoot, string browserExecutableFolder)
     {
         this.url = url;
         this.repoRoot = repoRoot;
+        this.browserExecutableFolder = browserExecutableFolder;
 
         Text = "Yachiyo Live2D Studio";
         StartPosition = FormStartPosition.CenterScreen;
@@ -420,6 +735,7 @@ internal sealed class StudioWindow : Form
             Dock = DockStyle.Fill,
             CreationProperties = new CoreWebView2CreationProperties
             {
+                BrowserExecutableFolder = browserExecutableFolder,
                 UserDataFolder = Path.Combine(
                     Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
                     "YachiyoLive2DStudio",
@@ -444,8 +760,18 @@ internal sealed class StudioWindow : Form
         }
         catch (Exception ex)
         {
+            Live2DStudioLauncher.LogLauncherEvent(
+                "WebView2 startup failed for runtime " +
+                (string.IsNullOrWhiteSpace(browserExecutableFolder) ? "default" : browserExecutableFolder) +
+                ": 0x" + ex.HResult.ToString("X8") + " " + ex.GetType().Name + ": " + ex.Message);
             webView.Visible = false;
-            errorLabel.Text = "WebView2 failed to start.\r\n\r\n" + ex.Message;
+            errorLabel.Text =
+                "WebView2 failed to start after runtime health checks.\r\n\r\n" +
+                ex.Message + "\r\n\r\n" +
+                "Diagnostic log: " + Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                    "YachiyoLive2DStudio",
+                    "launcher.log");
             errorLabel.Visible = true;
         }
     }
