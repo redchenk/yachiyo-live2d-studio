@@ -1,7 +1,9 @@
 import { readRoomMinecraftSettings } from './roomSettings';
+import { readLatestLive2DMinecraftAutonomyState } from './live2dMinecraftAutonomy';
 
 export const LIVE2D_MINECRAFT_ACTIONS = Object.freeze([
-  'observe', 'move', 'follow', 'collect', 'craft', 'place', 'attack', 'chat', 'stop'
+  'observe', 'move', 'follow', 'collect', 'craft', 'place', 'attack',
+  'explore', 'eat', 'equip', 'sleep', 'smelt', 'chat', 'stop'
 ]);
 
 const ACTION_SET = new Set(LIVE2D_MINECRAFT_ACTIONS);
@@ -39,6 +41,22 @@ export function normalizeLive2DMinecraftCommand(input = {}) {
   if (action === 'follow') return { action, player: name(source.player || source.username || source.target, '玩家名'), distance: Math.round(number(source.distance, 3, 2, 12)) };
   if (action === 'collect') return { action, block: name(source.block || source.blockType || source.target, '方块名'), count: Math.round(number(source.count, 1, 1, 16)), radius: Math.round(number(source.radius, 24, 4, 48)) };
   if (action === 'craft') return { action, item: name(source.item || source.itemType || source.target, '物品名'), count: Math.round(number(source.count, 1, 1, 16)) };
+  if (action === 'explore') return { action, radius: Math.round(number(source.radius, 24, 8, 64)) };
+  if (action === 'eat' || action === 'sleep') return { action };
+  if (action === 'equip') {
+    const destination = clipped(source.destination || source.slot || 'auto', 16).toLowerCase();
+    return {
+      action,
+      item: name(source.item || source.itemType || source.target, '物品名'),
+      destination: ['auto', 'hand', 'head', 'torso', 'legs', 'feet', 'off-hand'].includes(destination) ? destination : 'auto'
+    };
+  }
+  if (action === 'smelt') return {
+    action,
+    item: name(source.item || source.itemType || source.input, '物品名'),
+    fuel: name(source.fuel || 'coal', '燃料名'),
+    count: Math.round(number(source.count, 1, 1, 16))
+  };
   if (action === 'place') return { action, block: name(source.block || source.blockType || source.item, '方块名'), x: number(source.x, 0, -30_000_000, 30_000_000), y: number(source.y, 64, -64, 512), z: number(source.z, 0, -30_000_000, 30_000_000) };
   if (action === 'attack') return { action, target: name(source.target || source.entity || source.mob, '目标'), radius: Math.round(number(source.radius, 8, 2, 16)) };
   const message = clipped(source.message || source.text, 180);
@@ -117,14 +135,19 @@ export async function buildLive2DMinecraftPrompt() {
     if (JSON.stringify(settings) !== configuredFingerprint) await configureLive2DMinecraft(settings);
     const status = await readLive2DMinecraftStatus({ fresh: false });
     const state = status?.state || {};
+    const autonomy = readLatestLive2DMinecraftAutonomyState() || {};
     const position = state.position ? `${state.position.x},${state.position.y},${state.position.z}` : 'unknown';
     const inventory = compactList(state.inventory, (item) => `${item.name}x${item.count}`, 12);
     const players = compactList(state.nearby?.players, (player) => `${player.name}@${player.distance}m`, 8);
     const entities = compactList(state.nearby?.entities, (entity) => `${entity.name}@${entity.distance}m`, 8);
     return [
       '[MINECRAFT_JAVA_STATE]',
+      `persistent_goal=${settings.autonomousGoal}`,
+      `planner_phase=${autonomy.phase || 'unknown'}; planner_progress=${autonomy.lastDecision?.progress || 'none'}; planner_last_outcome=${autonomy.lastOutcome?.message || autonomy.lastOutcome?.type || 'none'}`,
       `phase=${state.phase || 'unknown'}; position=${position}; health=${state.health ?? 0}; food=${state.food ?? 0}; dimension=${state.dimension || 'unknown'}`,
       `inventory=${inventory}`,
+      `equipment=${JSON.stringify(state.equipment || {})}`,
+      `nearby_blocks=${compactList(state.nearbyBlocks, (block) => `${block.name}@${block.x},${block.y},${block.z}`, 12)}`,
       `nearby_players=${players}`,
       `nearby_entities=${entities}`,
       `active_task=${state.activeTask?.action?.action || 'none'}; queued=${state.taskQueueDepth || 0}`

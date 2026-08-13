@@ -1051,6 +1051,10 @@ onUnmounted(() => {
           <input v-model="minecraft.autonomousPlay" type="checkbox">
           <span>LLM autonomous play</span>
         </label>
+        <label class="studio-wide-field">
+          <span>Persistent Gameplay Goal</span>
+          <textarea v-model="minecraft.autonomousGoal" rows="3" spellcheck="false" placeholder="安全推进生存流程"></textarea>
+        </label>
         <label>
           <span>Decision Interval (ms)</span>
           <input v-model.number="minecraft.decisionIntervalMs" type="number" min="3000" max="30000" step="500">

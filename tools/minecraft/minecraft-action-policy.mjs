@@ -6,6 +6,11 @@ export const MINECRAFT_ACTION_TYPES = Object.freeze([
   'craft',
   'place',
   'attack',
+  'explore',
+  'eat',
+  'equip',
+  'sleep',
+  'smelt',
   'chat',
   'stop'
 ]);
@@ -71,6 +76,24 @@ export function normalizeMinecraftAction(input = {}) {
       count: integer(source.count, 1, 1, 16)
     };
   }
+  if (action === 'explore') return { action, radius: integer(source.radius, 24, 8, 64) };
+  if (action === 'eat' || action === 'sleep') return { action };
+  if (action === 'equip') {
+    const destination = text(source.destination || source.slot || 'auto', 16).toLowerCase();
+    return {
+      action,
+      item: safeName(source.item || source.itemType || source.target, 'item'),
+      destination: ['auto', 'hand', 'head', 'torso', 'legs', 'feet', 'off-hand'].includes(destination) ? destination : 'auto'
+    };
+  }
+  if (action === 'smelt') {
+    return {
+      action,
+      item: safeName(source.item || source.itemType || source.input, 'item'),
+      fuel: safeName(source.fuel || 'coal', 'fuel'),
+      count: integer(source.count, 1, 1, 16)
+    };
+  }
   if (action === 'place') {
     return {
       action,
@@ -105,6 +128,7 @@ export function normalizeMinecraftConfig(input = {}) {
     auth: auth === 'microsoft' ? 'microsoft' : 'offline',
     version: text(input.version || '', 32),
     autonomousPlay: input.autonomousPlay !== false,
+    autonomousGoal: text(input.autonomousGoal || '', 500),
     decisionIntervalMs: integer(input.decisionIntervalMs, 6500, 3000, 30000),
     autoReconnect: input.autoReconnect !== false,
     maxRetries: integer(input.maxRetries, 5, 0, 20),

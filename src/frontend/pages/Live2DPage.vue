@@ -50,13 +50,19 @@ import {
   syncLive2DMusicSpeechDucking,
   warmupLive2DMusicPlayback
 } from '../services/room/live2dMusic';
-import { executeLive2DMinecraftCommand } from '../services/room/live2dMinecraft';
+import {
+  executeLive2DMinecraftCommand,
+  readLive2DMinecraftStatus
+} from '../services/room/live2dMinecraft';
+import { createLive2DMinecraftAutonomyController } from '../services/room/live2dMinecraftAutonomy';
+import { requestLive2DMinecraftPlan } from '../services/room/live2dMinecraftPlanner';
 import { yachiyoMusicAdapter } from '../services/room/yachiyoMusicAdapter';
 import {
   readRoomASRSettings,
   readRoomBilibiliDanmakuSettings,
   readRoomMusicSettings,
   readRoomMinecraftSettings,
+  writeRoomMinecraftSettings,
   writeRoomASRSettings
 } from '../services/room/roomSettings';
 import {
@@ -220,6 +226,19 @@ const liveTurnPipeline = createLive2DTurnPipeline({
 const liveReplyRepetitionGuard = createLive2DReplyRepetitionGuard({
   cooldownMs: 90_000,
   maxEntries: 5
+});
+const minecraftAutonomyState = ref(null);
+const minecraftAutonomyController = createLive2DMinecraftAutonomyController({
+  readSettings: readRoomMinecraftSettings,
+  readStatus: readLive2DMinecraftStatus,
+  plan: requestLive2DMinecraftPlan,
+  execute: executeLive2DMinecraftCommand,
+  shouldYield: () => llmState.value.loading || liveLlmRequestCount > 0 || liveTurnsInFlight > 0,
+  onState: (state) => {
+    minecraftAutonomyState.value = state;
+    window.dispatchEvent(new CustomEvent('tsukuyomi:minecraft-autonomy-state', { detail: state }));
+  },
+  onSpeech: (decision) => speakMinecraftMilestone(decision)
 });
 
 const debugEmotion = computed(() => (
@@ -1094,14 +1113,20 @@ function hasPriorityAudience(entries = audienceQueue.value) {
 let lastMinecraftDecisionAt = 0;
 
 async function executeMinecraftFromLLMResult(result, source = 'manual') {
+  if (source !== 'live' && result?.minecraftGoal) {
+    const saved = writeRoomMinecraftSettings({
+      ...readRoomMinecraftSettings(),
+      autonomousGoal: result.minecraftGoal
+    });
+    minecraftAutonomyController.setGoal(saved.autonomousGoal);
+    window.dispatchEvent(new CustomEvent('tsukuyomi:minecraft-goal', { detail: { goal: saved.autonomousGoal } }));
+  }
   if (!result?.minecraft) return null;
+  if (source === 'live') return null;
   try {
     const settings = readRoomMinecraftSettings();
-    if (source === 'live') {
-      if (!settings.autonomousPlay) return null;
-      if (result.minecraft.action !== 'stop' && Date.now() - lastMinecraftDecisionAt < settings.decisionIntervalMs) return null;
-      lastMinecraftDecisionAt = Date.now();
-    }
+    if (result.minecraft.action !== 'stop' && Date.now() - lastMinecraftDecisionAt < 900) return null;
+    lastMinecraftDecisionAt = Date.now();
     const actionResult = await executeLive2DMinecraftCommand(result.minecraft, { settings });
     window.dispatchEvent(new CustomEvent('tsukuyomi:minecraft-action', { detail: actionResult }));
     return actionResult;
@@ -1111,6 +1136,39 @@ async function executeMinecraftFromLLMResult(result, source = 'manual') {
     }));
     return null;
   }
+}
+
+function syncMinecraftAutonomy() {
+  const settings = readRoomMinecraftSettings();
+  if (settings.enabled && settings.trustedServerAcknowledged && settings.autonomousPlay) {
+    minecraftAutonomyController.setGoal(settings.autonomousGoal);
+    minecraftAutonomyController.start();
+  } else {
+    minecraftAutonomyController.stop('settings');
+  }
+}
+
+function speakMinecraftMilestone(decision) {
+  if (!speechPlayer || muted.value || !decision?.voice || !decision?.caption) return;
+  let captionToken = 0;
+  speechPlayer.enqueue(decision.voice, {
+    queueGroup: 'minecraft-milestone',
+    priority: 15,
+    maxQueuedInGroup: 1,
+    maxQueueAgeMs: 10_000,
+    sourceLang: 'ja',
+    emotion: 'happy',
+    speechStyle: { energy: 0.6, warmth: 0.68 },
+    onStart: ({ durationMs }) => {
+      captionToken = speechCaptionSynchronizer.start({ fallback: decision.caption });
+      pushLog('yachiyo', decision.caption, { source: 'minecraft' });
+      dispatchRoomLive2D(alignLive2DToSpeech({
+        emotion: 'happy',
+        actions: [{ type: 'look_at_chat' }, { type: 'nod' }]
+      }, durationMs));
+      dispatchCharacterState('speaking', { holdMs: streamingSpeechHoldMs(durationMs), emotion: 'happy' });
+    }
+  }).catch(() => {}).finally(() => speechCaptionSynchronizer.finish(captionToken));
 }
 
 function acceptLiveReplySpeech(text, audienceLines = []) {
@@ -1652,7 +1710,7 @@ function buildLiveDirectorPrompt(audienceLines, options = {}) {
       ? 'Song requests are enabled. Use the music request queue for explicit viewer song requests.'
       : 'Song requests are disabled. Do not emit a music request or promise that a requested song was queued; briefly say song requests are closed only when directly asked.',
     minecraftAutonomy
-      ? 'Minecraft autonomous play is enabled. Use the current MINECRAFT_JAVA_STATE to choose one useful safe action each turn when no urgent audience or safety concern takes priority.'
+      ? 'Minecraft autonomous play is handled by a separate private planner. React conversationally to its current progress, but set minecraft and minecraftGoal to null in this audience turn.'
       : 'Minecraft autonomous play is disabled. Set minecraft to null unless the host explicitly asks for a manual Minecraft action.',
     'If final music executes a request from one selected audience message, include music.requestIndex as that message’s 1-based number so the runtime can attach the trusted viewer name.',
     'Act like an autonomous AI VTuber streamer. Reply with 1-2 short spoken sentences and address only the one or two selected viewers.',
@@ -2048,6 +2106,7 @@ function handleStudioSettingsSaved() {
   micGain.value = Math.round(Number(asrSettings.inputGain || 1) * 100);
   asrRecorder?.setInputGain(micGain.value / 100, { persist: false });
   syncBilibiliDanmakuFromSettings();
+  syncMinecraftAutonomy();
 }
 
 function handleLive2DDebugEvent(event) {
@@ -2250,6 +2309,7 @@ onMounted(() => {
   syncBilibiliDanmakuFromSettings();
   if (itemPanelOpen.value) refreshLocalItemAssets();
   init();
+  syncMinecraftAutonomy();
 });
 
 onUnmounted(() => {
@@ -2264,6 +2324,7 @@ onUnmounted(() => {
   modelDragState = null;
   modelViewport.dragging = false;
   stopLiveDirector();
+  minecraftAutonomyController.stop('unmount');
   streamingSpeechSession?.cancel();
   speechPlayer?.destroy();
   speechCaptionSynchronizer.clear();

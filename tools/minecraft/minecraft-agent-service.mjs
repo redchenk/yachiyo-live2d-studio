@@ -50,6 +50,8 @@ let taskSequence = 0;
 let queueGeneration = 0;
 let activeTask = null;
 let actionQueue = Promise.resolve();
+let lowHealthInFlight = false;
+let drowningRecovery = false;
 const taskQueue = [];
 const recentEvents = [];
 const state = {
@@ -110,6 +112,38 @@ function inventorySnapshot() {
     .slice(0, 36);
 }
 
+function equipmentSnapshot() {
+  if (!bot) return {};
+  const slots = { hand: 36, 'off-hand': 45, feet: 8, legs: 7, torso: 6, head: 5 };
+  return Object.fromEntries(Object.entries(slots).map(([name, slot]) => [name, bot.inventory?.slots?.[slot]?.name || '']));
+}
+
+function blockSnapshot() {
+  if (!bot?.entity?.position || !mcData) return [];
+  const usefulNames = [...new Set([
+    'crafting_table', 'furnace', 'blast_furnace', 'smoker', 'chest',
+    'stone', 'cobblestone', 'coal_ore', 'deepslate_coal_ore', 'iron_ore', 'deepslate_iron_ore',
+    ...Object.keys(mcData.blocksByName).filter((name) => /_(?:bed|log|stem)$/.test(name))
+  ])];
+  const namesById = new Map(usefulNames
+    .map((name) => [mcData.blocksByName[name]?.id, name])
+    .filter(([id]) => Number.isFinite(id)));
+  return bot.findBlocks({ matching: [...namesById.keys()], maxDistance: 32, count: 48 })
+    .map((position) => {
+      const block = bot.blockAt(position);
+      return block ? {
+      name: namesById.get(block.type) || block.name,
+      x: position.x,
+      y: position.y,
+      z: position.z,
+      distance: Math.round(distance(bot.entity.position, position) * 10) / 10
+      } : null;
+    })
+    .filter(Boolean)
+    .sort((left, right) => left.distance - right.distance)
+    .slice(0, 16);
+}
+
 function nearbySnapshot() {
   if (!bot?.entity?.position) return { players: [], entities: [] };
   const origin = bot.entity.position;
@@ -148,6 +182,7 @@ function statusSnapshot() {
       auth: config.auth,
       version: config.version,
       autonomousPlay: config.autonomousPlay,
+      autonomousGoal: config.autonomousGoal,
       decisionIntervalMs: config.decisionIntervalMs,
       autoReconnect: config.autoReconnect,
       maxRetries: config.maxRetries,
@@ -158,13 +193,19 @@ function statusSnapshot() {
       reconnectAttempts,
       taskQueueDepth: taskQueue.length,
       activeTask,
+      safetyLock: lowHealthInFlight ? 'low-health' : drowningRecovery ? 'drowning' : '',
       position: position ? { x: Math.round(position.x * 10) / 10, y: Math.round(position.y * 10) / 10, z: Math.round(position.z * 10) / 10 } : null,
       health: Number(bot?.health ?? 0),
       food: Number(bot?.food ?? 0),
+      oxygen: Number(bot?.oxygenLevel ?? 20),
       gameMode: bot?.game?.gameMode || '',
       dimension: bot?.game?.dimension || '',
       timeOfDay: Number(bot?.time?.timeOfDay ?? 0),
+      isRaining: Boolean(bot?.isRaining),
+      isSleeping: Boolean(bot?.isSleeping),
       inventory: inventorySnapshot(),
+      equipment: equipmentSnapshot(),
+      nearbyBlocks: blockSnapshot(),
       nearby: nearbySnapshot(),
       recentEvents: recentEvents.slice(-12)
     }
@@ -205,6 +246,7 @@ function scheduleReconnect() {
 
 async function disconnectBot(reason = 'reconfigure') {
   intentionalDisconnect = true;
+  drowningRecovery = false;
   if (reconnectTimer) clearTimeout(reconnectTimer);
   reconnectTimer = null;
   stopCurrentAction();
@@ -256,7 +298,8 @@ async function connectBot() {
     state.phase = 'joining';
     event('login');
   });
-  nextBot.once('spawn', () => {
+  let hasSpawned = false;
+  nextBot.on('spawn', () => {
     if (bot !== nextBot) return;
     mcData = minecraftData(nextBot.version);
     nextBot.pathfinder.setMovements(new Movements(nextBot));
@@ -266,10 +309,30 @@ async function connectBot() {
     state.lastConnectedAt = Date.now();
     state.microsoftLogin = null;
     reconnectAttempts = 0;
-    event('spawn', { version: nextBot.version });
+    event(hasSpawned ? 'respawn' : 'spawn', { version: nextBot.version });
+    hasSpawned = true;
   });
   nextBot.on('health', () => {
     if (nextBot.health <= config.healthThreshold) handleLowHealth(nextBot).catch(() => {});
+  });
+  nextBot.on('physicsTick', () => {
+    if (bot !== nextBot) return;
+    if (Number(nextBot.oxygenLevel) <= 8 && !drowningRecovery) {
+      drowningRecovery = true;
+      stopCurrentAction();
+      nextBot.setControlState('jump', true);
+      event('drowning-recovery-started', { oxygen: Number(nextBot.oxygenLevel) });
+    } else if (drowningRecovery && Number(nextBot.oxygenLevel) >= 18) {
+      nextBot.setControlState('jump', false);
+      drowningRecovery = false;
+      event('drowning-recovery-complete', { oxygen: Number(nextBot.oxygenLevel) });
+    }
+  });
+  nextBot.on('death', () => {
+    stopCurrentAction();
+    drowningRecovery = false;
+    state.phase = 'dead';
+    event('death');
   });
   nextBot.on('kicked', (reason) => {
     state.lastDisconnectReason = String(reason || 'kicked').slice(0, 500);
@@ -284,6 +347,7 @@ async function connectBot() {
     mcData = null;
     state.connected = false;
     state.spawned = false;
+    drowningRecovery = false;
     state.phase = intentionalDisconnect || !config.enabled ? (config.enabled ? 'disconnected' : 'disabled') : 'disconnected';
     state.lastDisconnectReason = String(reason || 'connection ended').slice(0, 500);
     event('end', { reason: state.lastDisconnectReason });
@@ -292,7 +356,6 @@ async function connectBot() {
   return statusSnapshot();
 }
 
-let lowHealthInFlight = false;
 async function handleLowHealth(currentBot) {
   if (lowHealthInFlight || currentBot !== bot || currentBot.health > config.healthThreshold) return;
   lowHealthInFlight = true;
@@ -376,10 +439,97 @@ async function executeAction(action, generation = queueGeneration) {
   if (action.action === 'craft') {
     const item = mcData.itemsByName[action.item];
     if (!item) throw new Error(`Unknown item: ${action.item}.`);
-    const recipe = currentBot.recipesFor(item.id, null, action.count, null)[0];
+    const craftingTableData = mcData.blocksByName.crafting_table;
+    const craftingTable = craftingTableData
+      ? currentBot.findBlock({ matching: craftingTableData.id, maxDistance: 24 })
+      : null;
+    let recipeTable = craftingTable;
+    let recipe = currentBot.recipesFor(item.id, null, action.count, recipeTable)[0];
+    if (!recipe) {
+      recipeTable = null;
+      recipe = currentBot.recipesFor(item.id, null, action.count, null)[0];
+    }
     if (!recipe) throw new Error(`No available recipe for ${action.item}.`);
-    await withTimeout(currentBot.craft(recipe, action.count, null));
+    if (recipeTable) await withTimeout(currentBot.pathfinder.goto(new goals.GoalNear(recipeTable.position.x, recipeTable.position.y, recipeTable.position.z, 3)));
+    const crafts = Math.max(1, Math.ceil(action.count / Math.max(1, Number(recipe.result?.count) || 1)));
+    await withTimeout(currentBot.craft(recipe, crafts, recipeTable));
     return { success: true, status: 'crafted', item: action.item, count: action.count };
+  }
+  if (action.action === 'explore') {
+    const origin = currentBot.entity.position;
+    const angle = Math.random() * Math.PI * 2;
+    const radius = Math.max(8, action.radius * (0.55 + (Math.random() * 0.45)));
+    const x = Math.floor(origin.x + Math.cos(angle) * radius);
+    const z = Math.floor(origin.z + Math.sin(angle) * radius);
+    await withTimeout(currentBot.pathfinder.goto(new goals.GoalXZ(x, z)), 90_000);
+    return { success: true, status: 'explored', position: statusSnapshot().state.position };
+  }
+  if (action.action === 'eat') {
+    const food = currentBot.inventory.items()
+      .filter((item) => mcData?.foodsByName?.[item.name])
+      .sort((left, right) => (mcData.foodsByName[right.name]?.foodPoints || 0) - (mcData.foodsByName[left.name]?.foodPoints || 0))[0];
+    if (!food) throw new Error('No edible food is available.');
+    await currentBot.equip(food, 'hand');
+    await currentBot.consume();
+    return { success: true, status: 'ate', item: food.name, food: currentBot.food };
+  }
+  if (action.action === 'equip') {
+    const item = currentBot.inventory.items().find((entry) => entry.name === action.item);
+    if (!item) throw new Error(`No ${action.item} in inventory.`);
+    const inferred = /_helmet$/.test(item.name) ? 'head'
+      : /_chestplate$/.test(item.name) ? 'torso'
+        : /_leggings$/.test(item.name) ? 'legs'
+          : /_boots$/.test(item.name) ? 'feet'
+            : 'hand';
+    const destination = action.destination === 'auto' ? inferred : action.destination;
+    await currentBot.equip(item, destination);
+    return { success: true, status: 'equipped', item: item.name, destination };
+  }
+  if (action.action === 'sleep') {
+    const bedIds = Object.values(mcData.blocksByName)
+      .filter((block) => /_bed$/.test(block.name))
+      .map((block) => block.id);
+    const bed = currentBot.findBlock({ matching: bedIds, maxDistance: 32 });
+    if (!bed) throw new Error('No bed is visible nearby.');
+    await withTimeout(currentBot.pathfinder.goto(new goals.GoalNear(bed.position.x, bed.position.y, bed.position.z, 2)));
+    await currentBot.sleep(bed);
+    return { success: true, status: 'sleeping', position: statusSnapshot().state.position };
+  }
+  if (action.action === 'smelt') {
+    const input = currentBot.inventory.items().find((entry) => entry.name === action.item);
+    const fuel = currentBot.inventory.items().find((entry) => entry.name === action.fuel);
+    if (!input) throw new Error(`No ${action.item} in inventory.`);
+    if (!fuel) throw new Error(`No ${action.fuel} in inventory.`);
+    const furnaceNames = /(?:^raw_|_ore$)/.test(action.item)
+      ? ['blast_furnace', 'furnace']
+      : mcData?.foodsByName?.[action.item]
+        ? ['smoker', 'furnace']
+        : ['furnace'];
+    const furnaceIds = furnaceNames
+      .map((name) => mcData.blocksByName[name]?.id)
+      .filter(Number.isFinite);
+    const furnaceBlock = currentBot.findBlock({ matching: furnaceIds, maxDistance: 32 });
+    if (!furnaceBlock) throw new Error('No furnace is visible nearby.');
+    await withTimeout(currentBot.pathfinder.goto(new goals.GoalNear(furnaceBlock.position.x, furnaceBlock.position.y, furnaceBlock.position.z, 3)));
+    const furnace = await currentBot.openFurnace(furnaceBlock);
+    try {
+      const count = Math.min(action.count, input.count);
+      await furnace.putFuel(fuel.type, fuel.metadata, Math.min(fuel.count, Math.max(1, count)));
+      await furnace.putInput(input.type, input.metadata, count);
+      const deadline = Date.now() + Math.min(180_000, 15_000 + (count * 12_000));
+      while (Date.now() < deadline) {
+        if (generation !== queueGeneration) throw new Error('Minecraft action was cancelled.');
+        const output = furnace.outputItem();
+        if (output && output.count >= count) {
+          const taken = await furnace.takeOutput();
+          return { success: true, status: 'smelted', item: action.item, output: taken?.name || '', count: taken?.count || count };
+        }
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+      }
+      throw new Error(`Smelting ${action.item} did not finish before the deadline.`);
+    } finally {
+      furnace.close();
+    }
   }
   if (action.action === 'place') {
     const item = currentBot.inventory.items().find((entry) => entry.name === action.block);
@@ -409,9 +559,20 @@ async function executeAction(action, generation = queueGeneration) {
       .filter((entry) => entry.distance <= action.radius)
       .sort((left, right) => left.distance - right.distance)[0]?.entity;
     if (!target) throw new Error(`No ${action.target} found within ${action.radius} blocks.`);
-    await currentBot.lookAt(target.position.offset(0, target.height || 1, 0), true);
-    currentBot.attack(target);
-    return { success: true, status: 'attacked', target: action.target };
+    await withTimeout((async () => {
+      const deadline = Date.now() + 15_000;
+      while (Date.now() < deadline && currentBot.entities[target.id]) {
+        if (currentBot.health <= config.healthThreshold) throw new Error('Combat stopped because health is low.');
+        const targetDistance = distance(currentBot.entity.position, target.position);
+        if (targetDistance > 3.2) {
+          await currentBot.pathfinder.goto(new goals.GoalFollow(target, 2));
+        }
+        await currentBot.lookAt(target.position.offset(0, target.height || 1, 0), true);
+        currentBot.attack(target);
+        await new Promise((resolve) => setTimeout(resolve, 650));
+      }
+    })(), 18_000);
+    return { success: true, status: 'combat-complete', target: action.target };
   }
   currentBot.chat(action.message);
   return { success: true, status: 'sent', message: action.message };
@@ -443,13 +604,13 @@ function enqueueAction(rawAction) {
     try {
       const result = await executeAction(action, task.generation);
       state.lastActionAt = Date.now();
-      state.lastAction = { ...action, success: true };
-      event('action-complete', { taskId: task.id, action: action.action });
+      state.lastAction = { taskId: task.id, ...action, success: true, result };
+      event('action-complete', { taskId: task.id, action: action.action, result });
       return { ...result, action, taskId: task.id };
     } catch (error) {
       haltBotControls();
       state.lastActionAt = Date.now();
-      state.lastAction = { ...action, success: false, error: errorMessage(error) };
+      state.lastAction = { taskId: task.id, ...action, success: false, error: errorMessage(error) };
       event('action-failed', { taskId: task.id, action: action.action, message: errorMessage(error) });
       throw error;
     } finally {

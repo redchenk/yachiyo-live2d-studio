@@ -11,6 +11,13 @@ assert.deepEqual(normalizeMinecraftAction({ action: 'move', x: Infinity, y: 900,
 });
 assert.throws(() => normalizeMinecraftAction({ action: 'chat', message: '/op Yachiyo' }), /cannot start/i);
 assert.throws(() => normalizeMinecraftAction({ action: 'javascript', code: 'process.exit()' }), /unsupported/i);
+assert.deepEqual(normalizeMinecraftAction({ action: 'explore', radius: 999 }), { action: 'explore', radius: 64 });
+assert.deepEqual(normalizeMinecraftAction({ action: 'equip', item: 'iron helmet', destination: 'invalid' }), {
+  action: 'equip', item: 'iron_helmet', destination: 'auto'
+});
+assert.deepEqual(normalizeMinecraftAction({ action: 'smelt', item: 'raw_iron', fuel: 'charcoal', count: 99 }), {
+  action: 'smelt', item: 'raw_iron', fuel: 'charcoal', count: 16
+});
 assert.equal(normalizeMinecraftConfig({ auth: 'anything', port: 99999 }).auth, 'offline');
 assert.equal(normalizeMinecraftConfig({ auth: 'microsoft', port: 99999 }).port, 65535);
 
