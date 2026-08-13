@@ -856,6 +856,7 @@ internal sealed class LocalStudioServer : IDisposable
     {
         shutdown.Cancel();
         DesktopApiProxy.ShutdownNeteaseMusicApiService();
+        DesktopApiProxy.ShutdownMinecraftAgentService();
         DesktopApiProxy.ShutdownMemoryDataService();
         DesktopApiProxy.ShutdownAsrService();
         var current = listener;
@@ -971,6 +972,16 @@ internal sealed class LocalStudioServer : IDisposable
             if (method == "POST" && string.Equals(path, "/api/vision/context", StringComparison.OrdinalIgnoreCase))
             {
                 WriteApiResponse(stream, DesktopApiProxy.VisionContext(request.Body));
+                return;
+            }
+
+            if (method == "POST" && (
+                string.Equals(path, "/api/minecraft/status", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(path, "/api/minecraft/configure", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(path, "/api/minecraft/action", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(path, "/api/minecraft/disconnect", StringComparison.OrdinalIgnoreCase)))
+            {
+                WriteApiResponse(stream, DesktopApiProxy.MinecraftAgentRoute(path, request.Body));
                 return;
             }
 
@@ -1480,9 +1491,11 @@ internal static class DesktopApiProxy
     private const string DisabledMemoryRelativePath = ".yachiyo-index/disabled-memory.json";
     private const int MemoryDataServicePort = 3299;
     private const int AsrServicePort = 3301;
+    private const int MinecraftAgentServicePort = 3303;
     private static readonly object MemoryDataServiceLock = new object();
     private static readonly object AsrServiceLock = new object();
     private static readonly object NeteaseMusicApiServiceLock = new object();
+    private static readonly object MinecraftAgentServiceLock = new object();
     private static readonly object LiveReplyTelemetryLock = new object();
     private static readonly HashSet<string> LiveReplyTelemetryAllowedStages = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
     {
@@ -1493,6 +1506,7 @@ internal static class DesktopApiProxy
     private static Process memoryDataServiceProcess;
     private static Process asrServiceProcess;
     private static Process neteaseMusicApiServiceProcess;
+    private static Process minecraftAgentServiceProcess;
     private static int neteaseMusicApiServicePort;
     private static readonly object NeteaseMusicTicketLock = new object();
     private static readonly Dictionary<string, NeteaseMusicStreamTicket> NeteaseMusicStreamTickets =
@@ -1636,6 +1650,197 @@ internal static class DesktopApiProxy
             {
                 // Best-effort cleanup for the optional NetEase Cloud Music sidecar.
             }
+        }
+    }
+
+    public static void ShutdownMinecraftAgentService()
+    {
+        lock (MinecraftAgentServiceLock)
+        {
+            var process = minecraftAgentServiceProcess;
+            minecraftAgentServiceProcess = null;
+            try
+            {
+                if (process == null && ProbeMinecraftAgentService())
+                {
+                    try
+                    {
+                        PostBytes(
+                            "http://127.0.0.1:" + MinecraftAgentServicePort + "/api/minecraft/shutdown",
+                            "{}",
+                            new Dictionary<string, string>(),
+                            1200
+                        );
+                    }
+                    catch { }
+                    return;
+                }
+                if (process == null) return;
+                if (!process.HasExited)
+                {
+                    try
+                    {
+                        PostBytes(
+                            "http://127.0.0.1:" + MinecraftAgentServicePort + "/api/minecraft/shutdown",
+                            "{}",
+                            new Dictionary<string, string>(),
+                            1200
+                        );
+                    }
+                    catch { }
+                    if (!process.WaitForExit(2500)) process.Kill();
+                }
+            }
+            catch
+            {
+                // Best-effort cleanup for the optional Minecraft sidecar.
+            }
+        }
+    }
+
+    public static StudioApiResponse MinecraftAgentRoute(string route, byte[] body)
+    {
+        try
+        {
+            EnsureMinecraftAgentServiceStarted();
+            var response = PostBytes(
+                "http://127.0.0.1:" + MinecraftAgentServicePort + route,
+                Encoding.UTF8.GetString(body ?? new byte[0]),
+                new Dictionary<string, string>(),
+                12000
+            );
+            return new StudioApiResponse
+            {
+                StatusCode = string.Equals(route, "/api/minecraft/action", StringComparison.OrdinalIgnoreCase) ? 202 : 200,
+                StatusText = "OK",
+                ContentType = string.IsNullOrWhiteSpace(response.ContentType) ? "application/json; charset=utf-8" : response.ContentType,
+                Body = response.Body
+            };
+        }
+        catch (WebException ex)
+        {
+            var providerResponse = ex.Response as HttpWebResponse;
+            if (providerResponse != null)
+            {
+                var statusCode = (int)providerResponse.StatusCode;
+                var statusText = providerResponse.StatusDescription;
+                var payload = ReadProviderResponse(providerResponse);
+                return new StudioApiResponse
+                {
+                    StatusCode = statusCode,
+                    StatusText = statusText,
+                    ContentType = string.IsNullOrWhiteSpace(payload.ContentType) ? "application/json; charset=utf-8" : payload.ContentType,
+                    Body = payload.Body
+                };
+            }
+            return JsonError(502, ReadWebException(ex));
+        }
+        catch (Exception ex)
+        {
+            return JsonError(502, ex.Message);
+        }
+    }
+
+    private static void EnsureMinecraftAgentServiceStarted()
+    {
+        if (ProbeMinecraftAgentService()) return;
+        lock (MinecraftAgentServiceLock)
+        {
+            if (ProbeMinecraftAgentService()) return;
+            if (minecraftAgentServiceProcess != null && !minecraftAgentServiceProcess.HasExited)
+            {
+                WaitForMinecraftAgentService();
+                return;
+            }
+            minecraftAgentServiceProcess = null;
+            if (HasMinecraftAgentListener())
+            {
+                throw new InvalidOperationException(
+                    "Minecraft agent port " + MinecraftAgentServicePort + " is already used by another or unhealthy process. " +
+                    "Close that process before enabling Minecraft control."
+                );
+            }
+            var nodeExe = Live2DStudioLauncher.FindMemoryNodeExecutable(repoRoot);
+            if (string.IsNullOrWhiteSpace(nodeExe)) throw new InvalidOperationException("Node.js is required for the Minecraft agent.");
+            var script = Path.Combine(repoRoot, "tools", "minecraft", "minecraft-agent-service.mjs");
+            if (!File.Exists(script)) throw new InvalidOperationException("Minecraft agent service is missing.");
+            if (!File.Exists(Path.Combine(repoRoot, "node_modules", "mineflayer", "package.json")))
+            {
+                throw new InvalidOperationException("Minecraft dependencies are missing. Run npm install in the project once.");
+            }
+            var start = new ProcessStartInfo
+            {
+                FileName = nodeExe,
+                Arguments = QuoteArgument(script) + " --port " + MinecraftAgentServicePort + " --parent-pid " + Process.GetCurrentProcess().Id,
+                WorkingDirectory = repoRoot,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+            start.EnvironmentVariables["NODE_ENV"] = "production";
+            try
+            {
+                minecraftAgentServiceProcess = Process.Start(start);
+                WaitForMinecraftAgentService();
+            }
+            catch
+            {
+                var failed = minecraftAgentServiceProcess;
+                minecraftAgentServiceProcess = null;
+                try { if (failed != null && !failed.HasExited) failed.Kill(); } catch { }
+                throw;
+            }
+        }
+    }
+
+    private static void WaitForMinecraftAgentService()
+    {
+        for (var i = 0; i < 80; i++)
+        {
+            if (ProbeMinecraftAgentService()) return;
+            if (minecraftAgentServiceProcess != null && minecraftAgentServiceProcess.HasExited)
+            {
+                throw new InvalidOperationException("Minecraft agent exited before it became ready.");
+            }
+            Thread.Sleep(125);
+        }
+        throw new InvalidOperationException("Minecraft agent did not become ready.");
+    }
+
+    private static bool ProbeMinecraftAgentService()
+    {
+        try
+        {
+            var response = GetBytes(
+                "http://127.0.0.1:" + MinecraftAgentServicePort + "/healthz",
+                new Dictionary<string, string>(),
+                600
+            );
+            var text = Encoding.UTF8.GetString(response.Body ?? new byte[0]);
+            var normalizedRoot = repoRoot.Replace("\\", "\\\\");
+            return text.IndexOf("\"service\":\"yachiyo-minecraft-agent\"", StringComparison.OrdinalIgnoreCase) >= 0 &&
+                (text.IndexOf(repoRoot, StringComparison.OrdinalIgnoreCase) >= 0 ||
+                 text.IndexOf(normalizedRoot, StringComparison.OrdinalIgnoreCase) >= 0);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static bool HasMinecraftAgentListener()
+    {
+        try
+        {
+            using (var client = new TcpClient())
+            {
+                var connect = client.BeginConnect(IPAddress.Loopback, MinecraftAgentServicePort, null, null);
+                try { return connect.AsyncWaitHandle.WaitOne(350) && client.Connected; }
+                finally { connect.AsyncWaitHandle.Close(); }
+            }
+        }
+        catch
+        {
+            return false;
         }
     }
 

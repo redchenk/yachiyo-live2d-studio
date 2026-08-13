@@ -8,6 +8,14 @@ Runtime memory is persistent and self-updating: `/api/memory/record-turn` stores
 
 Desktop vision update: the launcher exposes local `/api/vision/context`, which returns cursor position, the window under the cursor, foreground window metadata, and an optional cursor-neighborhood screenshot. The Live2D LLM layer can attach this screenshot to vision-capable chat models so Yachiyo can ground replies in what the user is pointing at on screen. Vision has a Settings tab and redacts screenshots for sensitive-looking windows.
 
+## Minecraft Java Agent
+
+The Studio now includes an optional Mineflayer-based Minecraft Java agent inspired by Airi's layered Minecraft runtime. Open the `MC` page in the left rail, enter a trusted/private server, choose Offline or Microsoft authentication, confirm the trust checkbox, and connect. Microsoft authentication uses a device code and stores its reusable profile under the current Windows user's local application data; the code and profile are never sent to the LLM.
+
+When `LLM autonomous play` is enabled, current position, health, inventory, nearby players/entities, and task status are added to the LLM context in parallel with memory and vision. The LLM may issue at most one allow-listed action per decision: observe, move, follow, collect, craft, place, attack, safe chat, or stop. Actions are queued in a localhost-only sidecar so pathfinding cannot block danmaku, subtitles, or TTS. Low health cancels pending work and attempts to eat; chat beginning with `/` and arbitrary code execution are rejected.
+
+The EXE starts the sidecar lazily on the first Minecraft request and stops it on exit. For frontend development, run `npm run start:minecraft-agent` alongside `npm run dev` and proxy `/api/minecraft/*` to `http://127.0.0.1:3303` if the native launcher is not being used.
+
 八千代 Live2D 本地桌面工作室，面向 AI VTuber / Neuro-sama 风格直播实验。
 
 本项目的核心目标不是只渲染一个 Live2D 模型，而是把 LLM、TTS、语义动作、VTube Studio 参数注入、长期记忆和八千代人格资料整合成一套可本地一键启动的直播控制台。

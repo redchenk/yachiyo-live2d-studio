@@ -9,6 +9,7 @@ export const ROOM_ASR_SETTINGS_KEY = 'roomASRSettings';
 export const ROOM_MUSIC_SETTINGS_KEY = 'roomMusicSettings';
 export const ROOM_BILIBILI_DANMAKU_SETTINGS_KEY = 'roomBilibiliDanmakuSettings';
 export const ROOM_VISION_SETTINGS_KEY = 'roomVisionSettings';
+export const ROOM_MINECRAFT_SETTINGS_KEY = 'roomMinecraftSettings';
 const ROOM_MODEL_STAGE_DEFAULTS_MIGRATION_KEY = 'roomModelStageDefaultsMigratedV2';
 const ROOM_MODEL_RENDER_DEFAULTS_MIGRATION_KEY = 'roomModelRenderDefaultsMigratedV2';
 const ROOM_MEMORY_MANAGED_MILVUS_DEFAULTS_MIGRATION_KEY = 'roomMemoryManagedMilvusDefaultsMigratedV1';
@@ -230,6 +231,21 @@ export const DEFAULT_ROOM_VISION_SETTINGS = {
   cropSize: 768,
   detail: 'low',
   maxPromptChars: 1600
+};
+
+export const DEFAULT_ROOM_MINECRAFT_SETTINGS = {
+  enabled: false,
+  trustedServerAcknowledged: false,
+  host: '127.0.0.1',
+  port: 25565,
+  username: 'Yachiyo',
+  auth: 'offline',
+  version: '',
+  autonomousPlay: true,
+  decisionIntervalMs: 6500,
+  autoReconnect: true,
+  maxRetries: 5,
+  healthThreshold: 8
 };
 
 function clone(value) {
@@ -800,8 +816,30 @@ export function readRoomBilibiliDanmakuSettings() {
   );
 }
 
+export function normalizeRoomMinecraftSettings(settings = {}) {
+  const merged = { ...DEFAULT_ROOM_MINECRAFT_SETTINGS, ...(settings || {}) };
+  return {
+    enabled: asBoolean(merged.enabled),
+    trustedServerAcknowledged: asBoolean(merged.trustedServerAcknowledged),
+    host: asText(merged.host).slice(0, 255) || DEFAULT_ROOM_MINECRAFT_SETTINGS.host,
+    port: Math.round(asNumber(merged.port, DEFAULT_ROOM_MINECRAFT_SETTINGS.port, 1, 65535)),
+    username: asText(merged.username).slice(0, 80) || DEFAULT_ROOM_MINECRAFT_SETTINGS.username,
+    auth: asText(merged.auth).toLowerCase() === 'microsoft' ? 'microsoft' : 'offline',
+    version: asText(merged.version).slice(0, 32),
+    autonomousPlay: merged.autonomousPlay !== false,
+    decisionIntervalMs: Math.round(asNumber(merged.decisionIntervalMs, DEFAULT_ROOM_MINECRAFT_SETTINGS.decisionIntervalMs, 3000, 30000)),
+    autoReconnect: merged.autoReconnect !== false,
+    maxRetries: Math.round(asNumber(merged.maxRetries, DEFAULT_ROOM_MINECRAFT_SETTINGS.maxRetries, 0, 20)),
+    healthThreshold: Math.round(asNumber(merged.healthThreshold, DEFAULT_ROOM_MINECRAFT_SETTINGS.healthThreshold, 2, 18))
+  };
+}
+
 export function readRoomVisionSettings() {
   return normalizeRoomVisionSettings(readJson(ROOM_VISION_SETTINGS_KEY, clone(DEFAULT_ROOM_VISION_SETTINGS)));
+}
+
+export function readRoomMinecraftSettings() {
+  return normalizeRoomMinecraftSettings(readJson(ROOM_MINECRAFT_SETTINGS_KEY, clone(DEFAULT_ROOM_MINECRAFT_SETTINGS)));
 }
 
 export function writeRoomLLMSettings(settings) {
@@ -858,6 +896,12 @@ export function writeRoomVisionSettings(settings) {
   return normalized;
 }
 
+export function writeRoomMinecraftSettings(settings) {
+  const normalized = normalizeRoomMinecraftSettings(settings);
+  writeJson(ROOM_MINECRAFT_SETTINGS_KEY, normalized);
+  return normalized;
+}
+
 export function readRoomStudioSettings() {
   return {
     llm: readRoomLLMSettings(),
@@ -868,6 +912,7 @@ export function readRoomStudioSettings() {
     memory: readRoomMemorySettings(),
     music: readRoomMusicSettings(),
     bilibiliDanmaku: readRoomBilibiliDanmakuSettings(),
-    vision: readRoomVisionSettings()
+    vision: readRoomVisionSettings(),
+    minecraft: readRoomMinecraftSettings()
   };
 }

@@ -13,7 +13,8 @@
     "audit:yachiyo-vts-control": "node tools/vtube-studio/audit-yachiyo-vts-control.mjs",
     "install:vosk-model": "powershell.exe -ExecutionPolicy Bypass -File tools/asr/install-vosk-model.ps1",
     "install:vosk-python": "py -3.9 -m pip install vosk",
-    "start:netease-api": "node tools/music/netease-api-enhanced-service.mjs --port 3302 --host 127.0.0.1"
+    "start:netease-api": "node tools/music/netease-api-enhanced-service.mjs --port 3302 --host 127.0.0.1",
+    "start:minecraft-agent": "node tools/minecraft/minecraft-agent-service.mjs --port 3303"
   },
   "dependencies": {
     "@lucide/vue": "^1.17.0",
@@ -21,6 +22,12 @@
     "@vitejs/plugin-vue": "^6.0.6",
     "better-sqlite3": "^12.6.2",
     "blive-message-listener": "^0.5.5",
+    "minecraft-data": "^3.113.1",
+    "mineflayer": "^4.37.1",
+    "mineflayer-collectblock": "^1.6.0",
+    "mineflayer-pathfinder": "^2.4.5",
+    "mineflayer-tool": "^1.2.0",
+    "vec3": "^0.2.0",
     "vite": "^8.0.5",
     "vue": "^3.5.0"
   },

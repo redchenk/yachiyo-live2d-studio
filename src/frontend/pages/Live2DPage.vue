@@ -50,11 +50,13 @@ import {
   syncLive2DMusicSpeechDucking,
   warmupLive2DMusicPlayback
 } from '../services/room/live2dMusic';
+import { executeLive2DMinecraftCommand } from '../services/room/live2dMinecraft';
 import { yachiyoMusicAdapter } from '../services/room/yachiyoMusicAdapter';
 import {
   readRoomASRSettings,
   readRoomBilibiliDanmakuSettings,
   readRoomMusicSettings,
+  readRoomMinecraftSettings,
   writeRoomASRSettings
 } from '../services/room/roomSettings';
 import {
@@ -1089,6 +1091,28 @@ function hasPriorityAudience(entries = audienceQueue.value) {
   return entries.some((entry) => ['superchat', 'gift', 'guard'].includes(entry?.messageType));
 }
 
+let lastMinecraftDecisionAt = 0;
+
+async function executeMinecraftFromLLMResult(result, source = 'manual') {
+  if (!result?.minecraft) return null;
+  try {
+    const settings = readRoomMinecraftSettings();
+    if (source === 'live') {
+      if (!settings.autonomousPlay) return null;
+      if (result.minecraft.action !== 'stop' && Date.now() - lastMinecraftDecisionAt < settings.decisionIntervalMs) return null;
+      lastMinecraftDecisionAt = Date.now();
+    }
+    const actionResult = await executeLive2DMinecraftCommand(result.minecraft, { settings });
+    window.dispatchEvent(new CustomEvent('tsukuyomi:minecraft-action', { detail: actionResult }));
+    return actionResult;
+  } catch (error) {
+    window.dispatchEvent(new CustomEvent('tsukuyomi:minecraft-error', {
+      detail: { message: error?.message || 'Minecraft 动作执行失败' }
+    }));
+    return null;
+  }
+}
+
 function acceptLiveReplySpeech(text, audienceLines = []) {
   const audience = Array.isArray(audienceLines) ? audienceLines : [];
   return liveReplyRepetitionGuard.accept(text, {
@@ -1165,6 +1189,7 @@ async function performLLMAct(message, source = 'manual', options = {}) {
       requestedBy: options.requestedBy,
       audienceLines: options.audienceLines
     });
+    executeMinecraftFromLLMResult(result, source).catch(() => {});
     return { ...result, reply: visibleReply };
   } catch (error) {
     if (isLiveTurnOperationCurrent(options)) {
@@ -1532,10 +1557,13 @@ async function performStreamingLiveTurn(message, options = {}) {
     Promise.resolve(options.allowConcurrent ? firstPlaybackStartedReady : undefined)
       .then(() => {
         if (!isLiveTurnOperationCurrent(options)) return null;
-        return executeMusicFromLLMResult(finalResult, 'live', value, {
-          requestedBy: options.requestedBy,
-          audienceLines: options.audienceLines
-        });
+        return Promise.allSettled([
+          executeMusicFromLLMResult(finalResult, 'live', value, {
+            requestedBy: options.requestedBy,
+            audienceLines: options.audienceLines
+          }),
+          executeMinecraftFromLLMResult(finalResult, 'live')
+        ]);
       })
       .catch(() => {});
     const playbackDone = Promise.allSettled(playbackPromises).then(() => {
@@ -1607,6 +1635,10 @@ function resetLLMHistory() {
 
 function buildLiveDirectorPrompt(audienceLines, options = {}) {
   const songRequestsEnabled = readRoomMusicSettings().songRequestsEnabled !== false;
+  const minecraftSettings = readRoomMinecraftSettings();
+  const minecraftAutonomy = minecraftSettings.enabled &&
+    minecraftSettings.trustedServerAcknowledged &&
+    minecraftSettings.autonomousPlay;
   const chat = audienceLines.length
     ? audienceLines.map((line, index) => `${index + 1}. ${formatLive2DAudiencePromptEntry(line)}`).join('\n')
     : 'No new audience messages. Continue the show with a short autonomous streamer thought.';
@@ -1619,6 +1651,9 @@ function buildLiveDirectorPrompt(audienceLines, options = {}) {
     songRequestsEnabled
       ? 'Song requests are enabled. Use the music request queue for explicit viewer song requests.'
       : 'Song requests are disabled. Do not emit a music request or promise that a requested song was queued; briefly say song requests are closed only when directly asked.',
+    minecraftAutonomy
+      ? 'Minecraft autonomous play is enabled. Use the current MINECRAFT_JAVA_STATE to choose one useful safe action each turn when no urgent audience or safety concern takes priority.'
+      : 'Minecraft autonomous play is disabled. Set minecraft to null unless the host explicitly asks for a manual Minecraft action.',
     'If final music executes a request from one selected audience message, include music.requestIndex as that message’s 1-based number so the runtime can attach the trusted viewer name.',
     'Act like an autonomous AI VTuber streamer. Reply with 1-2 short spoken sentences and address only the one or two selected viewers.',
     'Say each selected viewer’s exact display name aloud. With two viewers, give each viewer a distinct short clause so both can clearly tell they were answered; do not silently merge unnamed viewers into a topic summary.',

@@ -24,6 +24,10 @@ import {
 } from './live2dMemory';
 import { buildLive2DVisionPrompt } from './live2dVision';
 import { normalizeLive2DMusicCommand } from './live2dMusic';
+import {
+  buildLive2DMinecraftPrompt,
+  normalizeLive2DMinecraftCommand
+} from './live2dMinecraft';
 import { normalizeLLMApiUrl, readRoomLLMSettings } from './roomSettings';
 import { readJson, writeJson } from './roomStorage';
 
@@ -878,6 +882,22 @@ function normalizeMusicFromPayload(data = {}) {
   return normalizeLive2DMusicCommand(data);
 }
 
+function normalizeMinecraftFromPayload(data = {}) {
+  if (!data || typeof data !== 'object') return null;
+  const sources = [
+    data.minecraft,
+    data.minecraft_action,
+    data.minecraftAction,
+    data.mc_action,
+    data.mcAction
+  ];
+  for (const source of sources) {
+    const command = normalizeLive2DMinecraftCommand(source);
+    if (command) return command;
+  }
+  return null;
+}
+
 export function parseLive2DControlPayload(rawText) {
   const jsonText = extractLabeledJsonObject(rawText) || extractJsonObject(rawText);
   try {
@@ -898,6 +918,7 @@ export function parseLive2DControlPayload(rawText) {
       caption,
       live2d,
       music: normalizeMusicFromPayload(data),
+      minecraft: normalizeMinecraftFromPayload(data),
       acknowledgedIndexes: normalizeAcknowledgedIndexes(data),
       memoryWrites: normalizeMemoryWritesFromPayload(data),
       raw: data
@@ -914,6 +935,7 @@ export function parseLive2DControlPayload(rawText) {
       caption,
       live2d: mergeBehaviorAndExplicitIntent(behaviorLive2D, inferredLive2D),
       music: null,
+      minecraft: null,
       acknowledgedIndexes: [],
       memoryWrites: [],
       raw: rawText
@@ -1307,7 +1329,7 @@ export function live2DControlSystemPrompt() {
     'Yachiyo is being tested as an autonomous AI VTuber streamer: keep her present, reactive, playful, and concise.',
     'Return exactly one JSON object. Do not use Markdown. Do not add prose outside JSON.',
     'JSON schema:',
-    `{"reply":"short visible reply","acknowledgedIndexes":[],"emotion":"${SEMANTIC_EMOTION_ID_LIST}","intensity":0.72,"actions":[{"type":"look_at_chat","duration":1.2},{"type":"smirk","duration":2.0},{"type":"head_tilt","side":"right","duration":1.5}],"interruptPolicy":{"mode":"blend","priority":4},"speech_style":{"speed":1.05,"pitch":0.08,"pause":"playful"},"music":null,"memory_writes":[]}`,
+    `{"reply":"short visible reply","acknowledgedIndexes":[],"emotion":"${SEMANTIC_EMOTION_ID_LIST}","intensity":0.72,"actions":[{"type":"look_at_chat","duration":1.2},{"type":"smirk","duration":2.0},{"type":"head_tilt","side":"right","duration":1.5}],"interruptPolicy":{"mode":"blend","priority":4},"speech_style":{"speed":1.05,"pitch":0.08,"pause":"playful"},"music":null,"minecraft":null,"memory_writes":[]}`,
     'The reply field must contain only natural dialogue. Never put stage directions, parenthesized action hints, asterisk actions, action labels, or pose descriptions in reply.',
     'The actions field is required and must contain at least 2 semantic actions. If the moment is calm, use look_at_chat + breathe.',
     'Actions must match the reply meaning and mood. Vary action combos between turns; do not repeat the same body action unless the dialogue specifically calls for it.',
@@ -1319,6 +1341,8 @@ export function live2DControlSystemPrompt() {
     'Music schema examples: {"action":"request","query":"song title artist"}, {"provider":"netease-cloud","action":"request","query":"song title artist"}, {"provider":"local-library","action":"request","query":"song title artist"}, {"action":"play_next","query":"song title artist"}, {"action":"skip"}, {"action":"pause"}, {"action":"resume"}, {"action":"stop"}, {"action":"queue"}. The runtime may use a local music library, NetEase Cloud Music, or Apple Music; never include tokens, cookies, or credentials.',
     'When the user names NetEase, 网易云, 163, or 云音乐, set music.provider to "netease-cloud". When they explicitly say local file/library, set provider to "local-library". Otherwise omit provider and let Settings choose.',
     'For every audience or conversational song request, put {"action":"request","query":"song title artist"} in music JSON so it joins the FIFO queue. This includes 点歌, 来一首, 加歌, 排歌, 立即播放, 现在放, 给我放, 我要听, 想听, 听一下, 听一首, and 放一首. Never use play_now for audience text; play_now is reserved for a host pressing an explicit manual control outside the LLM. If the audience explicitly asks to put it next, use play_next, which must not interrupt the current track.',
+    'Optional minecraft controls one safe Minecraft Java action. Set it to null unless MINECRAFT_JAVA_STATE is present and an action is useful. Allowed actions: observe, move, follow, collect, craft, place, attack, chat, stop.',
+    'Issue at most one Minecraft action per turn. Prefer observe before uncertain actions, stop when health is low or an action is unsafe, use exact registry names from state, never send slash commands, never reveal credentials, and never invent success before the next state confirms it.',
     'Use duration in seconds. Overlapping actions are allowed by repeating similar delay values; omit delay for a natural staggered performance.',
     'Only when a durable, low-risk memory is clearly confirmed, include memory_writes items with scope, type, title, text, optional episode, facts, foresight, importance, confidence, and tags. Otherwise use an empty array.',
     'Memory facts must be atomic and verifiable. Foresight must be conservative, evidence-based, and include confidence when useful.',
@@ -1337,7 +1361,7 @@ export function live2DStreamingControlSystemPrompt() {
     'BEAT: {"emotion":"happy","intensity":0.68,"actions":[{"type":"look_at_chat","duration":0.9},{"type":"smile","duration":1.2}],"speech_style":{"speed":1.06,"pitch":0.06,"pause":"bright"}}',
     'VOICE: one complete natural Japanese phrase or sentence for GPT-SoVITS, normally 12-32 Japanese characters.',
     'CAPTION: its complete matching natural Simplified Chinese subtitle; it must never be empty.',
-    `After all sentences output one line: CONTROL: {"reply":"all Japanese VOICE text","caption":"all Chinese CAPTION text","acknowledgedIndexes":[],"emotion":"${SEMANTIC_EMOTION_ID_LIST}","intensity":0.72,"actions":[{"type":"look_at_chat","duration":1.2},{"type":"smile","duration":1.2}],"interruptPolicy":{"mode":"blend","priority":4},"speech_style":{"speed":1.05,"pitch":0.08,"pause":"playful"},"music":null,"memory_writes":[]}`,
+    `After all sentences output one line: CONTROL: {"reply":"all Japanese VOICE text","caption":"all Chinese CAPTION text","acknowledgedIndexes":[],"emotion":"${SEMANTIC_EMOTION_ID_LIST}","intensity":0.72,"actions":[{"type":"look_at_chat","duration":1.2},{"type":"smile","duration":1.2}],"interruptPolicy":{"mode":"blend","priority":4},"speech_style":{"speed":1.05,"pitch":0.08,"pause":"playful"},"music":null,"minecraft":null,"memory_writes":[]}`,
     'Emit the first compact BEAT and VOICE immediately. Do not wait for CAPTION or CONTROL before emitting VOICE.',
     'VOICE contains only Japanese dialogue. CAPTION contains only matching Simplified Chinese dialogue. Use exactly the same viewer display names in both.',
     'Do not output tiny filler-only VOICE chunks. Do not quote a viewer message verbatim; respond to its meaning.',
@@ -1346,6 +1370,7 @@ export function live2DStreamingControlSystemPrompt() {
     'CONTROL reply and caption must exactly concatenate the emitted VOICE and CAPTION lines. Include every actually addressed 1-based audience index in acknowledgedIndexes, especially every gift, superchat, or guard purchase.',
     'For any explicit song request, including 点歌, 我要听, 想听, 听一首, 来一首, 唱一首, or 放一首, set music to {"action":"request","query":"song title artist"}; FIFO requests must not interrupt the current track. Use play_next only when explicitly requested.',
     'If NetEase/网易云/163/云音乐 is named, add "provider":"netease-cloud". Never include a URL, token, cookie, or credential.',
+    'When MINECRAFT_JAVA_STATE is present, CONTROL may include exactly one safe minecraft action: observe, move, follow, collect, craft, place, attack, chat, or stop. Otherwise set minecraft to null. Never use slash commands or claim an unconfirmed result.',
     'Use memory_writes only for durable, low-risk, verified facts; otherwise use []. Never store secrets, raw chat dumps, guesses, or sensitive personal data.'
   ].join('\n');
 }
@@ -1369,7 +1394,7 @@ export function live2DCompactRecoverySystemPrompt() {
     'Output exactly three single lines and no Markdown:',
     'VOICE: one natural Japanese sentence that names the selected viewers and responds without repeating their messages verbatim.',
     'CAPTION: one matching natural Simplified Chinese subtitle using the same viewer names.',
-    'CONTROL: {"reply":"same Japanese sentence","caption":"same Chinese subtitle","acknowledgedIndexes":[1],"emotion":"neutral","actions":[{"type":"look_at_chat"},{"type":"smile"}],"music":null,"memory_writes":[]}',
+    'CONTROL: {"reply":"same Japanese sentence","caption":"same Chinese subtitle","acknowledgedIndexes":[1],"emotion":"neutral","actions":[{"type":"look_at_chat"},{"type":"smile"}],"music":null,"minecraft":null,"memory_writes":[]}',
     'For a gift, thank the viewer. Include every selected 1-based index in acknowledgedIndexes.',
     'Never output action hints, private data, raw chat text, or explanations.'
   ].join('\n');
@@ -1386,11 +1411,13 @@ async function requestLive2DControlInternal(message, options = {}, historyReserv
   throwIfLive2DRequestAborted(signal);
   const history = readLive2DLLMHistory();
   const memoryContext = options.memoryContext || {};
-  const memoryPrompt = await buildLive2DMemoryPrompt(message, memoryContext);
+  const [memoryPrompt, visionContext, minecraftPrompt] = await Promise.all([
+    buildLive2DMemoryPrompt(message, memoryContext),
+    buildLive2DVisionPrompt(),
+    buildLive2DMinecraftPrompt()
+  ]);
   throwIfLive2DRequestAborted(signal);
-  const visionContext = await buildLive2DVisionPrompt();
-  throwIfLive2DRequestAborted(signal);
-  const systemPrompt = [yachiyoCorePersonalityPrompt(), settings.systemPrompt, memoryPrompt, visionContext.prompt, live2DControlSystemPrompt()].filter(Boolean).join('\n\n');
+  const systemPrompt = [yachiyoCorePersonalityPrompt(), settings.systemPrompt, memoryPrompt, visionContext.prompt, minecraftPrompt, live2DControlSystemPrompt()].filter(Boolean).join('\n\n');
   let rawReply = '';
 
   if (settings.useProxy) {
@@ -1475,15 +1502,17 @@ async function requestLive2DControlStreamInternal(message, handlers = {}, histor
   throwIfLive2DRequestAborted(signal);
   const history = handlers.fastRecovery ? readLive2DLLMHistory().slice(-2) : readLive2DLLMHistory();
   const memoryContext = handlers.memoryContext || {};
-  const memoryPrompt = handlers.fastRecovery ? '' : await buildLive2DMemoryPrompt(message, memoryContext);
-  throwIfLive2DRequestAborted(signal);
-  const visionContext = handlers.fastRecovery
-    ? { prompt: '', payload: null }
-    : await buildLive2DVisionPrompt();
+  const [memoryPrompt, visionContext, minecraftPrompt] = handlers.fastRecovery
+    ? ['', { prompt: '', payload: null }, '']
+    : await Promise.all([
+        buildLive2DMemoryPrompt(message, memoryContext),
+        buildLive2DVisionPrompt(),
+        buildLive2DMinecraftPrompt()
+      ]);
   throwIfLive2DRequestAborted(signal);
   const systemPrompt = handlers.fastRecovery
     ? live2DCompactRecoverySystemPrompt()
-    : [yachiyoCorePersonalityPrompt(), settings.systemPrompt, memoryPrompt, visionContext.prompt, live2DStreamingControlSystemPrompt()].filter(Boolean).join('\n\n');
+    : [yachiyoCorePersonalityPrompt(), settings.systemPrompt, memoryPrompt, visionContext.prompt, minecraftPrompt, live2DStreamingControlSystemPrompt()].filter(Boolean).join('\n\n');
   const sentenceEmitter = createReplySentenceEmitter(handlers);
   let rawReply = '';
 
@@ -1739,6 +1768,7 @@ function buildLocalLive2DRecovery(message, handlers = {}) {
     caption,
     live2d,
     music: null,
+    minecraft: null,
     acknowledgedIndexes,
     memoryWrites: [],
     raw,
@@ -1780,6 +1810,7 @@ function partialStreamingRecoveryResult(message, handlers, sentences) {
     caption,
     live2d: sentences.at(-1)?.live2d || inferLive2DIntentFromText(reply),
     music: null,
+    minecraft: null,
     acknowledgedIndexes: audienceLines.map((_line, index) => index + 1),
     memoryWrites: [],
     raw: { recovery: 'partial-stream' }

@@ -6,6 +6,7 @@ import { readRoomLLMSettings, readRoomTTSSettings } from '../../src/frontend/ser
 import StudioSettingsPanel from './components/StudioSettingsPanel.vue';
 import MusicTestPage from './components/MusicTestPage.vue';
 import BilibiliDanmakuPage from './components/BilibiliDanmakuPage.vue';
+import MinecraftPage from './components/MinecraftPage.vue';
 
 function shouldOpenSettingsOnBoot() {
   const llm = readRoomLLMSettings();
@@ -19,7 +20,8 @@ const railItems = [
   { id: 'live', label: '直播', icon: 'home' },
   { id: 'items', label: 'Items', icon: 'package' },
   { id: 'danmaku', label: 'Danmaku', icon: 'message' },
-  { id: 'music', label: '音乐', icon: 'music' }
+  { id: 'music', label: '音乐', icon: 'music' },
+  { id: 'minecraft', label: 'MC', icon: 'gamepad' }
 ];
 
 onMounted(() => {
@@ -40,6 +42,7 @@ onUnmounted(() => {
     />
     <BilibiliDanmakuPage v-if="activeView === 'danmaku'" />
     <MusicTestPage v-if="activeView === 'music'" />
+    <MinecraftPage v-if="activeView === 'minecraft'" />
     <aside class="studio-left-rail" aria-label="Studio navigation">
       <div class="studio-rail-brand">
         <span>Y</span>

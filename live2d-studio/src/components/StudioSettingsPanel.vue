@@ -5,6 +5,7 @@ import {
   DEFAULT_ROOM_LLM_SETTINGS,
   DEFAULT_ROOM_ASR_SETTINGS,
   DEFAULT_ROOM_MEMORY_SETTINGS,
+  DEFAULT_ROOM_MINECRAFT_SETTINGS,
   DEFAULT_ROOM_MODEL_SETTINGS,
   DEFAULT_ROOM_MUSIC_SETTINGS,
   DEFAULT_ROOM_TTS_SETTINGS,
@@ -19,6 +20,7 @@ import {
   normalizeRoomLLMSettings,
   normalizeRoomASRSettings,
   normalizeRoomMemorySettings,
+  normalizeRoomMinecraftSettings,
   normalizeRoomModelSettings,
   normalizeRoomMusicSettings,
   normalizeRoomTTSSettings,
@@ -27,6 +29,7 @@ import {
   readRoomLLMSettings,
   readRoomASRSettings,
   readRoomMemorySettings,
+  readRoomMinecraftSettings,
   readRoomModelSettings,
   readRoomMusicSettings,
   readRoomTTSSettings,
@@ -35,12 +38,14 @@ import {
   writeRoomLLMSettings,
   writeRoomASRSettings,
   writeRoomMemorySettings,
+  writeRoomMinecraftSettings,
   writeRoomModelSettings,
   writeRoomMusicSettings,
   writeRoomTTSSettings,
   writeRoomVisionSettings,
   writeRoomVTubeStudioSettings
 } from '@frontend/services/room/roomSettings';
+import { configureLive2DMinecraft } from '@frontend/services/room/live2dMinecraft';
 import {
   authorizeLive2DMusic,
   unauthorizeLive2DMusic
@@ -70,6 +75,7 @@ const tabs = [
   { id: 'vts', label: 'VTS' },
   { id: 'vision', label: 'Vision' },
   { id: 'music', label: 'Music' },
+  { id: 'minecraft', label: 'Minecraft' },
   { id: 'memory', label: 'Memory' }
 ];
 
@@ -146,6 +152,7 @@ const vts = reactive(readRoomVTubeStudioSettings());
 const music = reactive(readRoomMusicSettings());
 const vision = reactive(readRoomVisionSettings());
 const memory = reactive(readRoomMemorySettings());
+const minecraft = reactive(readRoomMinecraftSettings());
 
 let statusTimer = 0;
 
@@ -214,6 +221,7 @@ function reloadSettings() {
   Object.assign(music, readRoomMusicSettings());
   Object.assign(vision, readRoomVisionSettings());
   Object.assign(memory, readRoomMemorySettings());
+  Object.assign(minecraft, readRoomMinecraftSettings());
   setStatus('Reloaded');
 }
 
@@ -232,6 +240,8 @@ function resetCurrentTab() {
     Object.assign(music, normalizeRoomMusicSettings(DEFAULT_ROOM_MUSIC_SETTINGS));
   } else if (activeTab.value === 'vision') {
     Object.assign(vision, normalizeRoomVisionSettings(DEFAULT_ROOM_VISION_SETTINGS));
+  } else if (activeTab.value === 'minecraft') {
+    Object.assign(minecraft, normalizeRoomMinecraftSettings(DEFAULT_ROOM_MINECRAFT_SETTINGS));
   } else {
     Object.assign(memory, normalizeRoomMemorySettings(DEFAULT_ROOM_MEMORY_SETTINGS));
   }
@@ -297,6 +307,7 @@ function saveSettings() {
   const savedMusic = writeRoomMusicSettings(music);
   const savedVision = writeRoomVisionSettings(vision);
   const savedMemory = writeRoomMemorySettings(memory);
+  const savedMinecraft = writeRoomMinecraftSettings(minecraft);
 
   Object.assign(llm, savedLLM);
   Object.assign(tts, savedTTS);
@@ -306,9 +317,13 @@ function saveSettings() {
   Object.assign(music, savedMusic);
   Object.assign(vision, savedVision);
   Object.assign(memory, savedMemory);
+  Object.assign(minecraft, savedMinecraft);
   window.dispatchEvent(new CustomEvent('tsukuyomi:studio-settings-saved', {
-    detail: { llm: savedLLM, tts: savedTTS, asr: savedASR, model: savedModel, vts: savedVTS, music: savedMusic, vision: savedVision, memory: savedMemory }
+    detail: { llm: savedLLM, tts: savedTTS, asr: savedASR, model: savedModel, vts: savedVTS, music: savedMusic, vision: savedVision, memory: savedMemory, minecraft: savedMinecraft }
   }));
+  if (savedMinecraft.enabled || activeTab.value === 'minecraft') {
+    configureLive2DMinecraft(savedMinecraft).catch((error) => setStatus(error?.message || 'Minecraft 配置失败'));
+  }
   setStatus('Saved');
 }
 
@@ -994,6 +1009,63 @@ onUnmounted(() => {
             Disconnect
           </button>
         </div>
+      </section>
+
+      <section v-else-if="activeTab === 'minecraft'" class="studio-settings-section">
+        <label class="studio-check-row">
+          <input v-model="minecraft.enabled" type="checkbox">
+          <span>Enable Minecraft Java agent</span>
+        </label>
+        <label class="studio-check-row studio-wide-field">
+          <input v-model="minecraft.trustedServerAcknowledged" type="checkbox">
+          <span>I confirm this is my trusted/private server</span>
+        </label>
+        <label>
+          <span>Server Host</span>
+          <input v-model="minecraft.host" type="text" spellcheck="false" placeholder="127.0.0.1">
+        </label>
+        <label>
+          <span>Server Port</span>
+          <input v-model.number="minecraft.port" type="number" min="1" max="65535" step="1">
+        </label>
+        <label>
+          <span>Bot Username</span>
+          <input v-model="minecraft.username" type="text" spellcheck="false" placeholder="Yachiyo">
+        </label>
+        <label>
+          <span>Authentication</span>
+          <select v-model="minecraft.auth">
+            <option value="offline">Offline / local server</option>
+            <option value="microsoft">Microsoft account</option>
+          </select>
+        </label>
+        <label>
+          <span>Game Version</span>
+          <input v-model="minecraft.version" type="text" spellcheck="false" placeholder="Auto detect">
+        </label>
+        <label class="studio-check-row">
+          <input v-model="minecraft.autoReconnect" type="checkbox">
+          <span>Auto reconnect</span>
+        </label>
+        <label class="studio-check-row">
+          <input v-model="minecraft.autonomousPlay" type="checkbox">
+          <span>LLM autonomous play</span>
+        </label>
+        <label>
+          <span>Decision Interval (ms)</span>
+          <input v-model.number="minecraft.decisionIntervalMs" type="number" min="3000" max="30000" step="500">
+        </label>
+        <label>
+          <span>Reconnect Attempts</span>
+          <input v-model.number="minecraft.maxRetries" type="number" min="0" max="20" step="1">
+        </label>
+        <label>
+          <span>Low-health Stop</span>
+          <input v-model.number="minecraft.healthThreshold" type="number" min="2" max="18" step="1">
+        </label>
+        <p class="studio-settings-note studio-wide-field">
+          Microsoft 登录使用设备码并缓存在本机，不会交给 LLM。代理仅接受白名单动作，不执行聊天斜杠命令或任意代码。
+        </p>
       </section>
 
       <section v-else class="studio-settings-section studio-memory-settings-section">
