@@ -2,6 +2,10 @@ import { yachiyoCorePersonalityPrompt } from '../../constants/room/yachiyoPerson
 import { normalizeLive2DMinecraftCommand } from './live2dMinecraft';
 import { normalizeLLMApiUrl, readRoomLLMSettings } from './roomSettings';
 import { normalizeMinecraftPlannerDecision } from './live2dMinecraftAutonomy';
+import {
+  evaluateMinecraftCurriculum,
+  minecraftSkillPromptSummary
+} from '../../../shared/minecraftSurvivalSkills.mjs';
 
 const PLANNER_TIMEOUT_MS = 45_000;
 
@@ -54,54 +58,47 @@ function nearbyText(items = [], limit = 16) {
   }).join(', ') || 'none';
 }
 
-function itemCount(state, name) {
-  return Number((state.inventory || []).find((item) => item.name === name)?.count || 0);
-}
-
 function firstInventory(state, pattern) {
   return (state.inventory || []).find((item) => pattern.test(item.name));
-}
-
-function firstBlock(state, pattern) {
-  return (state.nearbyBlocks || []).find((block) => pattern.test(block.name));
 }
 
 export function fallbackLive2DMinecraftPlan(context = {}) {
   const state = context.status?.state || {};
   if (state.isSleeping) return normalizeMinecraftPlannerDecision({ thought: 'wait until morning', action: null, nextDelayMs: 6000 });
-  const position = state.position || { x: 0, y: 64, z: 0 };
+  const curriculum = evaluateMinecraftCurriculum(state);
   if (Number(state.food) < 15 && firstInventory(state, /(?:apple|bread|beef|porkchop|chicken|mutton|rabbit|potato|carrot|berries|melon|cod|salmon|stew)$/)) {
     return normalizeMinecraftPlannerDecision({ thought: 'low food fallback', action: { action: 'eat' }, nextDelayMs: 1800 });
   }
-  const log = firstInventory(state, /_(?:log|stem)$/);
-  const visibleLog = firstBlock(state, /_(?:log|stem)$/);
-  if (!log) {
-    return normalizeMinecraftPlannerDecision({
-      thought: visibleLog ? 'collect visible wood' : 'search for wood',
-      action: visibleLog
-        ? { action: 'collect', block: visibleLog.name, count: 4, radius: 32 }
-        : { action: 'explore', radius: 24 },
-      nextDelayMs: 2200
-    });
-  }
-  const plankName = log.name.replace(/_(?:log|stem)$/, (suffix) => suffix === '_stem' ? '_planks' : '_planks');
-  const planks = firstInventory(state, /_planks$/);
-  if (!planks) return normalizeMinecraftPlannerDecision({ thought: 'make planks', action: { action: 'craft', item: plankName, count: 4 }, nextDelayMs: 1500 });
-  if (!itemCount(state, 'crafting_table') && !firstBlock(state, /^crafting_table$/)) {
-    return normalizeMinecraftPlannerDecision({ thought: 'make crafting table', action: { action: 'craft', item: 'crafting_table', count: 1 }, nextDelayMs: 1500 });
-  }
-  if (itemCount(state, 'crafting_table') && !firstBlock(state, /^crafting_table$/)) {
-    return normalizeMinecraftPlannerDecision({
-      thought: 'place crafting table',
-      action: { action: 'place', block: 'crafting_table', x: Math.floor(position.x) + 1, y: Math.floor(position.y), z: Math.floor(position.z) },
-      nextDelayMs: 1500
-    });
-  }
-  if (!itemCount(state, 'stick')) return normalizeMinecraftPlannerDecision({ thought: 'make sticks', action: { action: 'craft', item: 'stick', count: 4 }, nextDelayMs: 1500 });
-  if (!firstInventory(state, /_(?:pickaxe)$/)) return normalizeMinecraftPlannerDecision({ thought: 'make first pickaxe', action: { action: 'craft', item: 'wooden_pickaxe', count: 1 }, nextDelayMs: 1800 });
-  const visibleStone = firstBlock(state, /^(?:stone|cobblestone|cobbled_deepslate)$/);
-  if (visibleStone && !itemCount(state, 'cobblestone')) return normalizeMinecraftPlannerDecision({ thought: 'collect stone', action: { action: 'collect', block: visibleStone.name, count: 8, radius: 32 }, nextDelayMs: 2200 });
-  if (itemCount(state, 'cobblestone') >= 3 && !firstInventory(state, /^stone_pickaxe$/)) return normalizeMinecraftPlannerDecision({ thought: 'upgrade pickaxe', action: { action: 'craft', item: 'stone_pickaxe', count: 1 }, nextDelayMs: 1800 });
+  if (!curriculum.bootstrapComplete) return normalizeMinecraftPlannerDecision({
+    thought: `run verified survival curriculum at ${curriculum.stage}`,
+    progress: `${curriculum.completedCount}/${curriculum.totalCount} survival milestones complete`,
+    action: { action: 'skill', skill: 'bootstrap_survival' },
+    nextDelayMs: 1500
+  });
+  if (Number(state.food) < 14) return normalizeMinecraftPlannerDecision({
+    thought: 'secure a practical food reserve',
+    action: { action: 'skill', skill: 'secure_food' },
+    nextDelayMs: 1800
+  });
+  if (!state.shelterPosition && /(?:庇护|基地|房子|住所|shelter|base|house|home)/i.test(String(context.goal || ''))) return normalizeMinecraftPlannerDecision({
+    thought: 'establish the persistent shelter requested by the goal',
+    action: { action: 'skill', skill: 'build_shelter' },
+    nextDelayMs: 1800
+  });
+  if (curriculum.foodReserve < 3) return normalizeMinecraftPlannerDecision({
+    thought: 'secure a practical food reserve after establishing core progression',
+    action: { action: 'skill', skill: 'secure_food' },
+    nextDelayMs: 1800
+  });
+  const requestedResource = [
+    [/(?:钻石|diamond)/i, 'diamond'], [/(?:铁|iron)/i, 'raw_iron'], [/(?:煤|coal)/i, 'coal'],
+    [/(?:金|gold)/i, 'raw_gold'], [/(?:圆石|cobblestone)/i, 'cobblestone'], [/(?:木头|log|wood)/i, 'log']
+  ].find(([pattern]) => pattern.test(String(context.goal || '')))?.[1];
+  if (requestedResource) return normalizeMinecraftPlannerDecision({
+    thought: `gather the resource requested by the persistent goal: ${requestedResource}`,
+    action: { action: 'skill', skill: 'gather_resource', target: requestedResource, count: 8 },
+    nextDelayMs: 1800
+  });
   return normalizeMinecraftPlannerDecision({ thought: 'continue scouting', action: { action: 'explore', radius: 28 }, nextDelayMs: 2400 });
 }
 
@@ -118,6 +115,7 @@ export function buildLive2DMinecraftPlannerPrompt(context = {}) {
     `nearby_blocks=${nearbyText(state.nearbyBlocks)}`,
     `nearby_players=${nearbyText(state.nearby?.players, 8)}`,
     `nearby_entities=${nearbyText(state.nearby?.entities, 12)}`,
+    minecraftSkillPromptSummary(state, state.skillMemory || {}),
     `last_decision=${JSON.stringify(context.lastDecision || null)}`,
     `last_outcome=${JSON.stringify(context.lastOutcome || state.lastAction || null)}`,
     `recent_outcomes=${JSON.stringify(context.outcomeHistory || [])}`,
@@ -142,11 +140,16 @@ export function live2DMinecraftPlannerSystemPrompt() {
     '{"action":"equip","item":"stone_pickaxe","destination":"auto"}',
     '{"action":"sleep"}',
     '{"action":"smelt","item":"raw_iron","fuel":"coal","count":3}',
+    '{"action":"skill","skill":"bootstrap_survival"}',
+    '{"action":"skill","skill":"secure_food"}',
+    '{"action":"skill","skill":"build_shelter"}',
+    '{"action":"skill","skill":"gather_resource","target":"diamond","count":8}',
     '{"action":"attack","target":"zombie","radius":8}',
     '{"action":"follow","player":"name","distance":3}',
     '{"action":"chat","message":"safe text without slash commands"}',
     '{"action":"stop"}',
     'Survival priorities: stay alive first; eat when food is low; avoid combat while weak; obtain logs, planks, crafting table, sticks and tools; then food, stone, shelter, bed, furnace, iron and goal-specific progress.',
+    'Prefer a SAFE_SKILL_LIBRARY skill over individual primitive actions for any multi-step objective. Skills own their prerequisite chain, verification, retry budget and interruption handling. Use primitive actions only for a genuinely single-step situation. After bootstrap, establish food and a shelter before risky long-range exploration unless the persistent goal says otherwise.',
     'Use exact Minecraft registry names visible in state. Place blocks only at nearby coordinates based on current position. Explore when required resources are not visible.',
     'After a failure, do not repeat the identical action blindly. Inspect the error and choose observe, explore, a prerequisite, another target, or a safer action.',
     'Do not attack players. Do not use slash commands. Do not invent items or claim success before outcome confirms it. Never output code.',

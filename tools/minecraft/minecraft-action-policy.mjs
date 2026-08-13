@@ -5,12 +5,17 @@ export const MINECRAFT_ACTION_TYPES = Object.freeze([
   'collect',
   'craft',
   'place',
+  'place_near',
+  'construct_shelter',
+  'mine_down',
+  'go_surface',
   'attack',
   'explore',
   'eat',
   'equip',
   'sleep',
   'smelt',
+  'skill',
   'chat',
   'stop'
 ]);
@@ -94,6 +99,21 @@ export function normalizeMinecraftAction(input = {}) {
       count: integer(source.count, 1, 1, 16)
     };
   }
+  if (action === 'skill') {
+    const skill = text(source.skill || source.name, 48).toLowerCase();
+    if (!['bootstrap_survival', 'secure_food', 'build_shelter', 'gather_resource'].includes(skill)) {
+      throw new Error(`Unsupported Minecraft skill: ${skill || 'empty'}.`);
+    }
+    const normalized = { action, skill };
+    if (skill === 'gather_resource') {
+      normalized.target = safeName(source.target || source.item || source.block, 'skill target');
+      normalized.count = integer(source.count, 8, 1, 64);
+    }
+    return normalized;
+  }
+  if (action === 'construct_shelter') return { action, block: safeName(source.block || source.item, 'building block') };
+  if (action === 'mine_down') return { action, depth: integer(source.depth || source.distance, 8, 1, 24) };
+  if (action === 'go_surface') return { action };
   if (action === 'place') {
     return {
       action,
@@ -101,6 +121,13 @@ export function normalizeMinecraftAction(input = {}) {
       x: finite(source.x, 0, -30_000_000, 30_000_000),
       y: finite(source.y, 64, -64, 512),
       z: finite(source.z, 0, -30_000_000, 30_000_000)
+    };
+  }
+  if (action === 'place_near') {
+    return {
+      action,
+      block: safeName(source.block || source.blockType || source.item, 'block'),
+      radius: integer(source.radius, 4, 2, 12)
     };
   }
   if (action === 'attack') {

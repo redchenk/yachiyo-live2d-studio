@@ -16,17 +16,13 @@ const {
 const context = (state) => ({ goal: 'survive', status: { state } });
 const base = { phase: 'ready', position: { x: 0, y: 64, z: 0 }, health: 20, food: 20, inventory: [], nearbyBlocks: [] };
 
-assert.deepEqual(fallbackLive2DMinecraftPlan(context(base)).action, { action: 'explore', radius: 24 });
-assert.deepEqual(fallbackLive2DMinecraftPlan(context({ ...base, nearbyBlocks: [{ name: 'oak_log', x: 4, y: 64, z: 3 }] })).action, {
-  action: 'collect', block: 'oak_log', count: 4, radius: 32
-});
-assert.deepEqual(fallbackLive2DMinecraftPlan(context({ ...base, inventory: [{ name: 'oak_log', count: 4 }] })).action, {
-  action: 'craft', item: 'oak_planks', count: 4
-});
+for (const startingState of [base, { ...base, nearbyBlocks: [{ name: 'oak_log', x: 4, y: 64, z: 3 }] }, { ...base, inventory: [{ name: 'oak_log', count: 4 }] }]) {
+  assert.deepEqual(fallbackLive2DMinecraftPlan(context(startingState)).action, { action: 'skill', skill: 'bootstrap_survival' });
+}
 assert.deepEqual(fallbackLive2DMinecraftPlan(context({ ...base, food: 10, inventory: [{ name: 'bread', count: 1 }] })).action, { action: 'eat' });
 
 const prompt = live2DMinecraftPlannerSystemPrompt();
-for (const action of ['explore', 'eat', 'equip', 'sleep', 'smelt']) assert.ok(prompt.includes(`"action":"${action}"`));
+for (const action of ['explore', 'eat', 'equip', 'sleep', 'smelt', 'skill']) assert.ok(prompt.includes(`"action":"${action}"`));
 assert.match(prompt, /persistent goal/i);
 assert.match(buildLive2DMinecraftPlannerPrompt(context(base)), /CURRENT_GOAL/);
 await server.close();

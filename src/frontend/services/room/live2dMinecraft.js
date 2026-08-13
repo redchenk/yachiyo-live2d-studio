@@ -2,8 +2,8 @@ import { readRoomMinecraftSettings } from './roomSettings';
 import { readLatestLive2DMinecraftAutonomyState } from './live2dMinecraftAutonomy';
 
 export const LIVE2D_MINECRAFT_ACTIONS = Object.freeze([
-  'observe', 'move', 'follow', 'collect', 'craft', 'place', 'attack',
-  'explore', 'eat', 'equip', 'sleep', 'smelt', 'chat', 'stop'
+  'observe', 'move', 'follow', 'collect', 'craft', 'place', 'place_near', 'construct_shelter', 'mine_down', 'go_surface', 'attack',
+  'explore', 'eat', 'equip', 'sleep', 'smelt', 'skill', 'chat', 'stop'
 ]);
 
 const ACTION_SET = new Set(LIVE2D_MINECRAFT_ACTIONS);
@@ -57,7 +57,21 @@ export function normalizeLive2DMinecraftCommand(input = {}) {
     fuel: name(source.fuel || 'coal', '燃料名'),
     count: Math.round(number(source.count, 1, 1, 16))
   };
+  if (action === 'skill') {
+    const skill = clipped(source.skill || source.name, 48).toLowerCase();
+    if (!['bootstrap_survival', 'secure_food', 'build_shelter', 'gather_resource'].includes(skill)) throw new Error(`不支持的 Minecraft 技能：${skill || '空'}`);
+    const normalized = { action, skill };
+    if (skill === 'gather_resource') {
+      normalized.target = name(source.target || source.item || source.block, '技能目标');
+      normalized.count = Math.round(number(source.count, 8, 1, 64));
+    }
+    return normalized;
+  }
   if (action === 'place') return { action, block: name(source.block || source.blockType || source.item, '方块名'), x: number(source.x, 0, -30_000_000, 30_000_000), y: number(source.y, 64, -64, 512), z: number(source.z, 0, -30_000_000, 30_000_000) };
+  if (action === 'place_near') return { action, block: name(source.block || source.blockType || source.item, '方块名'), radius: Math.round(number(source.radius, 4, 2, 12)) };
+  if (action === 'construct_shelter') return { action, block: name(source.block || source.item, '建筑方块') };
+  if (action === 'mine_down') return { action, depth: Math.round(number(source.depth || source.distance, 8, 1, 24)) };
+  if (action === 'go_surface') return { action };
   if (action === 'attack') return { action, target: name(source.target || source.entity || source.mob, '目标'), radius: Math.round(number(source.radius, 8, 2, 16)) };
   const message = clipped(source.message || source.text, 180);
   if (!message || message.startsWith('/')) return null;
@@ -150,7 +164,7 @@ export async function buildLive2DMinecraftPrompt() {
       `nearby_blocks=${compactList(state.nearbyBlocks, (block) => `${block.name}@${block.x},${block.y},${block.z}`, 12)}`,
       `nearby_players=${players}`,
       `nearby_entities=${entities}`,
-      `active_task=${state.activeTask?.action?.action || 'none'}; queued=${state.taskQueueDepth || 0}`
+      `active_task=${state.activeTask?.action?.action || 'none'}; active_skill=${state.activeSkill?.skill || 'none'}:${state.activeSkill?.stage || 'idle'}; skill_step=${state.activeSkill?.step || 0}; queued=${state.taskQueueDepth || 0}`
     ].join('\n');
   } catch (error) {
     return `[MINECRAFT_JAVA_STATE]\nphase=unavailable; error=${clipped(error?.message, 160)}`;

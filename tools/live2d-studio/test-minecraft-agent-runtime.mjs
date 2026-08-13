@@ -18,6 +18,15 @@ assert.deepEqual(normalizeMinecraftAction({ action: 'equip', item: 'iron helmet'
 assert.deepEqual(normalizeMinecraftAction({ action: 'smelt', item: 'raw_iron', fuel: 'charcoal', count: 99 }), {
   action: 'smelt', item: 'raw_iron', fuel: 'charcoal', count: 16
 });
+assert.deepEqual(normalizeMinecraftAction({ action: 'skill', skill: 'gather_resource', target: 'coal', count: 99 }), {
+  action: 'skill', skill: 'gather_resource', target: 'coal', count: 64
+});
+assert.deepEqual(normalizeMinecraftAction({ action: 'place_near', block: 'crafting table', radius: 99 }), {
+  action: 'place_near', block: 'crafting_table', radius: 12
+});
+assert.deepEqual(normalizeMinecraftAction({ action: 'mine_down', depth: 999 }), { action: 'mine_down', depth: 24 });
+assert.deepEqual(normalizeMinecraftAction({ action: 'construct_shelter', block: 'oak planks' }), { action: 'construct_shelter', block: 'oak_planks' });
+assert.throws(() => normalizeMinecraftAction({ action: 'skill', skill: 'write_code' }), /unsupported minecraft skill/i);
 assert.equal(normalizeMinecraftConfig({ auth: 'anything', port: 99999 }).auth, 'offline');
 assert.equal(normalizeMinecraftConfig({ auth: 'microsoft', port: 99999 }).port, 65535);
 
