@@ -52,7 +52,8 @@ import {
 } from '../services/room/live2dMusic';
 import {
   executeLive2DMinecraftCommand,
-  readLive2DMinecraftStatus
+  readLive2DMinecraftStatus,
+  readLive2DMinecraftTask
 } from '../services/room/live2dMinecraft';
 import { createLive2DMinecraftAutonomyController } from '../services/room/live2dMinecraftAutonomy';
 import { requestLive2DMinecraftPlan } from '../services/room/live2dMinecraftPlanner';
@@ -231,6 +232,7 @@ const minecraftAutonomyState = ref(null);
 const minecraftAutonomyController = createLive2DMinecraftAutonomyController({
   readSettings: readRoomMinecraftSettings,
   readStatus: readLive2DMinecraftStatus,
+  readTaskStatus: readLive2DMinecraftTask,
   plan: requestLive2DMinecraftPlan,
   execute: executeLive2DMinecraftCommand,
   shouldYield: () => llmState.value.loading || liveLlmRequestCount > 0 || liveTurnsInFlight > 0,
@@ -1125,7 +1127,7 @@ async function executeMinecraftFromLLMResult(result, source = 'manual') {
   if (source === 'live') return null;
   try {
     const settings = readRoomMinecraftSettings();
-    if (result.minecraft.action !== 'stop' && Date.now() - lastMinecraftDecisionAt < 900) return null;
+    if (result.minecraft.action !== 'stop' && Date.now() - lastMinecraftDecisionAt < 300) return null;
     lastMinecraftDecisionAt = Date.now();
     const actionResult = await executeLive2DMinecraftCommand(result.minecraft, { settings });
     window.dispatchEvent(new CustomEvent('tsukuyomi:minecraft-action', { detail: actionResult }));

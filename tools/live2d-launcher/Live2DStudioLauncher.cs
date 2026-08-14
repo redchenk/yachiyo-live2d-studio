@@ -977,6 +977,7 @@ internal sealed class LocalStudioServer : IDisposable
 
             if (method == "POST" && (
                 string.Equals(path, "/api/minecraft/status", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(path, "/api/minecraft/task", StringComparison.OrdinalIgnoreCase) ||
                 string.Equals(path, "/api/minecraft/configure", StringComparison.OrdinalIgnoreCase) ||
                 string.Equals(path, "/api/minecraft/action", StringComparison.OrdinalIgnoreCase) ||
                 string.Equals(path, "/api/minecraft/disconnect", StringComparison.OrdinalIgnoreCase)))

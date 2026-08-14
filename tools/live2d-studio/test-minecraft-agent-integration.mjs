@@ -78,5 +78,6 @@ assert.match(launcher, /ShutdownMinecraftAgentService/);
 assert.match(launcher, /\/api\/minecraft\/status/);
 assert.match(launcher, /\/api\/minecraft\/configure/);
 assert.match(launcher, /\/api\/minecraft\/action/);
+assert.match(launcher, /\/api\/minecraft\/task/);
 
 console.log('Minecraft agent integration checks passed');

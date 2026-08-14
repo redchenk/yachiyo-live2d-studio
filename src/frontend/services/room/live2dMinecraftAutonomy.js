@@ -26,6 +26,7 @@ export function createLive2DMinecraftAutonomyController(options = {}) {
   const clearTimeoutImpl = options.clearTimeoutImpl || ((timer) => window.clearTimeout(timer));
   const readSettings = options.readSettings;
   const readStatus = options.readStatus;
+  const readTaskStatus = options.readTaskStatus;
   const plan = options.plan;
   const execute = options.execute;
   const shouldYield = options.shouldYield || (() => false);
@@ -41,6 +42,7 @@ export function createLive2DMinecraftAutonomyController(options = {}) {
   let lastOutcome = null;
   let lastTaskId = '';
   let outcomeHistory = [];
+  let prefetchedPlan = null;
 
   function snapshot(extra = {}) {
     return {
@@ -52,6 +54,8 @@ export function createLive2DMinecraftAutonomyController(options = {}) {
       lastOutcome,
       outcomeHistory,
       lastTaskId,
+      prefetching: Boolean(prefetchedPlan?.promise && !prefetchedPlan.decision),
+      prefetchedTaskId: prefetchedPlan?.taskId || '',
       updatedAt: now(),
       ...extra
     };
@@ -80,6 +84,82 @@ export function createLive2DMinecraftAutonomyController(options = {}) {
     }, Math.max(250, Number(delayMs) || 1000));
   }
 
+  function clearPrefetch() {
+    prefetchedPlan = null;
+  }
+
+  function beginPrefetch(taskId, status, decision) {
+    if (!readTaskStatus || !taskId || !decision?.action || shouldYield()) return;
+    const expectedOutcome = {
+      taskId,
+      type: 'action-complete',
+      success: true,
+      action: decision.action,
+      message: 'Speculative success for pipelined planning.',
+      result: null,
+      at: now()
+    };
+    const predictedStatus = {
+      ...(status || {}),
+      state: {
+        ...(status?.state || {}),
+        activeTask: { id: taskId, action: decision.action },
+        taskQueueDepth: 0
+      }
+    };
+    const entry = { taskId, decision: null, error: null, promise: null };
+    prefetchedPlan = entry;
+    entry.promise = Promise.resolve()
+      .then(() => plan({
+        goal,
+        status: predictedStatus,
+        lastDecision: decision,
+        lastOutcome: expectedOutcome,
+        outcomeHistory: [...outcomeHistory, expectedOutcome].slice(-6),
+        failures,
+        speculative: true,
+        prefetchTaskId: taskId
+      }))
+      .then((nextDecision) => {
+        if (prefetchedPlan === entry) entry.decision = normalizeMinecraftPlannerDecision(nextDecision);
+        return entry.decision;
+      })
+      .catch((error) => {
+        if (prefetchedPlan === entry) entry.error = error;
+        return null;
+      });
+  }
+
+  async function consumePrefetch(taskId) {
+    const entry = prefetchedPlan;
+    if (!entry || entry.taskId !== taskId) return null;
+    await entry.promise;
+    if (prefetchedPlan !== entry) return null;
+    const decision = entry.decision;
+    prefetchedPlan = null;
+    return decision;
+  }
+
+  function recordTaskOutcome(taskId, matching = {}) {
+    const type = matching.type || (matching.success ? 'action-complete' : 'action-failed');
+    const success = typeof matching.success === 'boolean'
+      ? matching.success
+      : type === 'action-complete';
+    lastOutcome = {
+      taskId,
+      type,
+      success,
+      action: lastDecision?.action || null,
+      message: matching.message || '',
+      result: matching.result || null,
+      at: matching.at || now()
+    };
+    outcomeHistory = [...outcomeHistory, lastOutcome].slice(-6);
+    failures = success ? 0 : failures + 1;
+    lastTaskId = '';
+    return lastOutcome;
+  }
+
   function taskSettled(status) {
     const state = status?.state || {};
     if (!lastTaskId) return true;
@@ -96,18 +176,7 @@ export function createLive2DMinecraftAutonomyController(options = {}) {
           }
         : null);
     if (!matching) return false;
-    lastOutcome = {
-      taskId: lastTaskId,
-      type: matching.type,
-      success: matching.type === 'action-complete',
-      action: lastDecision?.action || null,
-      message: matching.message || '',
-      result: matching.result || null,
-      at: matching.at || now()
-    };
-    outcomeHistory = [...outcomeHistory, lastOutcome].slice(-6);
-    failures = lastOutcome.success ? 0 : failures + 1;
-    lastTaskId = '';
+    recordTaskOutcome(lastTaskId, matching);
     return true;
   }
 
@@ -126,6 +195,28 @@ export function createLive2DMinecraftAutonomyController(options = {}) {
     planning = true;
     publish({ phase: 'observing' });
     try {
+      let settledTaskId = '';
+      if (lastTaskId && readTaskStatus) {
+        const trackedTaskId = lastTaskId;
+        let taskStatus = null;
+        try {
+          taskStatus = await readTaskStatus(trackedTaskId);
+        } catch {
+          // Fall back to the full status snapshot for compatibility and transient proxy failures.
+        }
+        if (!running || tickGeneration !== generation) return snapshot({ phase: 'cancelled' });
+        if (taskStatus && taskStatus.status !== 'unknown') {
+          if (!taskStatus.settled) {
+            schedule(250);
+            return publish({ phase: 'executing', taskTimings: taskStatus.timings || null });
+          }
+          recordTaskOutcome(trackedTaskId, taskStatus.outcome || {
+            type: taskStatus.status === 'complete' ? 'action-complete' : 'action-failed',
+            success: taskStatus.status === 'complete'
+          });
+          settledTaskId = trackedTaskId;
+        }
+      }
       const status = await readStatus({ fresh: true });
       if (!running || tickGeneration !== generation) return snapshot({ phase: 'cancelled' });
       const state = status?.state || {};
@@ -134,25 +225,35 @@ export function createLive2DMinecraftAutonomyController(options = {}) {
         return publish({ phase: state.phase || 'waiting' });
       }
       if (state.safetyLock) {
+        clearPrefetch();
         schedule(900);
         return publish({ phase: `safety-${state.safetyLock}` });
       }
       if (state.activeTask || (state.taskQueueDepth || 0) > 0) {
-        schedule(900);
+        if (settledTaskId) clearPrefetch();
+        schedule(lastTaskId && readTaskStatus ? 250 : 600);
         return publish({ phase: 'executing-external-action' });
       }
+      const fallbackTaskId = lastTaskId;
       if (!taskSettled(status)) {
-        schedule(900);
+        schedule(readTaskStatus ? 250 : 900);
         return publish({ phase: 'executing' });
       }
-      const decision = normalizeMinecraftPlannerDecision(await plan({
-        goal,
-        status,
-        lastDecision,
-        lastOutcome,
-        outcomeHistory,
-        failures
-      }));
+      if (!settledTaskId && fallbackTaskId && !lastTaskId) settledTaskId = fallbackTaskId;
+      if (settledTaskId && !lastOutcome?.success) clearPrefetch();
+      let decision = settledTaskId && lastOutcome?.success && prefetchedPlan?.taskId === settledTaskId
+        ? await consumePrefetch(settledTaskId)
+        : null;
+      if (!decision) {
+        decision = normalizeMinecraftPlannerDecision(await plan({
+          goal,
+          status,
+          lastDecision,
+          lastOutcome,
+          outcomeHistory,
+          failures
+        }));
+      }
       if (!running || tickGeneration !== generation) return snapshot({ phase: 'cancelled' });
       if (shouldYield()) {
         schedule(900);
@@ -177,7 +278,8 @@ export function createLive2DMinecraftAutonomyController(options = {}) {
       if (!running || tickGeneration !== generation) return snapshot({ phase: 'cancelled' });
       lastTaskId = result?.taskId || '';
       if (decision.speak && decision.voice && decision.caption) onSpeech(decision);
-      schedule(lastTaskId ? 900 : decision.nextDelayMs);
+      if (lastTaskId) beginPrefetch(lastTaskId, status, decision);
+      schedule(lastTaskId && readTaskStatus ? 250 : lastTaskId ? 900 : decision.nextDelayMs);
       return publish({ phase: 'executing', queuedAction: decision.action });
     } catch (error) {
       failures += 1;
@@ -205,6 +307,7 @@ export function createLive2DMinecraftAutonomyController(options = {}) {
     running = false;
     generation += 1;
     planning = false;
+    clearPrefetch();
     cancelTimer();
     return publish({ phase: 'stopped', reason });
   }
@@ -217,6 +320,7 @@ export function createLive2DMinecraftAutonomyController(options = {}) {
     lastOutcome = null;
     outcomeHistory = [];
     lastTaskId = '';
+    clearPrefetch();
     failures = 0;
     publish({ phase: running ? 'goal-updated' : 'stopped' });
     if (running) schedule(50);

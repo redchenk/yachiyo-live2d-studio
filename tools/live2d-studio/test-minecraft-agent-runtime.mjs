@@ -67,6 +67,16 @@ async function post(port, route, body = {}) {
   return { response, data: await response.json() };
 }
 
+async function waitForTask(port, taskId) {
+  const deadline = Date.now() + 2000;
+  while (Date.now() < deadline) {
+    const result = await post(port, '/api/minecraft/task', { taskId });
+    if (result.response.ok && result.data.settled) return result.data;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  throw new Error(`Minecraft task ${taskId} did not settle.`);
+}
+
 const port = await freePort();
 const child = spawn(process.execPath, ['tools/minecraft/minecraft-agent-service.mjs', '--port', String(port)], {
   cwd: new URL('../..', import.meta.url),
@@ -92,6 +102,10 @@ try {
   const observed = await post(port, '/api/minecraft/action', { action: 'observe' });
   assert.equal(observed.response.status, 202);
   assert.equal(observed.data.status, 'queued');
+  const observedTask = await waitForTask(port, observed.data.taskId);
+  assert.equal(observedTask.status, 'complete');
+  assert.equal(observedTask.outcome.success, true);
+  assert.ok(Number.isFinite(observedTask.timings.totalMs));
 
   const unsafe = await post(port, '/api/minecraft/action', { action: 'chat', message: '/kill @e' });
   assert.equal(unsafe.response.status, 400);

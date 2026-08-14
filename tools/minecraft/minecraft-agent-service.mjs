@@ -33,6 +33,7 @@ const DEFAULT_PORT = 3303;
 const MAX_BODY_BYTES = 64 * 1024;
 const ACTION_TIMEOUT_MS = 45_000;
 const RECENT_EVENTS_LIMIT = 24;
+const TASK_RECORD_LIMIT = 64;
 const repoRoot = path.resolve(fileURLToPath(new URL('../..', import.meta.url)));
 
 function arg(name, fallback = '') {
@@ -71,6 +72,7 @@ let safetySupervisor = null;
 let skillMemory = {};
 let skillMemoryLoadPromise = null;
 const taskQueue = [];
+const taskRecords = new Map();
 const recentEvents = [];
 const state = {
   phase: 'disabled',
@@ -98,6 +100,55 @@ function event(type, detail = {}) {
 
 function errorMessage(error) {
   return String(error?.message || error || 'Unknown Minecraft error').slice(0, 500);
+}
+
+function rememberTask(taskId, detail = {}) {
+  const id = String(taskId || '').trim().slice(0, 80);
+  if (!id) return null;
+  const record = { ...(taskRecords.get(id) || {}), id, ...detail };
+  taskRecords.delete(id);
+  taskRecords.set(id, record);
+  while (taskRecords.size > TASK_RECORD_LIMIT) {
+    taskRecords.delete(taskRecords.keys().next().value);
+  }
+  return record;
+}
+
+function taskStatusSnapshot(rawTaskId) {
+  const taskId = String(rawTaskId || '').trim().slice(0, 80);
+  const record = taskRecords.get(taskId);
+  if (!record) {
+    return { success: true, taskId, status: 'unknown', settled: false };
+  }
+  const currentTime = Date.now();
+  const settled = ['complete', 'failed', 'cancelled'].includes(record.status);
+  const finishedAt = Number(record.finishedAt || 0);
+  const startedAt = Number(record.startedAt || 0);
+  const queuedAt = Number(record.queuedAt || currentTime);
+  const endAt = finishedAt || currentTime;
+  const success = record.status === 'complete';
+  return {
+    success: true,
+    taskId,
+    status: record.status,
+    settled,
+    action: record.action || null,
+    outcome: settled
+      ? {
+          type: success ? 'action-complete' : record.status === 'cancelled' ? 'action-cancelled' : 'action-failed',
+          success,
+          taskId,
+          result: record.result || null,
+          message: record.error || '',
+          at: finishedAt || currentTime
+        }
+      : null,
+    timings: {
+      queuedWaitMs: Math.max(0, (startedAt || currentTime) - queuedAt),
+      executionMs: startedAt ? Math.max(0, endAt - startedAt) : 0,
+      totalMs: Math.max(0, endAt - queuedAt)
+    }
+  };
 }
 
 async function loadSkillMemory() {
@@ -335,6 +386,10 @@ function statusSnapshot() {
 function stopCurrentAction() {
   queueGeneration += 1;
   haltBotControls();
+  const finishedAt = Date.now();
+  for (const task of taskQueue) {
+    rememberTask(task.id, { status: 'cancelled', finishedAt, error: 'Action queue stopped.' });
+  }
   taskQueue.splice(0);
 }
 
@@ -1190,27 +1245,32 @@ function enqueueAction(rawAction) {
     queuedAt: Date.now(),
     generation: queueGeneration
   };
+  rememberTask(task.id, { ...task, status: 'queued' });
   taskQueue.push(task);
   const run = async () => {
     if (task.generation !== queueGeneration) {
       const cancelledIndex = taskQueue.findIndex((entry) => entry.id === task.id);
       if (cancelledIndex >= 0) taskQueue.splice(cancelledIndex, 1);
+      rememberTask(task.id, { status: 'cancelled', finishedAt: Date.now(), error: 'Action queue generation changed.' });
       event('action-cancelled', { taskId: task.id, action: action.action });
       return { success: false, status: 'cancelled', action, taskId: task.id };
     }
     const index = taskQueue.findIndex((entry) => entry.id === task.id);
     if (index >= 0) taskQueue.splice(index, 1);
     activeTask = { ...task, startedAt: Date.now() };
+    rememberTask(task.id, { status: 'running', startedAt: activeTask.startedAt });
     try {
       const result = await executeAction(action, task.generation);
       state.lastActionAt = Date.now();
       state.lastAction = { taskId: task.id, ...action, success: true, result };
+      rememberTask(task.id, { status: 'complete', result, finishedAt: Date.now() });
       event('action-complete', { taskId: task.id, action: action.action, result });
       return { ...result, action, taskId: task.id };
     } catch (error) {
       haltBotControls();
       state.lastActionAt = Date.now();
       state.lastAction = { taskId: task.id, ...action, success: false, error: errorMessage(error) };
+      rememberTask(task.id, { status: 'failed', error: errorMessage(error), finishedAt: Date.now() });
       event('action-failed', { taskId: task.id, action: action.action, message: errorMessage(error) });
       throw error;
     } finally {
@@ -1245,6 +1305,9 @@ const server = http.createServer(async (request, response) => {
     const requestUrl = new URL(request.url || '/', `http://${SERVICE_HOST}:${servicePort}`);
     if (request.method === 'GET' && requestUrl.pathname === '/healthz') return json(response, 200, statusSnapshot());
     if (request.method === 'POST' && requestUrl.pathname === '/api/minecraft/status') return json(response, 200, statusSnapshot());
+    if (request.method === 'POST' && requestUrl.pathname === '/api/minecraft/task') {
+      return json(response, 200, taskStatusSnapshot((await bodyJson(request)).taskId));
+    }
     if (request.method === 'POST' && requestUrl.pathname === '/api/minecraft/configure') return json(response, 200, await configure(await bodyJson(request)));
     if (request.method === 'POST' && requestUrl.pathname === '/api/minecraft/action') return json(response, 202, enqueueAction(await bodyJson(request)));
     if (request.method === 'POST' && requestUrl.pathname === '/api/minecraft/disconnect') {

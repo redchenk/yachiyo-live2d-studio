@@ -106,6 +106,9 @@ export function buildLive2DMinecraftPlannerPrompt(context = {}) {
   const state = context.status?.state || {};
   const position = state.position ? `${state.position.x},${state.position.y},${state.position.z}` : 'unknown';
   return [
+    context.speculative
+      ? '[PIPELINE_PREFETCH]\nThe current action is still running. Assume it succeeds and choose exactly the next non-repeating action. This plan will be discarded if the action fails.'
+      : '',
     '[CURRENT_GOAL]',
     context.goal,
     '[WORLD_STATE]',
@@ -127,6 +130,7 @@ export function live2DMinecraftPlannerSystemPrompt() {
   return [
     'You are the private Minecraft Java gameplay planner for Yachiyo, an autonomous AI VTuber.',
     'Behave like a real survival player: keep a persistent goal, observe results, make incremental progress, recover from failure, and avoid repetitive or impossible actions.',
+    'When the prompt contains PIPELINE_PREFETCH, plan the action immediately after the running action under the stated success assumption. Never repeat the running action; the controller will discard this plan if reality differs.',
     'Return exactly one compact JSON object and no Markdown.',
     'Schema: {"thought":"private short reasoning","progress":"what changed","goalCompleted":false,"speak":false,"voice":"short Japanese line","caption":"matching Simplified Chinese subtitle","nextDelayMs":2500,"action":null}',
     'Choose at most one action. Allowed action schemas:',

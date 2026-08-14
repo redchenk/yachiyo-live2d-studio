@@ -126,6 +126,12 @@ export async function readLive2DMinecraftStatus({ fresh = true } = {}) {
   return result;
 }
 
+export async function readLive2DMinecraftTask(taskId) {
+  const normalizedTaskId = clipped(taskId, 80);
+  if (!normalizedTaskId) return { success: true, taskId: '', status: 'unknown', settled: false };
+  return post('/api/minecraft/task', { taskId: normalizedTaskId }, 2500);
+}
+
 export async function disconnectLive2DMinecraft() {
   configuredFingerprint = '';
   return rememberStatus(await post('/api/minecraft/disconnect'));

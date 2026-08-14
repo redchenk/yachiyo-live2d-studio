@@ -27,5 +27,6 @@ assert.match(prompt, /persistent goal/i);
 assert.match(prompt, /reuse mine_routes/i);
 assert.match(prompt, /Never choose a waypoint in or beside lava/i);
 assert.match(buildLive2DMinecraftPlannerPrompt(context(base)), /CURRENT_GOAL/);
+assert.match(buildLive2DMinecraftPlannerPrompt({ ...context(base), speculative: true }), /PIPELINE_PREFETCH/);
 await server.close();
 console.log('Minecraft survival planner checks passed');
