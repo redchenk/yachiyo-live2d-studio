@@ -7,6 +7,9 @@ export const MINECRAFT_ACTION_TYPES = Object.freeze([
   'place',
   'place_near',
   'construct_shelter',
+  'pillar_up',
+  'find_cave',
+  'explore_mine',
   'mine_down',
   'go_surface',
   'attack',
@@ -112,6 +115,9 @@ export function normalizeMinecraftAction(input = {}) {
     return normalized;
   }
   if (action === 'construct_shelter') return { action, block: safeName(source.block || source.item, 'building block') };
+  if (action === 'pillar_up') return { action, block: safeName(source.block || source.item, 'pillar block'), height: integer(source.height || source.count, 1, 1, 12) };
+  if (action === 'find_cave') return { action, radius: integer(source.radius, 32, 12, 48) };
+  if (action === 'explore_mine') return { action, targetY: integer(source.targetY ?? source.y, 16, -60, 320) };
   if (action === 'mine_down') return { action, depth: integer(source.depth || source.distance, 8, 1, 24) };
   if (action === 'go_surface') return { action };
   if (action === 'place') {

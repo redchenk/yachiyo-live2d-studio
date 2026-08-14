@@ -18,6 +18,8 @@ Autonomous play now runs as a dedicated gameplay loop instead of waiting for the
 
 The gameplay brain follows a Mindcraft/Voyager-style hierarchy without permitting generated code: the LLM selects from a fixed safe skill library, while each skill owns its prerequisite graph, multi-step execution, inventory/world verification, retry budget and interruption handling. The automatic survival curriculum advances from wood through an iron pickaxe; separate skills secure food, build a compact shelter, and gather goal-specific resources. Skill success/failure statistics and recent evidence persist under `%LOCALAPPDATA%\YachiyoLive2DStudio\minecraft-skill-memory.json`, so later planning can avoid repeatedly choosing unreliable approaches.
 
+Mining is route-aware: Yachiyo searches loaded terrain for a reachable natural cave before opening a shaft, persists up to eight cave/staircase routes per server identity, resumes their deepest known point, follows deeper cave passages, and branch-mines only after natural continuation runs out. A failed cave search must be observed twice before the safe staircase fallback is allowed. Generic pathfinding has implicit 1x1 towers disabled; deliberate vertical building uses the interruptible `pillar_up` primitive, which synchronizes one jump, one placement acknowledgement and one landing verification per level.
+
 The EXE starts the sidecar lazily on the first Minecraft request and stops it on exit. For frontend development, run `npm run start:minecraft-agent` alongside `npm run dev` and proxy `/api/minecraft/*` to `http://127.0.0.1:3303` if the native launcher is not being used.
 
 八千代 Live2D 本地桌面工作室，面向 AI VTuber / Neuro-sama 风格直播实验。

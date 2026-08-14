@@ -2,7 +2,7 @@ import { readRoomMinecraftSettings } from './roomSettings';
 import { readLatestLive2DMinecraftAutonomyState } from './live2dMinecraftAutonomy';
 
 export const LIVE2D_MINECRAFT_ACTIONS = Object.freeze([
-  'observe', 'move', 'follow', 'collect', 'craft', 'place', 'place_near', 'construct_shelter', 'mine_down', 'go_surface', 'attack',
+  'observe', 'move', 'follow', 'collect', 'craft', 'place', 'place_near', 'construct_shelter', 'pillar_up', 'find_cave', 'explore_mine', 'mine_down', 'go_surface', 'attack',
   'explore', 'eat', 'equip', 'sleep', 'smelt', 'skill', 'chat', 'stop'
 ]);
 
@@ -70,6 +70,9 @@ export function normalizeLive2DMinecraftCommand(input = {}) {
   if (action === 'place') return { action, block: name(source.block || source.blockType || source.item, '方块名'), x: number(source.x, 0, -30_000_000, 30_000_000), y: number(source.y, 64, -64, 512), z: number(source.z, 0, -30_000_000, 30_000_000) };
   if (action === 'place_near') return { action, block: name(source.block || source.blockType || source.item, '方块名'), radius: Math.round(number(source.radius, 4, 2, 12)) };
   if (action === 'construct_shelter') return { action, block: name(source.block || source.item, '建筑方块') };
+  if (action === 'pillar_up') return { action, block: name(source.block || source.item, '垫高方块'), height: Math.round(number(source.height || source.count, 1, 1, 12)) };
+  if (action === 'find_cave') return { action, radius: Math.round(number(source.radius, 32, 12, 48)) };
+  if (action === 'explore_mine') return { action, targetY: Math.round(number(source.targetY ?? source.y, 16, -60, 320)) };
   if (action === 'mine_down') return { action, depth: Math.round(number(source.depth || source.distance, 8, 1, 24)) };
   if (action === 'go_surface') return { action };
   if (action === 'attack') return { action, target: name(source.target || source.entity || source.mob, '目标'), radius: Math.round(number(source.radius, 8, 2, 16)) };
@@ -164,6 +167,7 @@ export async function buildLive2DMinecraftPrompt() {
       `nearby_blocks=${compactList(state.nearbyBlocks, (block) => `${block.name}@${block.x},${block.y},${block.z}`, 12)}`,
       `nearby_players=${players}`,
       `nearby_entities=${entities}`,
+      `mine_routes=${(state.mineSites || []).length}; active_mine=${state.activeMineSiteId || 'none'}; cave_search_misses=${state.caveSearchMisses || 0}`,
       `active_task=${state.activeTask?.action?.action || 'none'}; active_skill=${state.activeSkill?.skill || 'none'}:${state.activeSkill?.stage || 'idle'}; skill_step=${state.activeSkill?.step || 0}; queued=${state.taskQueueDepth || 0}`
     ].join('\n');
   } catch (error) {

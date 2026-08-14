@@ -22,8 +22,9 @@ for (const startingState of [base, { ...base, nearbyBlocks: [{ name: 'oak_log', 
 assert.deepEqual(fallbackLive2DMinecraftPlan(context({ ...base, food: 10, inventory: [{ name: 'bread', count: 1 }] })).action, { action: 'eat' });
 
 const prompt = live2DMinecraftPlannerSystemPrompt();
-for (const action of ['explore', 'eat', 'equip', 'sleep', 'smelt', 'skill']) assert.ok(prompt.includes(`"action":"${action}"`));
+for (const action of ['explore', 'pillar_up', 'find_cave', 'explore_mine', 'eat', 'equip', 'sleep', 'smelt', 'skill']) assert.ok(prompt.includes(`"action":"${action}"`));
 assert.match(prompt, /persistent goal/i);
+assert.match(prompt, /reuse mine_routes/i);
 assert.match(buildLive2DMinecraftPlannerPrompt(context(base)), /CURRENT_GOAL/);
 await server.close();
 console.log('Minecraft survival planner checks passed');

@@ -13,6 +13,7 @@ import {
   normalizeMinecraftAction,
   normalizeMinecraftConfig
 } from './minecraft-action-policy.mjs';
+import { pillarUp } from './minecraft-movement-primitives.mjs';
 import {
   evaluateMinecraftCurriculum,
   nextMinecraftSkillStep,
@@ -78,6 +79,9 @@ const state = {
   microsoftLogin: null,
   shelterPosition: null,
   miningEntrance: null,
+  mineSites: [],
+  activeMineSiteId: '',
+  caveSearchMisses: 0,
   workstationPositions: {},
   activeSkill: null
 };
@@ -109,6 +113,9 @@ function restoreWorldMemory() {
   const world = skillMemory.__worlds?.[worldMemoryKey()] || {};
   state.shelterPosition = world.shelterPosition || null;
   state.miningEntrance = world.miningEntrance || null;
+  state.mineSites = Array.isArray(world.mineSites) ? world.mineSites.slice(0, 8) : [];
+  state.activeMineSiteId = String(world.activeMineSiteId || '');
+  state.caveSearchMisses = Math.max(0, Number(world.caveSearchMisses || 0));
   state.workstationPositions = world.workstationPositions || {};
 }
 
@@ -410,7 +417,9 @@ async function connectBot() {
   nextBot.on('spawn', () => {
     if (bot !== nextBot) return;
     mcData = minecraftData(nextBot.version);
-    nextBot.pathfinder.setMovements(new Movements(nextBot));
+    const defaultMovements = new Movements(nextBot);
+    defaultMovements.allow1by1towers = false;
+    nextBot.pathfinder.setMovements(defaultMovements);
     state.connected = true;
     state.spawned = true;
     state.phase = 'ready';
@@ -575,15 +584,248 @@ async function constructShelter(currentBot, blockName, generation) {
   return { success: true, status: 'shelter-built', block: blockName, blocks: required, position: state.shelterPosition };
 }
 
+function plainPosition(position) {
+  return { x: Math.floor(Number(position.x)), y: Math.floor(Number(position.y)), z: Math.floor(Number(position.z)) };
+}
+
+function mineSiteId(type, position) {
+  return `${type}:${Math.floor(position.x)}:${Math.floor(position.y)}:${Math.floor(position.z)}`;
+}
+
+function rememberMineSite(site) {
+  const normalized = { ...site, updatedAt: Date.now() };
+  state.mineSites = [normalized, ...(state.mineSites || []).filter((entry) => entry.id !== normalized.id)]
+    .sort((left, right) => Number(right.lastVisitedAt || right.updatedAt || 0) - Number(left.lastVisitedAt || left.updatedAt || 0))
+    .slice(0, 8);
+  state.activeMineSiteId = normalized.id;
+  return normalized;
+}
+
+async function persistMineState() {
+  await persistWorldMemory({
+    miningEntrance: state.miningEntrance,
+    mineSites: state.mineSites,
+    activeMineSiteId: state.activeMineSiteId,
+    caveSearchMisses: state.caveSearchMisses
+  });
+}
+
+function passableCaveBlock(block) {
+  return Boolean(block && block.boundingBox === 'empty' && !['water', 'lava'].includes(block.name));
+}
+
+function solidCaveFloor(block) {
+  return Boolean(block && block.boundingBox === 'block' && !['water', 'lava'].includes(block.name));
+}
+
+function caveCandidates(currentBot, radius, minimumY) {
+  const origin = currentBot.entity.position.floored();
+  const candidates = [];
+  const lowerY = Math.max(-60, Math.floor(minimumY));
+  const upperY = Math.min(319, origin.y + 4);
+  for (let dx = -radius; dx <= radius; dx += 2) {
+    for (let dz = -radius; dz <= radius; dz += 2) {
+      if ((dx * dx) + (dz * dz) > radius * radius) continue;
+      for (let y = lowerY; y <= upperY; y += 1) {
+        const feet = new Vec3(origin.x + dx, y, origin.z + dz);
+        if (distance(origin, feet) < 4 || !passableCaveBlock(currentBot.blockAt(feet)) || !passableCaveBlock(currentBot.blockAt(feet.offset(0, 1, 0)))) continue;
+        if (!solidCaveFloor(currentBot.blockAt(feet.offset(0, -1, 0)))) continue;
+        const openSides = [new Vec3(1, 0, 0), new Vec3(-1, 0, 0), new Vec3(0, 0, 1), new Vec3(0, 0, -1)]
+          .filter((offset) => passableCaveBlock(currentBot.blockAt(feet.plus(offset))) && passableCaveBlock(currentBot.blockAt(feet.plus(offset).offset(0, 1, 0)))).length;
+        if (!openSides) continue;
+        const covered = [2, 3, 4, 5, 6].some((dy) => solidCaveFloor(currentBot.blockAt(feet.offset(0, dy, 0))));
+        if (!covered && origin.y - y < 10) continue;
+        candidates.push({ position: feet, depthGain: origin.y - y, distance: distance(origin, feet) });
+        break;
+      }
+    }
+  }
+  return candidates.sort((left, right) => right.depthGain - left.depthGain || left.distance - right.distance).slice(0, 24);
+}
+
+function caveMovements(currentBot) {
+  const movements = new Movements(currentBot);
+  movements.allow1by1towers = false;
+  movements.allowParkour = false;
+  movements.canDig = false;
+  return movements;
+}
+
+function reachableCaveTarget(currentBot, candidates, movements) {
+  for (const candidate of candidates.slice(0, 12)) {
+    const result = currentBot.pathfinder.getPathTo(movements, new goals.GoalBlock(candidate.position.x, candidate.position.y, candidate.position.z), 120);
+    if (result.status === 'success') return candidate;
+  }
+  return null;
+}
+
+async function findCave(currentBot, radius, generation) {
+  const previousMovements = currentBot.pathfinder.movements;
+  const movements = caveMovements(currentBot);
+  let target = reachableCaveTarget(currentBot, caveCandidates(currentBot, radius, currentBot.entity.position.y - 30), movements);
+  if (!target) {
+    const origin = currentBot.entity.position;
+    const angle = Math.random() * Math.PI * 2;
+    const travel = Math.max(14, Math.floor(radius * 0.65));
+    currentBot.pathfinder.setMovements(movements);
+    try {
+      await withTimeout(currentBot.pathfinder.goto(new goals.GoalXZ(Math.floor(origin.x + Math.cos(angle) * travel), Math.floor(origin.z + Math.sin(angle) * travel))), 45_000);
+    } catch {}
+    if (generation !== queueGeneration) throw new Error('Minecraft action was cancelled.');
+    target = reachableCaveTarget(currentBot, caveCandidates(currentBot, radius, currentBot.entity.position.y - 30), movements);
+  }
+  if (!target) {
+    state.caveSearchMisses = Math.min(20, Number(state.caveSearchMisses || 0) + 1);
+    await persistMineState();
+    if (previousMovements) currentBot.pathfinder.setMovements(previousMovements);
+    return { success: true, status: 'cave-not-found', caveSearchMisses: state.caveSearchMisses, position: statusSnapshot().state.position };
+  }
+
+  const entrance = plainPosition(currentBot.entity.position);
+  currentBot.pathfinder.setMovements(movements);
+  try {
+    await withTimeout(currentBot.pathfinder.goto(new goals.GoalBlock(target.position.x, target.position.y, target.position.z)), 90_000);
+  } catch (error) {
+    state.caveSearchMisses = Math.min(20, Number(state.caveSearchMisses || 0) + 1);
+    await persistMineState();
+    event('cave-route-rejected', { message: errorMessage(error), caveSearchMisses: state.caveSearchMisses });
+    return { success: true, status: 'cave-route-unreachable', caveSearchMisses: state.caveSearchMisses, position: statusSnapshot().state.position };
+  } finally {
+    if (previousMovements) currentBot.pathfinder.setMovements(previousMovements);
+  }
+  const reached = plainPosition(currentBot.entity.position);
+  const id = mineSiteId('cave', entrance);
+  rememberMineSite({
+    id,
+    type: 'cave',
+    entrance,
+    deepestPosition: reached,
+    deepestY: reached.y,
+    visits: 1,
+    noProgress: 0,
+    branchIndex: 0,
+    lastVisitedAt: Date.now()
+  });
+  state.miningEntrance = entrance;
+  state.caveSearchMisses = 0;
+  await persistMineState();
+  event('cave-discovered', { siteId: id, y: reached.y });
+  return { success: true, status: 'cave-discovered', siteId: id, position: statusSnapshot().state.position };
+}
+
+async function mineBranch(currentBot, length, generation, directionIndex = 0) {
+  const directions = [new Vec3(1, 0, 0), new Vec3(0, 0, 1), new Vec3(-1, 0, 0), new Vec3(0, 0, -1)];
+  const direction = directions[Math.abs(Number(directionIndex || 0)) % directions.length];
+  const start = currentBot.entity.position.floored();
+  let completed = 0;
+  for (let index = 1; index <= length; index += 1) {
+    if (generation !== queueGeneration) throw new Error('Minecraft action was cancelled.');
+    const feet = start.plus(direction.scaled(index));
+    const head = feet.offset(0, 1, 0);
+    const support = currentBot.blockAt(feet.offset(0, -1, 0));
+    if (!solidCaveFloor(support)) break;
+    for (const position of [head, feet]) {
+      const block = currentBot.blockAt(position);
+      if (!block || ['water', 'lava'].includes(block.name)) throw new Error(`Unsafe fluid encountered while branch mining: ${block?.name || 'unknown'}.`);
+      if (block.boundingBox === 'empty') continue;
+      if (/^(?:sand|gravel)$/.test(block.name) || /^(?:sand|gravel)$/.test(currentBot.blockAt(position.offset(0, 1, 0))?.name || '')) throw new Error('Falling blocks make this branch unsafe.');
+      await currentBot.tool.equipForBlock(block);
+      if (!block.canHarvest(currentBot.heldItem?.type || null)) throw new Error(`The equipped tool cannot mine ${block.name}.`);
+      await currentBot.dig(block, true);
+    }
+    await withTimeout(currentBot.pathfinder.goto(new goals.GoalNear(feet.x, feet.y, feet.z, 0)), 20_000);
+    completed += 1;
+  }
+  if (completed < 3) throw new Error('The current branch has no safe mining progress.');
+  return { completed, position: plainPosition(currentBot.entity.position) };
+}
+
+async function exploreMine(currentBot, targetY, generation) {
+  let site = (state.mineSites || []).find((entry) => entry.id === state.activeMineSiteId && Number(entry.noProgress || 0) < 3)
+    || (state.mineSites || []).filter((entry) => Number(entry.noProgress || 0) < 3)
+      .sort((left, right) => Number(left.deepestPosition?.y ?? left.deepestY ?? 320) - Number(right.deepestPosition?.y ?? right.deepestY ?? 320))[0];
+  if (!site && state.miningEntrance) {
+    const entrance = plainPosition(state.miningEntrance);
+    site = rememberMineSite({ id: mineSiteId('shaft', entrance), type: 'shaft', entrance, deepestPosition: plainPosition(currentBot.entity.position), deepestY: Math.floor(currentBot.entity.position.y), visits: 0, noProgress: 0, branchIndex: 0 });
+  }
+  if (!site) {
+    const current = plainPosition(currentBot.entity.position);
+    site = rememberMineSite({ id: mineSiteId('mine', current), type: 'mine', entrance: current, deepestPosition: current, deepestY: current.y, visits: 0, noProgress: 0, branchIndex: 0 });
+  }
+
+  state.activeMineSiteId = site.id;
+  state.miningEntrance = site.entrance;
+  const previousMovements = currentBot.pathfinder.movements;
+  const movements = caveMovements(currentBot);
+  try {
+    const deepest = new Vec3(site.deepestPosition.x, site.deepestPosition.y, site.deepestPosition.z);
+    if (distance(currentBot.entity.position, deepest) > 5) {
+      currentBot.pathfinder.setMovements(movements);
+      const alreadyUnderground = Number(currentBot.entity.position.y) < Number(site.entrance.y) - 2;
+      if (!alreadyUnderground) await withTimeout(currentBot.pathfinder.goto(new goals.GoalNear(site.entrance.x, site.entrance.y, site.entrance.z, 2)), 90_000);
+      await withTimeout(currentBot.pathfinder.goto(new goals.GoalNear(deepest.x, deepest.y, deepest.z, 2)), 120_000);
+    }
+    if (generation !== queueGeneration) throw new Error('Minecraft action was cancelled.');
+
+    const currentY = Math.floor(currentBot.entity.position.y);
+    const candidates = caveCandidates(currentBot, 24, Math.max(-60, currentY - 28))
+      .filter((candidate) => candidate.position.y <= currentY - 2);
+    const caveTarget = reachableCaveTarget(currentBot, candidates, movements);
+    if (caveTarget) {
+      currentBot.pathfinder.setMovements(movements);
+      await withTimeout(currentBot.pathfinder.goto(new goals.GoalBlock(caveTarget.position.x, caveTarget.position.y, caveTarget.position.z)), 90_000);
+      const reached = plainPosition(currentBot.entity.position);
+      site = rememberMineSite({ ...site, deepestPosition: reached.y < Number(site.deepestY ?? 320) ? reached : site.deepestPosition, deepestY: Math.min(reached.y, Number(site.deepestY ?? reached.y)), visits: Number(site.visits || 0) + 1, noProgress: 0, lastVisitedAt: Date.now() });
+      state.caveSearchMisses = 0;
+      await persistMineState();
+      event('mine-route-progress', { siteId: site.id, mode: 'cave', y: reached.y });
+      return { success: true, status: 'mine-explored', mode: 'cave', siteId: site.id, position: statusSnapshot().state.position };
+    }
+    if (currentY > targetY + 4) {
+      return await mineDown(currentBot, Math.min(12, Math.max(4, currentY - targetY)), generation);
+    }
+    const branchDirection = Number.isFinite(Number(site.branchDirection)) ? Number(site.branchDirection) : Math.abs([...site.id].reduce((sum, character) => sum + character.charCodeAt(0), 0)) % 4;
+    const branch = await mineBranch(currentBot, 8, generation, branchDirection);
+    site = rememberMineSite({ ...site, deepestPosition: branch.position, deepestY: Math.min(branch.position.y, Number(site.deepestY ?? branch.position.y)), visits: Number(site.visits || 0) + 1, noProgress: 0, branchDirection, branchIndex: Number(site.branchIndex || 0) + 1, lastVisitedAt: Date.now() });
+    await persistMineState();
+    event('mine-route-progress', { siteId: site.id, mode: 'branch', y: branch.position.y });
+    return { success: true, status: 'mine-explored', mode: 'branch', siteId: site.id, position: statusSnapshot().state.position };
+  } catch (error) {
+    const noProgress = Number(site.noProgress || 0) + 1;
+    rememberMineSite({ ...site, noProgress, lastVisitedAt: Date.now() });
+    if (noProgress >= 3) state.caveSearchMisses = 0;
+    await persistMineState();
+    throw error;
+  } finally {
+    if (previousMovements) currentBot.pathfinder.setMovements(previousMovements);
+  }
+}
+
 async function mineDown(currentBot, depth, generation) {
   const start = currentBot.entity.position.floored();
   const remembered = state.miningEntrance;
   const rememberedDistance = remembered
     ? Math.hypot(start.x - remembered.x, start.z - remembered.z)
     : Infinity;
+  let site = (state.mineSites || []).find((entry) => entry.id === state.activeMineSiteId);
   if (!remembered || (start.y >= Number(remembered.y || start.y) - 1 && rememberedDistance > 8)) {
     state.miningEntrance = { x: start.x, y: start.y, z: start.z };
-    await persistWorldMemory({ miningEntrance: state.miningEntrance });
+    const entrance = plainPosition(state.miningEntrance);
+    site = rememberMineSite({
+      id: mineSiteId('shaft', entrance),
+      type: 'shaft',
+      entrance,
+      deepestPosition: entrance,
+      deepestY: entrance.y,
+      visits: 0,
+      noProgress: 0,
+      branchIndex: 0,
+      lastVisitedAt: Date.now()
+    });
+    await persistMineState();
+  } else if (!site) {
+    const entrance = plainPosition(state.miningEntrance);
+    site = rememberMineSite({ id: mineSiteId('shaft', entrance), type: 'shaft', entrance, deepestPosition: plainPosition(start), deepestY: start.y, visits: 0, noProgress: 0, branchIndex: 0, lastVisitedAt: Date.now() });
   }
   let completed = 0;
   for (let index = 1; index <= depth; index += 1) {
@@ -604,8 +846,19 @@ async function mineDown(currentBot, depth, generation) {
     completed += 1;
     await new Promise((resolve) => setTimeout(resolve, 180));
   }
-  if (completed < 2) throw new Error('No safe downward mining progress was possible.');
-  return { success: true, status: 'descended', depth: completed, position: statusSnapshot().state.position };
+  if (completed < 2) {
+    const noProgress = Number(site.noProgress || 0) + 1;
+    rememberMineSite({ ...site, noProgress, lastVisitedAt: Date.now() });
+    if (noProgress >= 3) state.caveSearchMisses = 0;
+    await persistMineState();
+    throw new Error('No safe downward mining progress was possible.');
+  }
+  const reached = plainPosition(currentBot.entity.position);
+  site = rememberMineSite({ ...site, deepestPosition: reached, deepestY: Math.min(reached.y, Number(site.deepestY ?? reached.y)), visits: Number(site.visits || 0) + 1, noProgress: 0, lastVisitedAt: Date.now() });
+  state.caveSearchMisses = 0;
+  await persistMineState();
+  event('mine-route-progress', { siteId: site.id, mode: 'staircase', y: reached.y });
+  return { success: true, status: 'descended', depth: completed, siteId: site.id, position: statusSnapshot().state.position };
 }
 
 async function waitForReadyBot(generation, timeoutMs = 120_000) {
@@ -763,6 +1016,9 @@ async function executeAction(action, generation = queueGeneration) {
     return executeAction({ action: 'place', block: action.block, x: target.x, y: target.y, z: target.z }, generation);
   }
   if (action.action === 'construct_shelter') return constructShelter(currentBot, action.block, generation);
+  if (action.action === 'pillar_up') return pillarUp(currentBot, action.block, action.height, { isCancelled: () => generation !== queueGeneration });
+  if (action.action === 'find_cave') return findCave(currentBot, action.radius, generation);
+  if (action.action === 'explore_mine') return exploreMine(currentBot, action.targetY, generation);
   if (action.action === 'mine_down') return mineDown(currentBot, action.depth, generation);
   if (action.action === 'go_surface') {
     const entrance = state.miningEntrance;
@@ -830,7 +1086,7 @@ async function executeSkill(action, generation) {
   const skill = action.skill;
   const parentSkill = state.activeSkill;
   const startedAt = Date.now();
-  const maxSteps = skill === 'bootstrap_survival' ? 24 : 12;
+  const maxSteps = ['bootstrap_survival', 'gather_resource'].includes(skill) ? 24 : 12;
   const stageFailures = new Map();
   const trace = [];
   state.activeSkill = { skill, stage: 'starting', step: 0, maxSteps, startedAt };
@@ -856,7 +1112,7 @@ async function executeSkill(action, generation) {
         stageFailures.set(next.stage, count);
         trace.at(-1).error = errorMessage(error);
         event('skill-step-failed', { skill, stage: next.stage, attempt: count, message: errorMessage(error) });
-        const exploreCanRecover = ['collect', 'attack', 'mine_down', 'place_near', 'construct_shelter'].includes(next.action?.action);
+        const exploreCanRecover = ['collect', 'attack', 'place_near', 'construct_shelter'].includes(next.action?.action);
         if (count >= 3 || !exploreCanRecover) throw new Error(`Skill ${skill} is blocked at ${next.stage}: ${errorMessage(error)}`);
         if (generation !== queueGeneration) throw error;
         await executeAction({ action: 'explore', radius: 12 + (count * 8) }, generation);

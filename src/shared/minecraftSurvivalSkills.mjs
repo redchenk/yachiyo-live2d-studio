@@ -9,7 +9,7 @@ export const MINECRAFT_SKILL_DOCS = Object.freeze({
   bootstrap_survival: 'Progresses through wood, a crafting table, sticks, wooden and stone tools, a furnace, coal, raw iron and an iron pickaxe. It verifies every milestone from world state and inventory.',
   secure_food: 'Obtains food from nearby passive animals, explores when none are visible, and eats when hunger is low. It never attacks players.',
   build_shelter: 'Collects and crafts enough building material, then constructs a compact shelter with a doorway and roof at a safe nearby position.',
-  gather_resource: 'Collects a requested visible block/item until the requested inventory total is reached, exploring between failed searches. Use after the required tool tier exists.'
+  gather_resource: 'Collects a requested block/item until the requested inventory total is reached. It searches for natural caves first, remembers productive mine routes, resumes old caves or shafts, and only opens a new staircase after verified cave-search misses.'
 });
 
 const FOOD_PATTERN = /(?:apple|bread|beef|porkchop|chicken|mutton|rabbit|potato|carrot|berries|melon|cod|salmon|stew)$/;
@@ -97,6 +97,21 @@ function complete(stage, description) {
   return { done: true, stage, description, action: null, verify: { type: 'curriculum', stage } };
 }
 
+function miningApproachStep(state, targetY, stagePrefix, resourceLabel) {
+  const currentY = Number(state.position?.y ?? 64);
+  const mineSites = (state.mineSites || []).filter((site) => Number(site.noProgress || 0) < 3);
+  if (mineSites.length || state.miningEntrance || currentY <= targetY + 4) {
+    return step(`${stagePrefix}_reuse_mine`, `resume a known mine route and continue toward ${resourceLabel} near Y ${targetY}`,
+      { action: 'explore_mine', targetY }, { type: 'mine-progress' });
+  }
+  if (Number(state.caveSearchMisses || 0) < 2) {
+    return step(`${stagePrefix}_find_cave`, `search the surrounding terrain for a natural cave leading toward ${resourceLabel}`,
+      { action: 'find_cave', radius: 40 }, { type: 'mine-site-discovered' });
+  }
+  return step(`${stagePrefix}_fallback_shaft`, `open one safe staircase only after cave searches failed`,
+    { action: 'mine_down', depth: Math.min(16, Math.max(4, currentY - targetY)) }, { type: 'mine-progress' });
+}
+
 function bootstrapStep(state) {
   const counts = minecraftInventoryCounts(state);
   const curriculum = evaluateMinecraftCurriculum(state);
@@ -181,9 +196,7 @@ function bootstrapStep(state) {
     const iron = firstBlock(state, /^(?:iron_ore|deepslate_iron_ore)$/);
     return iron
       ? step('raw_iron', 'mine enough iron for the first iron tool', { action: 'collect', block: iron.name, count: 3 - Number(counts.raw_iron || 0) - Number(counts.iron_ingot || 0), radius: 48 }, { type: 'inventory-increase', item: 'raw_iron' })
-      : Number(state.position?.y ?? 64) > 32
-        ? step('iron_depth', 'descend by a safe staircase toward the iron layer', { action: 'mine_down', depth: 12 }, { type: 'y-decrease' })
-        : step('iron_search', 'search the mining layer for exposed iron ore', { action: 'explore', radius: 28 }, { type: 'position-change' });
+      : miningApproachStep(state, 16, 'iron', 'iron ore');
   }
   if (Number(counts.iron_ingot || 0) < 3 && Number(counts.raw_iron || 0) > 0) {
     const fuel = firstInventory(state, /^(?:coal|charcoal)$/) || firstInventory(state, /_(?:planks|log|stem)$/);
@@ -285,7 +298,6 @@ function resourceStep(state, target, count) {
     lapis_lazuli: 0,
     raw_iron: 16
   }[normalizedTarget];
-  const currentY = Number(state.position?.y ?? 64);
   const verification = normalizedTarget === 'log'
     ? { type: 'inventory-increase', itemPattern: '_(log|stem)$' }
     : normalizedTarget === 'cobblestone'
@@ -293,8 +305,8 @@ function resourceStep(state, target, count) {
       : { type: 'inventory-increase', item: normalizedTarget };
   return block
     ? step('gather_resource', `collect ${normalizedTarget} (${current}/${desired})`, { action: 'collect', block: block.name, count: Math.min(16, desired - current), radius: 48 }, verification)
-    : Number.isFinite(targetDepth) && currentY > targetDepth + 4
-      ? step('resource_depth', `descend safely toward Y ${targetDepth} for ${normalizedTarget}`, { action: 'mine_down', depth: Math.min(16, Math.max(4, currentY - targetDepth)) }, { type: 'y-decrease' })
+    : Number.isFinite(targetDepth)
+      ? miningApproachStep(state, targetDepth, 'resource', normalizedTarget)
       : step('resource_search', `search for ${normalizedTarget}`, { action: 'explore', radius: 30 }, { type: 'position-change' });
 }
 
@@ -350,6 +362,24 @@ export function verifyMinecraftSkillStep(step = {}, before = {}, after = {}) {
     const change = Number(after.position?.y || 0) - Number(before.position?.y || 0);
     return { success: change >= 2, evidence: `ascended:${Math.round(change * 10) / 10}` };
   }
+  if (verify.type === 'mine-site-discovered') {
+    const beforeIds = new Set((before.mineSites || []).map((site) => site.id));
+    const activeAfter = (after.mineSites || []).find((site) => site.id === after.activeMineSiteId);
+    const activeBefore = (before.mineSites || []).find((site) => site.id === after.activeMineSiteId);
+    const discovered = (after.mineSites || []).some((site) => !beforeIds.has(site.id))
+      || Boolean(activeAfter && Number(activeAfter.noProgress || 0) < 3 && Number(activeBefore?.noProgress || 0) >= 3);
+    return { success: discovered, evidence: discovered ? `mine-site:${after.activeMineSiteId || 'discovered'}` : `cave-search-miss:${after.caveSearchMisses || 0}` };
+  }
+  if (verify.type === 'mine-progress') {
+    const beforePosition = before.position || {};
+    const afterPosition = after.position || {};
+    const travelled = Math.hypot(Number(afterPosition.x || 0) - Number(beforePosition.x || 0), Number(afterPosition.z || 0) - Number(beforePosition.z || 0));
+    const descended = Number(beforePosition.y || 0) - Number(afterPosition.y || 0);
+    const beforeDepth = Math.min(...(before.mineSites || []).map((site) => Number(site.deepestPosition?.y ?? site.deepestY ?? 320)), 320);
+    const afterDepth = Math.min(...(after.mineSites || []).map((site) => Number(site.deepestPosition?.y ?? site.deepestY ?? 320)), 320);
+    const success = travelled >= 4 || descended >= 2 || afterDepth < beforeDepth;
+    return { success, evidence: `mine-progress:travel=${Math.round(travelled * 10) / 10},descent=${Math.round(descended * 10) / 10},depth=${beforeDepth}->${afterDepth}` };
+  }
   if (verify.type === 'tool-tier') {
     const ready = hasTool(minecraftInventoryCounts(after), verify.tier, verify.tool);
     return { success: ready, evidence: `${verify.tier}_${verify.tool}:${ready ? 'ready' : 'missing'}` };
@@ -365,6 +395,7 @@ export function minecraftSkillPromptSummary(state = {}, skillMemory = {}) {
   const docs = MINECRAFT_SKILL_IDS.map((id) => `${id}: ${MINECRAFT_SKILL_DOCS[id]}`).join('\n');
   return [
     `[CURRICULUM] stage=${curriculum.stage}; progress=${curriculum.completedCount}/${curriculum.totalCount}; recommended=${curriculum.recommendedSkill}`,
+    `mining_routes=${(state.mineSites || []).length}; active_mine=${state.activeMineSiteId || 'none'}; cave_search_misses=${Number(state.caveSearchMisses || 0)}`,
     `milestones=${curriculum.milestones.map((entry) => `${entry.id}:${entry.complete ? 'done' : 'todo'}`).join(',')}`,
     `[SAFE_SKILL_LIBRARY]\n${docs}`,
     `skill_memory=${JSON.stringify(skillMemory || {})}`

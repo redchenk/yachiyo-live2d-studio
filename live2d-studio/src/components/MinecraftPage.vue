@@ -18,7 +18,7 @@ const status = ref(null);
 const busy = ref('');
 const notice = ref('');
 const autonomy = ref(null);
-const action = reactive({ type: 'observe', target: '', fuel: 'coal', destination: 'auto', skill: 'bootstrap_survival', x: 0, y: 64, z: 0, count: 1, radius: 24 });
+const action = reactive({ type: 'observe', target: '', fuel: 'coal', destination: 'auto', skill: 'bootstrap_survival', x: 0, y: 64, z: 0, targetY: -54, count: 1, radius: 24 });
 let pollTimer = 0;
 
 const state = computed(() => status.value?.state || {});
@@ -101,6 +101,9 @@ function actionPayload() {
   if (action.type === 'equip') return { action: 'equip', item: action.target, destination: action.destination };
   if (action.type === 'smelt') return { action: 'smelt', item: action.target, fuel: action.fuel, count: action.count };
   if (action.type === 'place') return { action: 'place', block: action.target, x: action.x, y: action.y, z: action.z };
+  if (action.type === 'pillar_up') return { action: 'pillar_up', block: action.target, height: action.count };
+  if (action.type === 'find_cave') return { action: 'find_cave', radius: action.radius };
+  if (action.type === 'explore_mine') return { action: 'explore_mine', targetY: action.targetY };
   if (action.type === 'attack') return { action: 'attack', target: action.target, radius: 8 };
   if (action.type === 'skill') return action.skill === 'gather_resource'
     ? { action: 'skill', skill: action.skill, target: action.target, count: action.count }
@@ -185,6 +188,7 @@ onUnmounted(() => {
         <div class="players"><span>附近玩家</span><strong>{{ nearbyPlayers.map((item) => `${item.name} ${item.distance}m`).join(' · ') || '无' }}</strong></div>
         <div class="autonomy-strip"><span>自主循环</span><strong>{{ autonomyPhase }}</strong><em>{{ state.activeSkill?.description || autonomy?.lastDecision?.progress || autonomy?.lastDecision?.thought || '等待下一次规划' }}</em></div>
         <div class="autonomy-strip"><span>生存课程</span><strong>{{ curriculum.completedCount || 0 }}/{{ curriculum.totalCount || 9 }}</strong><em>{{ curriculum.stageLabel || '等待世界状态' }}</em></div>
+        <div class="autonomy-strip"><span>矿道记忆</span><strong>{{ (state.mineSites || []).length }}</strong><em>{{ state.activeMineSiteId || `洞穴搜索失败 ${state.caveSearchMisses || 0} 次` }}</em></div>
       </article>
 
       <article class="minecraft-card action-card">
@@ -194,20 +198,23 @@ onUnmounted(() => {
           <option value="collect">收集方块</option><option value="craft">合成</option><option value="attack">攻击目标</option>
           <option value="explore">探索</option><option value="eat">进食</option><option value="equip">装备物品</option>
           <option value="sleep">睡觉</option><option value="smelt">烧炼</option><option value="place">放置方块</option>
+          <option value="pillar_up">可靠垫高</option><option value="find_cave">寻找天然矿洞</option><option value="explore_mine">探索已有矿道</option>
           <option value="skill">复合技能</option>
           <option value="chat">聊天</option><option value="stop">紧急停止</option>
         </select>
         <div v-if="['move', 'place'].includes(action.type)" class="coords">
           <input v-model.number="action.x" type="number" placeholder="X"><input v-model.number="action.y" type="number" placeholder="Y"><input v-model.number="action.z" type="number" placeholder="Z">
         </div>
-        <input v-if="!['observe', 'stop', 'move', 'explore', 'eat', 'sleep', 'skill'].includes(action.type)" v-model="action.target" type="text" spellcheck="false" :placeholder="action.type === 'chat' ? '安全聊天内容（禁止 / 命令）' : '玩家 / 方块 / 物品 / 生物注册名'">
+        <input v-if="!['observe', 'stop', 'move', 'explore', 'find_cave', 'explore_mine', 'eat', 'sleep', 'skill'].includes(action.type)" v-model="action.target" type="text" spellcheck="false" :placeholder="action.type === 'chat' ? '安全聊天内容（禁止 / 命令）' : action.type === 'pillar_up' ? '垫高方块，例如 cobblestone' : '玩家 / 方块 / 物品 / 生物注册名'">
         <input v-if="action.type === 'smelt'" v-model="action.fuel" type="text" spellcheck="false" placeholder="燃料注册名，例如 coal">
         <select v-if="action.type === 'equip'" v-model="action.destination"><option value="auto">自动槽位</option><option value="hand">主手</option><option value="off-hand">副手</option><option value="head">头部</option><option value="torso">胸部</option><option value="legs">腿部</option><option value="feet">脚部</option></select>
         <select v-if="action.type === 'skill'" v-model="action.skill"><option value="bootstrap_survival">自动推进生存科技</option><option value="secure_food">获取食物</option><option value="build_shelter">建造庇护所</option><option value="gather_resource">获取指定资源</option></select>
         <input v-if="action.type === 'skill' && action.skill === 'gather_resource'" v-model="action.target" type="text" spellcheck="false" placeholder="资源名，例如 diamond / coal">
         <label v-if="['collect', 'craft', 'smelt'].includes(action.type)" class="count-row"><span>数量</span><input v-model.number="action.count" type="number" min="1" max="16"></label>
+        <label v-if="action.type === 'pillar_up'" class="count-row"><span>垫高层数</span><input v-model.number="action.count" type="number" min="1" max="12"></label>
         <label v-if="action.type === 'skill' && action.skill === 'gather_resource'" class="count-row"><span>目标数量</span><input v-model.number="action.count" type="number" min="1" max="64"></label>
-        <label v-if="action.type === 'explore'" class="count-row"><span>探索半径</span><input v-model.number="action.radius" type="number" min="8" max="64"></label>
+        <label v-if="['explore', 'find_cave'].includes(action.type)" class="count-row"><span>探索半径</span><input v-model.number="action.radius" type="number" min="8" max="64"></label>
+        <label v-if="action.type === 'explore_mine'" class="count-row"><span>目标 Y</span><input v-model.number="action.targetY" type="number" min="-60" max="320"></label>
         <button class="primary" type="button" :disabled="Boolean(busy) || !minecraft.enabled" @click="runAction">执行动作</button>
         <p>{{ notice || '动作异步执行，不会阻塞直播字幕、TTS 或弹幕回复。' }}</p>
       </article>

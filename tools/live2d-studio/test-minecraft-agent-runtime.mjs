@@ -25,6 +25,11 @@ assert.deepEqual(normalizeMinecraftAction({ action: 'place_near', block: 'crafti
   action: 'place_near', block: 'crafting_table', radius: 12
 });
 assert.deepEqual(normalizeMinecraftAction({ action: 'mine_down', depth: 999 }), { action: 'mine_down', depth: 24 });
+assert.deepEqual(normalizeMinecraftAction({ action: 'pillar_up', block: 'cobblestone', height: 99 }), {
+  action: 'pillar_up', block: 'cobblestone', height: 12
+});
+assert.deepEqual(normalizeMinecraftAction({ action: 'find_cave', radius: 99 }), { action: 'find_cave', radius: 48 });
+assert.deepEqual(normalizeMinecraftAction({ action: 'explore_mine', targetY: -999 }), { action: 'explore_mine', targetY: -60 });
 assert.deepEqual(normalizeMinecraftAction({ action: 'construct_shelter', block: 'oak planks' }), { action: 'construct_shelter', block: 'oak_planks' });
 assert.throws(() => normalizeMinecraftAction({ action: 'skill', skill: 'write_code' }), /unsupported minecraft skill/i);
 assert.equal(normalizeMinecraftConfig({ auth: 'anything', port: 99999 }).auth, 'offline');

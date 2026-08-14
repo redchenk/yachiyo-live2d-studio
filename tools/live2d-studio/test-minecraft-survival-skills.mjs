@@ -49,7 +49,7 @@ const ironDepthStage = state([
   { name: 'oak_planks', count: 12 }, { name: 'stick', count: 4 }, { name: 'stone_pickaxe', count: 1 },
   { name: 'cobblestone', count: 8 }, { name: 'raw_iron', count: 0 }
 ], [{ name: 'crafting_table' }, { name: 'furnace' }, { name: 'coal_ore' }], { position: { x: 0, y: 64, z: 0 } });
-assert.equal(nextMinecraftSkillStep({ skill: 'bootstrap_survival' }, ironDepthStage).action.action, 'mine_down');
+assert.equal(nextMinecraftSkillStep({ skill: 'bootstrap_survival' }, ironDepthStage).action.action, 'find_cave');
 
 const ironComplete = state([
   { name: 'iron_pickaxe', count: 1 }, { name: 'coal', count: 2 }, { name: 'raw_iron', count: 3 },
@@ -91,10 +91,25 @@ assert.deepEqual(nextMinecraftSkillStep({ skill: 'gather_resource', target: 'dia
 });
 assert.equal(nextMinecraftSkillStep({ skill: 'gather_resource', target: 'diamond', count: 2 }, state([
   { name: 'iron_pickaxe', count: 1 }
-], [], { position: { x: 0, y: 64, z: 0 } })).action.action, 'mine_down');
+], [], { position: { x: 0, y: 64, z: 0 } })).action.action, 'find_cave');
 assert.equal(nextMinecraftSkillStep({ skill: 'gather_resource', target: 'diamond', count: 2 }, state([
   { name: 'iron_pickaxe', count: 1 }
-], [], { position: { x: 0, y: 0, z: 0 } })).action.action, 'mine_down', 'diamond progression must continue below the old Y=20 cutoff');
+], [], { position: { x: 30, y: 64, z: 0 }, caveSearchMisses: 1 })).action.action, 'find_cave', 'one search miss must move to another cave-search area before shaft fallback');
+assert.equal(nextMinecraftSkillStep({ skill: 'gather_resource', target: 'diamond', count: 2 }, state([
+  { name: 'iron_pickaxe', count: 1 }
+], [], {
+  position: { x: 0, y: 64, z: 0 },
+  mineSites: [{ id: 'cave-1', type: 'cave', entrance: { x: 10, y: 61, z: 2 }, deepestPosition: { x: 12, y: 20, z: 3 }, noProgress: 0 }]
+})).action.action, 'explore_mine', 'a remembered cave must be reused before opening a new shaft');
+assert.equal(nextMinecraftSkillStep({ skill: 'gather_resource', target: 'diamond', count: 2 }, state([
+  { name: 'iron_pickaxe', count: 1 }
+], [], { position: { x: 0, y: 0, z: 0 }, caveSearchMisses: 2 })).action.action, 'mine_down', 'a verified cave-search miss may fall back to a staircase shaft');
+assert.equal(nextMinecraftSkillStep({ skill: 'gather_resource', target: 'diamond', count: 2 }, state([
+  { name: 'iron_pickaxe', count: 1 }
+], [], {
+  position: { x: 0, y: 64, z: 0 }, caveSearchMisses: 2,
+  mineSites: [{ id: 'shaft-1', type: 'shaft', entrance: { x: 0, y: 64, z: 0 }, deepestPosition: { x: 16, y: 48, z: 0 }, noProgress: 0 }]
+})).action.action, 'explore_mine', 'the staircase fallback must become a reusable route instead of being opened again');
 assert.equal(nextMinecraftSkillStep({ skill: 'gather_resource', target: 'diamond', count: 2 }, state([
   { name: 'iron_pickaxe', count: 1 }, { name: 'diamond', count: 2 }
 ], [], { position: { x: 12, y: 16, z: 0 }, miningEntrance: { x: 0, y: 64, z: 0 } })).action.action, 'go_surface');
@@ -108,6 +123,11 @@ assert.equal(verifyMinecraftSkillStep({ verify: { type: 'position-change' }, act
   state(), state([], [], { position: { x: 8, y: 64, z: 0 } })).success, true);
 assert.equal(verifyMinecraftSkillStep({ verify: { type: 'y-increase' }, action: { action: 'go_surface' } },
   state([], [], { position: { x: 12, y: 16, z: 0 } }), state([], [], { position: { x: 0, y: 64, z: 0 } })).success, true);
+assert.equal(verifyMinecraftSkillStep({ verify: { type: 'mine-site-discovered' }, action: { action: 'find_cave' } },
+  state(), state([], [], { mineSites: [{ id: 'cave-1' }], activeMineSiteId: 'cave-1' })).success, true);
+assert.equal(verifyMinecraftSkillStep({ verify: { type: 'mine-progress' }, action: { action: 'explore_mine' } },
+  state([], [], { mineSites: [{ id: 'cave-1', deepestPosition: { x: 0, y: 40, z: 0 } }] }),
+  state([], [], { position: { x: 8, y: 32, z: 0 }, mineSites: [{ id: 'cave-1', deepestPosition: { x: 8, y: 32, z: 0 } }] })).success, true);
 assert.throws(() => nextMinecraftSkillStep({ skill: 'javascript' }, state()), /unsupported/i);
 
 console.log('Minecraft survival skill checks passed');

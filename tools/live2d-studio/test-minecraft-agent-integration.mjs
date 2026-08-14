@@ -21,7 +21,7 @@ for (const dependency of ['mineflayer', 'mineflayer-pathfinder', 'mineflayer-col
 }
 
 assert.match(policy, /MINECRAFT_ACTION_TYPES/);
-for (const action of ['observe', 'move', 'follow', 'collect', 'craft', 'place', 'place_near', 'construct_shelter', 'mine_down', 'go_surface', 'attack', 'explore', 'eat', 'equip', 'sleep', 'smelt', 'skill', 'chat', 'stop']) {
+for (const action of ['observe', 'move', 'follow', 'collect', 'craft', 'place', 'place_near', 'construct_shelter', 'pillar_up', 'find_cave', 'explore_mine', 'mine_down', 'go_surface', 'attack', 'explore', 'eat', 'equip', 'sleep', 'smelt', 'skill', 'chat', 'stop']) {
   assert.match(policy, new RegExp(`['\"]${action}['\"]`), `Minecraft action whitelist must include ${action}`);
 }
 assert.match(policy, /cannot start with/i, 'Minecraft chat policy must reject slash commands');
@@ -37,6 +37,10 @@ assert.match(service, /executeSkill/);
 assert.match(service, /verifyMinecraftSkillStep/);
 assert.match(service, /minecraft-skill-memory\.json/);
 assert.match(service, /activeSkill/);
+assert.match(service, /allow1by1towers\s*=\s*false/, 'generic pathfinding must not perform slow implicit jump-pillaring');
+assert.match(service, /pillarUp/);
+assert.match(service, /findCave/);
+assert.match(service, /exploreMine/);
 
 assert.match(autonomy, /outcomeHistory/);
 assert.match(autonomy, /repeatedFailures/);
