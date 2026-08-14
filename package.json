@@ -36,5 +36,8 @@
   },
   "engines": {
     "node": ">=20.0.0"
+  },
+  "overrides": {
+    "ip-address": "10.3.1"
   }
 }
