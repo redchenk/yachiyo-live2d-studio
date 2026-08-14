@@ -15,6 +15,10 @@ import {
 } from './minecraft-action-policy.mjs';
 import { pillarUp } from './minecraft-movement-primitives.mjs';
 import {
+  configureSafeMinecraftMovements,
+  installMinecraftSafetySupervisor
+} from './minecraft-safety.mjs';
+import {
   evaluateMinecraftCurriculum,
   nextMinecraftSkillStep,
   verifyMinecraftSkillStep
@@ -63,6 +67,7 @@ let activeTask = null;
 let actionQueue = Promise.resolve();
 let lowHealthInFlight = false;
 let drowningRecovery = false;
+let safetySupervisor = null;
 let skillMemory = {};
 let skillMemoryLoadPromise = null;
 const taskQueue = [];
@@ -300,7 +305,7 @@ function statusSnapshot() {
       reconnectAttempts,
       taskQueueDepth: taskQueue.length,
       activeTask,
-      safetyLock: lowHealthInFlight ? 'low-health' : drowningRecovery ? 'drowning' : '',
+      safetyLock: lowHealthInFlight ? 'low-health' : drowningRecovery ? 'drowning' : (safetySupervisor?.status().lock || ''),
       position: position ? { x: Math.round(position.x * 10) / 10, y: Math.round(position.y * 10) / 10, z: Math.round(position.z * 10) / 10 } : null,
       health: Number(bot?.health ?? 0),
       food: Number(bot?.food ?? 0),
@@ -334,6 +339,7 @@ function stopCurrentAction() {
 }
 
 function haltBotControls() {
+  try { bot?.pathfinder?.stop?.(); } catch {}
   try { bot?.pathfinder?.setGoal(null); } catch {}
   try { bot?.collectBlock?.cancelTask?.(); } catch {}
   try { bot?.clearControlStates?.(); } catch {}
@@ -365,6 +371,8 @@ async function disconnectBot(reason = 'reconfigure') {
   if (reconnectTimer) clearTimeout(reconnectTimer);
   reconnectTimer = null;
   stopCurrentAction();
+  safetySupervisor?.dispose();
+  safetySupervisor = null;
   const current = bot;
   bot = null;
   mcData = null;
@@ -390,6 +398,7 @@ async function connectBot() {
     port: config.port,
     username: config.username,
     auth: config.auth,
+    respawn: true,
     profilesFolder: authProfilesFolder,
     hideErrors: true,
     onMsaCode: (data) => {
@@ -417,9 +426,12 @@ async function connectBot() {
   nextBot.on('spawn', () => {
     if (bot !== nextBot) return;
     mcData = minecraftData(nextBot.version);
-    const defaultMovements = new Movements(nextBot);
+    const defaultMovements = configureSafeMinecraftMovements(nextBot, new Movements(nextBot));
     defaultMovements.allow1by1towers = false;
     nextBot.pathfinder.setMovements(defaultMovements);
+    if (nextBot.collectBlock) {
+      nextBot.collectBlock.movements = configureSafeMinecraftMovements(nextBot, new Movements(nextBot), { lockCritical: true });
+    }
     state.connected = true;
     state.spawned = true;
     state.phase = 'ready';
@@ -445,12 +457,6 @@ async function connectBot() {
       event('drowning-recovery-complete', { oxygen: Number(nextBot.oxygenLevel) });
     }
   });
-  nextBot.on('death', () => {
-    stopCurrentAction();
-    drowningRecovery = false;
-    state.phase = 'dead';
-    event('death');
-  });
   nextBot.on('kicked', (reason) => {
     state.lastDisconnectReason = String(reason || 'kicked').slice(0, 500);
     event('kicked');
@@ -460,7 +466,10 @@ async function connectBot() {
     event('error', { message: state.lastError });
   });
   nextBot.once('end', (reason) => {
-    if (bot === nextBot) bot = null;
+    if (bot !== nextBot) return;
+    safetySupervisor?.dispose();
+    safetySupervisor = null;
+    bot = null;
     mcData = null;
     state.connected = false;
     state.spawned = false;
@@ -469,6 +478,34 @@ async function connectBot() {
     state.lastDisconnectReason = String(reason || 'connection ended').slice(0, 500);
     event('end', { reason: state.lastDisconnectReason });
     scheduleReconnect();
+  });
+  safetySupervisor = installMinecraftSafetySupervisor(nextBot, {
+    cancelCurrentAction: (reason) => {
+      stopCurrentAction();
+      event('safety-action-cancelled', { reason });
+    },
+    isActionActive: () => bot === nextBot && Boolean(activeTask || nextBot.pathfinder?.isMoving?.()),
+    onDeath: () => {
+      drowningRecovery = false;
+      state.spawned = false;
+      state.phase = 'dead';
+      event('death');
+    },
+    onRespawn: () => {
+      if (bot === nextBot) event('death-recovery-complete');
+    },
+    onRespawnStalled: ({ attempts }) => {
+      if (bot !== nextBot) return;
+      event('respawn-stalled-reconnecting', { attempts });
+      disconnectBot('respawn-stalled')
+        .then(() => config.enabled ? connectBot() : null)
+        .catch((error) => {
+          state.lastError = errorMessage(error);
+          event('respawn-reconnect-failed', { message: state.lastError });
+          scheduleReconnect();
+        });
+    },
+    onEvent: (type, detail) => event(type, detail)
   });
   return statusSnapshot();
 }
@@ -644,7 +681,7 @@ function caveCandidates(currentBot, radius, minimumY) {
 }
 
 function caveMovements(currentBot) {
-  const movements = new Movements(currentBot);
+  const movements = configureSafeMinecraftMovements(currentBot, new Movements(currentBot));
   movements.allow1by1towers = false;
   movements.allowParkour = false;
   movements.canDig = false;
