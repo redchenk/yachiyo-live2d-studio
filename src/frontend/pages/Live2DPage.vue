@@ -61,6 +61,8 @@ import { yachiyoMusicAdapter } from '../services/room/yachiyoMusicAdapter';
 import {
   readRoomASRSettings,
   readRoomBilibiliDanmakuSettings,
+  readRoomLive2DStreamSettings,
+  writeRoomLive2DStreamSettings,
   readRoomMusicSettings,
   readRoomMinecraftSettings,
   writeRoomMinecraftSettings,
@@ -88,6 +90,11 @@ import {
   resolveLive2DDirectorReplyDelay
 } from '../services/room/live2dDirectorScheduler';
 import {
+  buildLive2DStreamSchedulePrompt,
+  createLive2DStreamSchedule,
+  formatLive2DStreamTime
+} from '../services/room/live2dStreamSchedule';
+import {
   createLive2DPrefetchWindowTrigger,
   createLive2DTurnPipeline
 } from '../services/room/live2dTurnPipeline';
@@ -114,7 +121,7 @@ const emit = defineEmits(['item-editor-close']);
 const live2d = useLive2D();
 const booted = ref(false);
 const prompt = ref('Say hello to the audience and choose a bright expression.');
-const liveTopic = ref('late-night AI VTuber test stream');
+const liveTopic = ref('八千代的春日闲聊 · 一起听歌吧');
 const audienceInput = ref('');
 const audienceQueue = ref([]);
 const showLog = ref([]);
@@ -154,6 +161,8 @@ const liveDirector = reactive({
   turn: 0,
   autoVoice: true
 });
+const streamSettings = reactive(readRoomLive2DStreamSettings());
+const streamScheduleState = ref({ phase: 'idle', elapsedMs: 0, remainingMs: null, endsAt: 0 });
 const speechState = ref({
   status: 'idle',
   error: ''
@@ -192,6 +201,8 @@ const MODEL_VIEWPORT_LIMITS = Object.freeze({
 let liveTurnsInFlight = 0;
 let liveLlmRequestCount = 0;
 let liveDirectorSessionId = 0;
+let pendingStreamCue = '';
+let streamEndingTimeout = 0;
 const liveDirectorAbortControllers = new Set();
 let livePlaybackPrefetchBarrier = null;
 let livePlaybackPrefetchConsumed = true;
@@ -219,6 +230,11 @@ const LOCAL_VTS_ITEM_CONTROL_EVENT = 'tsukuyomi:live2d-local-vts-item';
 const LOCAL_VTS_ITEM_STATE_EVENT = 'tsukuyomi:live2d-local-vts-item-state';
 const liveDirectorScheduler = createLive2DDirectorScheduler({
   onTurn: (context) => runLiveTurn(context)
+});
+const streamSchedule = createLive2DStreamSchedule({
+  onChange: state => { streamScheduleState.value = state; },
+  onClosing: () => requestStreamCue('closing'),
+  onDeadline: () => requestStreamCue('farewell')
 });
 const liveTurnPipeline = createLive2DTurnPipeline({
   maxConcurrentGenerations: 2,
@@ -668,11 +684,41 @@ const statusLabel = computed(() => {
 
 const liveStateDisplay = computed(() => {
   if (liveDirector.error) return '异常';
+  if (liveDirector.running && streamScheduleState.value.phase === 'ending') return '结束中';
+  if (liveDirector.running && streamScheduleState.value.phase === 'closing') return '收尾中';
   if (liveDirector.running && liveDirector.status === 'speaking') return '发言中';
   if (liveDirector.running && liveDirector.status === 'thinking') return '思考中';
   if (liveDirector.running) return '直播中';
   return '待机';
 });
+const streamElapsedDisplay = computed(() => formatLive2DStreamTime(streamScheduleState.value.elapsedMs));
+const streamRemainingDisplay = computed(() => streamScheduleState.value.remainingMs == null
+  ? '不限时' : formatLive2DStreamTime(streamScheduleState.value.remainingMs));
+const streamEndTimeDisplay = computed(() => streamScheduleState.value.endsAt
+  ? new Date(streamScheduleState.value.endsAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) : '');
+
+function saveStreamSettings() {
+  Object.assign(streamSettings, writeRoomLive2DStreamSettings(streamSettings));
+}
+
+function canHandleLiveAudience() {
+  return liveDirector.running && streamScheduleState.value.phase !== 'ending';
+}
+
+function requestStreamCue(cue) {
+  if (!liveDirector.running) return;
+  pendingStreamCue = cue;
+  liveDirectorScheduler.cancel();
+  livePlaybackPrefetchConsumed = true;
+  if (cue === 'farewell') {
+    // Bound an unavailable LLM/TTS; normally stop after the farewell audio finishes.
+    const sessionId = liveDirectorSessionId;
+    streamEndingTimeout = window.setTimeout(() => {
+      if (liveDirector.running && sessionId === liveDirectorSessionId) stopLiveDirector({ completed: true });
+    }, 90_000);
+  }
+  handleLivePlaybackIdle();
+}
 const readinessDisplay = computed(() => {
   if (live2d.error.value) return '模型异常';
   if (live2d.ready.value) return '模型就绪';
@@ -839,6 +885,8 @@ function pushLog(role, text, meta = {}) {
 }
 
 async function executeMusicFromLLMResult(result, source = 'manual', fallbackText = '', context = {}) {
+  if (['live', 'audience-music'].includes(source) &&
+    (!canHandleLiveAudience() || streamScheduleState.value.phase === 'closing')) return null;
   const rawMusicCommand = result?.music || inferLive2DMusicCommandFromText(fallbackText);
   if (!rawMusicCommand) return null;
   const normalizedCommand = source === 'live'
@@ -1721,12 +1769,15 @@ function buildLiveDirectorPrompt(audienceLines, options = {}) {
     'Always prioritize superchats, gifts, and guard purchases. Thank the named viewer naturally, mentioning the gift or message without sounding like a receipt printer.',
     'If a paid event is selected, acknowledge every selected paid viewer before any ordinary chat. Never omit a gift, guard purchase, or superchat from acknowledgedIndexes.',
     'Respond to the meaning of viewer messages instead of quoting or repeating their full text verbatim. A short keyword is fine only when needed for clarity.',
-    'Do not wait passively for instructions. React, tease gently, ask a tiny hook, or continue the topic.',
+    streamScheduleState.value.phase === 'live'
+      ? 'Do not wait passively for instructions. React, tease gently, ask a tiny hook, or continue the topic.'
+      : 'Follow the host closing schedule. Do not introduce a new open-ended hook or lengthy activity.',
     'Choose 2-5 semantic actions every turn unless the moment is intentionally calm.',
     'Match actions to the meaning of the line and vary the combo from the previous turn; avoid looping the same body action.',
     `Prefer action combos like ${behaviorActionComboPrompt()}.`,
     'Use emotion plus actions instead of raw Live2D parameters. Let the behavior controller map actions to VTube Studio tracking curves.',
     'Never show action cues in the spoken reply or caption: no parentheses, no asterisk actions, no Action/Pose labels, and no body descriptions in reply. Put movement only in the actions array.',
+    buildLive2DStreamSchedulePrompt(streamScheduleState.value, { cue: options.streamCue }),
     options.streaming
       ? 'Streaming mode: follow the system format exactly, with VOICE lines first and CONTROL JSON last.'
       : 'Return the required JSON object only.'
@@ -1738,6 +1789,7 @@ function scheduleLivePlaybackPrefetch() {
     livePlaybackPrefetchConsumed ||
     !livePlaybackPrefetchBarrier ||
     !liveDirector.running ||
+    streamScheduleState.value.phase !== 'live' ||
     audienceQueue.value.length < 1
   ) return false;
   livePlaybackPrefetchConsumed = true;
@@ -1756,7 +1808,12 @@ function openLivePlaybackPrefetchWindow(enqueueAfter) {
 }
 
 function handleLivePlaybackIdle() {
-  if (!liveDirector.running || liveTurnsInFlight > 0) return;
+  if (!liveDirector.running || liveTurnsInFlight > 0 || liveTurnPipeline.pendingPlaybackCount() > 0) return;
+  if (pendingStreamCue) {
+    liveDirectorScheduler.schedule(0);
+    return;
+  }
+  if (streamScheduleState.value.phase === 'ending') return;
   if (speechState.value.status !== 'playing') liveDirector.status = 'idle';
   liveDirectorScheduler.playbackIdle({
     pendingAudience: audienceQueue.value.length > 0,
@@ -1766,13 +1823,17 @@ function handleLivePlaybackIdle() {
 }
 
 async function runLiveTurn(trigger = {}) {
+  streamSchedule.tick();
   const playbackPrefetch = trigger?.reason === 'playback-prefetch';
   if (
     !liveDirector.running ||
+    (streamScheduleState.value.phase === 'ending' && !pendingStreamCue) ||
     !liveTurnPipeline.canStartGeneration() ||
     (!playbackPrefetch && liveTurnsInFlight > 0) ||
     (!playbackPrefetch && llmState.value.loading)
   ) return;
+  const streamCue = pendingStreamCue;
+  pendingStreamCue = '';
   liveTurnsInFlight += 1;
   const turnSessionId = liveDirectorSessionId;
   const turnId = uid('live-turn');
@@ -1829,7 +1890,7 @@ async function runLiveTurn(trigger = {}) {
   };
   const requeueUnplayedAudience = (entries) => {
     const targets = settleAudienceLines(entries, false);
-    if (!targets.length) return;
+    if (!targets.length || !isCurrentTurn()) return;
     audienceQueue.value = requeueLive2DAudienceTurn(audienceQueue.value, targets);
     if (liveDirector.running) {
       liveDirectorScheduler.audienceArrived({
@@ -1851,7 +1912,7 @@ async function runLiveTurn(trigger = {}) {
         if (!playbackPrefetch || speechState.value.status !== 'playing') {
           liveDirector.status = 'thinking';
         }
-        return performStreamingLiveTurn(buildLiveDirectorPrompt(audienceLines, { streaming: true }), {
+        return performStreamingLiveTurn(buildLiveDirectorPrompt(audienceLines, { streaming: true, streamCue }), {
           turnId,
           telemetryStartedAt,
           requestedBy: musicRequestedBy,
@@ -1868,7 +1929,7 @@ async function runLiveTurn(trigger = {}) {
           isCurrent: isCurrentTurn
         });
       }
-      const result = await performLLMAct(buildLiveDirectorPrompt(audienceLines), 'live', {
+      const result = await performLLMAct(buildLiveDirectorPrompt(audienceLines, { streamCue }), 'live', {
         dispatchLive2D: true,
         requestedBy: musicRequestedBy,
         audienceLines,
@@ -1880,7 +1941,10 @@ async function runLiveTurn(trigger = {}) {
     });
     if (!generation.accepted) {
       settleRemainingAudience(false);
-      audienceQueue.value = requeueLive2DAudienceTurn(audienceQueue.value, audienceLines);
+      if (isCurrentTurn()) {
+        audienceQueue.value = requeueLive2DAudienceTurn(audienceQueue.value, audienceLines);
+        if (streamCue) pendingStreamCue = streamCue;
+      }
       return;
     }
     const acknowledgements = resolveLive2DAudienceTurnOutcome(
@@ -1924,12 +1988,13 @@ async function runLiveTurn(trigger = {}) {
     liveDirector.status = liveTurnPipeline.pendingPlaybackCount() > 0
       ? 'speaking'
       : 'idle';
+    if (streamCue === 'farewell') await Promise.resolve(generation.result?.playbackDone);
   } catch (error) {
     if (turnSessionId === liveDirectorSessionId) {
       liveTurnPipeline.trackPlayback(error?.playbackDone);
     }
     settleRemainingAudience(false);
-    audienceQueue.value = requeueLive2DAudienceTurn(audienceQueue.value, audienceLines);
+    if (isCurrentTurn()) audienceQueue.value = requeueLive2DAudienceTurn(audienceQueue.value, audienceLines);
     const cancelled = error?.name === 'AbortError' || turnSessionId !== liveDirectorSessionId;
     if (!cancelled) {
       liveDirector.error = error.message || 'Live director failed';
@@ -1941,6 +2006,10 @@ async function runLiveTurn(trigger = {}) {
     settleGenerationBarrier?.();
     liveTurnsInFlight = Math.max(0, liveTurnsInFlight - 1);
     liveDirectorAbortControllers.delete(turnAbortController);
+    if (streamCue === 'farewell' && isCurrentTurn() && !pendingStreamCue) {
+      stopLiveDirector({ completed: true });
+      return;
+    }
     if (liveDirector.running) {
       if (turnSessionId !== liveDirectorSessionId) {
         queueMicrotask(() => runLiveTurn({ reason: 'restart' }));
@@ -1962,18 +2031,30 @@ function startLiveDirector() {
   liveDirector.running = true;
   liveDirector.status = 'starting';
   liveDirector.error = '';
+  saveStreamSettings();
+  audienceQueue.value = [];
+  pendingStreamCue = '';
+  streamSchedule.start(streamSettings);
   liveReplyRepetitionGuard.reset();
   emitLiveReplyTelemetry({ stage: 'director-start', source: 'live' });
   dispatchCharacterState('listening', { holdMs: 2200, attention: 0.68, arousal: 0.42 });
-  pushLog('system', 'Live director started.');
+  pushLog('system', '直播已开始。');
   runLiveTurn();
 }
 
-function stopLiveDirector() {
+function stopLiveDirector({ completed = false } = {}) {
   const wasRunning = liveDirector.running;
   liveDirectorSessionId += 1;
   liveDirector.running = false;
   liveDirector.status = 'idle';
+  streamSchedule.stop({ completed });
+  pendingStreamCue = '';
+  window.clearTimeout(streamEndingTimeout);
+  streamEndingTimeout = 0;
+  window.clearTimeout(bilibiliBatchTimer);
+  bilibiliBatchTimer = 0;
+  bilibiliPendingMessages = [];
+  audienceQueue.value = [];
   for (const controller of liveDirectorAbortControllers) controller.abort();
   liveDirectorAbortControllers.clear();
   liveTurnsInFlight = 0;
@@ -1993,10 +2074,13 @@ function stopLiveDirector() {
   };
   dispatchCharacterState('idle', { holdMs: 1200, attention: 0.32, arousal: 0.28 });
   if (wasRunning) emitLiveReplyTelemetry({ stage: 'director-stop', source: 'live' });
-  pushLog('system', 'Live director stopped.');
+  if (wasRunning) pushLog('system', completed ? '本场直播已按时收尾，AI 主播已停止。' : '直播已停止。');
 }
 
 function routeAudienceMusicRequest(text, meta = {}, audienceEntry = null) {
+  if (!canHandleLiveAudience() || streamScheduleState.value.phase === 'closing') {
+    return { handled: false, reason: 'stream-inactive', promise: null };
+  }
   if (readRoomMusicSettings().songRequestsEnabled === false) {
     return { handled: false, reason: 'request-disabled', promise: null };
   }
@@ -2008,8 +2092,12 @@ function routeAudienceMusicRequest(text, meta = {}, audienceEntry = null) {
 function submitAudienceLine(text, meta = {}) {
   const value = String(text || '').trim();
   if (!value) return;
-  warmupLive2DMusicPlayback().catch(() => {});
   if (!meta.keepInput) audienceInput.value = '';
+  if (!canHandleLiveAudience()) {
+    pushLog('audience', value, meta);
+    return;
+  }
+  warmupLive2DMusicPlayback().catch(() => {});
   const queued = enqueueLive2DAudienceEntry(audienceQueue.value, value, meta);
   audienceQueue.value = queued.queue;
   if (queued.accepted) {
@@ -2133,6 +2221,7 @@ function syncBilibiliDanmakuFromSettings() {
 
 function readBilibiliDanmakuAloud(message, settings, context = {}) {
   if (
+    !canHandleLiveAudience() ||
     !shouldReadBilibiliDanmakuAloud(message, settings, context) ||
     muted.value ||
     !speechPlayer
@@ -2182,6 +2271,7 @@ function readBilibiliDanmakuAloud(message, settings, context = {}) {
 }
 
 function processBilibiliDanmaku(message, settings) {
+  if (!canHandleLiveAudience()) return;
   const shouldForward = settings.autoForward;
   const shouldRead = settings.readAloud;
   const userName = String(message.userName || 'Bilibili').trim();
@@ -2225,7 +2315,6 @@ function processBilibiliDanmaku(message, settings) {
     return;
   }
   submitAudienceLine(displayText, audienceMeta);
-  if (settings.autoStartDirector && !liveDirector.running) startLiveDirector();
 }
 
 function flushBilibiliDanmakuBatch() {
@@ -2246,6 +2335,7 @@ function flushBilibiliDanmakuBatch() {
 }
 
 function handleBilibiliDanmakuEvent(event) {
+  streamSchedule.tick();
   const message = event.detail || {};
   if (!['danmu', 'superchat', 'gift', 'guard'].includes(message.type)) return;
   const paidFallbackText = message.type === 'superchat'
@@ -2255,6 +2345,11 @@ function handleBilibiliDanmakuEvent(event) {
     message.text || message.giftName || (message.type === 'danmu' ? '' : paidFallbackText)
   ).trim();
   if (!eventText) return;
+  if (!bilibiliSettingsCache.enabled) return;
+  if (!canHandleLiveAudience()) {
+    pushLog('audience', formatBilibiliAudienceMessage({ ...message, text: eventText }), { source: 'bilibili' });
+    return;
+  }
   const viewerArrival = audienceViewerState.recordArrival({
     id: message.id,
     userId: message.userId,
@@ -2353,7 +2448,7 @@ onUnmounted(() => {
         <div class="live2d-stage-title">
           <span class="live2d-stage-dot" :class="{ active: live2d.ready.value }"></span>
           <div>
-            <strong>{{ broadcastScene === 'game' ? 'GAME LIVE' : (liveDirector.running ? 'ON AIR' : 'Broadcast Stage') }}</strong>
+            <strong>{{ broadcastScene === 'game' ? '游戏舞台' : (liveDirector.running ? '直播中' : '八千代的春日舞台') }}</strong>
             <small>{{ statusLabel }}</small>
           </div>
         </div>
@@ -2597,7 +2692,7 @@ onUnmounted(() => {
             @click="liveDirector.running ? stopLiveDirector() : startLiveDirector()"
           >
             <TsIcon :name="liveDirector.running ? 'pause' : 'play'" :size="18" />
-            <span>{{ liveDirector.running ? '停止 AI 主播' : '启动 AI 主播' }}</span>
+            <span>{{ liveDirector.running ? '停止直播' : '开始直播' }}</span>
           </button>
           <label class="live2d-switch">
             <input v-model="liveDirector.autoVoice" type="checkbox">
@@ -2609,6 +2704,28 @@ onUnmounted(() => {
           <small>{{ liveTopic.length }}/80</small>
           <input v-model="liveTopic" maxlength="80" type="text" spellcheck="false" placeholder="输入本场直播主题">
         </label>
+        <div class="live2d-stream-duration-fields">
+          <label>
+            <span>直播时长（分钟）</span>
+            <input v-model.number="streamSettings.durationMinutes" type="number" min="0" max="1440" step="1"
+              :disabled="liveDirector.running" aria-label="直播时长（分钟）" @change="saveStreamSettings">
+          </label>
+          <label>
+            <span>提前收尾（分钟）</span>
+            <input v-model.number="streamSettings.closingMinutes" type="number" min="1" max="30" step="1"
+              :disabled="liveDirector.running || streamSettings.durationMinutes === 0" aria-label="提前收尾（分钟）" @change="saveStreamSettings">
+          </label>
+        </div>
+        <div v-if="liveDirector.running" class="live2d-stream-clock" :data-phase="streamScheduleState.phase">
+          <span>已播 <strong>{{ streamElapsedDisplay }}</strong></span>
+          <span>剩余 <strong>{{ streamRemainingDisplay }}</strong></span>
+          <small>{{ streamScheduleState.phase === 'ending'
+            ? '正在告别，完成后自动停止'
+            : (streamScheduleState.phase === 'closing' ? '八千代正在引导话题收尾' : (streamEndTimeDisplay ? `预计 ${streamEndTimeDisplay} 结束` : '手动停止直播')) }}</small>
+        </div>
+        <p v-else class="live2d-stream-hint">{{ streamScheduleState.phase === 'ended'
+          ? `本场已结束 · 共播 ${streamElapsedDisplay}`
+          : '点击开始后才回应弹幕 · 时长 0 为不限时' }}</p>
         <p v-if="liveDirector.error || speechState.error || asrState.error" class="live2d-inline-error">
           {{ liveDirector.error || speechState.error || asrState.error }}
         </p>

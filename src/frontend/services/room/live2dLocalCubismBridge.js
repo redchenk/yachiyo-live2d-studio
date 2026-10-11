@@ -71,8 +71,6 @@ const LOCAL_CUBISM_PHYSICS_OUTPUT_PREFIXES = [
 let lastSmoothedFrame = new Map();
 let lastVelocityFrame = new Map();
 let lastSmoothedAt = 0;
-let pendingFrame = new Map();
-let flushTimer = 0;
 
 function nowMs() {
   return typeof performance !== 'undefined' && typeof performance.now === 'function'
@@ -206,8 +204,6 @@ export function __resetLocalCubismSmoothingForTests() {
   lastSmoothedFrame = new Map();
   lastVelocityFrame = new Map();
   lastSmoothedAt = 0;
-  pendingFrame = new Map();
-  flushTimer = 0;
 }
 
 export function smoothLocalCubismFrame(parameters, now = nowMs()) {
@@ -260,44 +256,10 @@ export function smoothLocalCubismFrame(parameters, now = nowMs()) {
   return smoothed;
 }
 
-function queueLocalCubismFrame(parameters) {
-  for (const item of Array.isArray(parameters) ? parameters : []) {
-    const id = normalizeParameterId(item);
-    const value = Number(item?.value);
-    if (!id || !Number.isFinite(value) || isLocalCubismSuppressedId(id)) continue;
-    const weight = Number.isFinite(Number(item?.weight)) ? Math.min(Math.max(Number(item.weight), 0.01), 1) : 0.75;
-    const current = pendingFrame.get(id);
-    if (current) {
-      current.value += value * weight;
-      current.weight += weight;
-      current.raw = item;
-    } else {
-      pendingFrame.set(id, {
-        raw: item,
-        id,
-        value: value * weight,
-        weight
-      });
-    }
-  }
-}
-
-function takePendingLocalCubismFrame() {
-  const frame = [...pendingFrame.values()].map((item) => ({
-    ...item.raw,
-    id: item.id,
-    value: item.value / Math.max(item.weight, 0.01),
-    weight: Math.min(Math.max(item.weight, 0.01), 1)
-  }));
-  pendingFrame.clear();
-  return frame;
-}
-
-function flushLocalCubismFrame() {
-  flushTimer = 0;
-  const parameters = takePendingLocalCubismFrame();
-  if (!parameters.length) return;
-  const frameParameters = smoothLocalCubismFrame(parameters);
+function writeLocalCubismFrame(parameters, now) {
+  // The behavior bridge already runs in requestAnimationFrame before Cubism.
+  // Write this sample now, so rendering does not use the previous frame's pose.
+  const frameParameters = smoothLocalCubismFrame(parameters, now);
   if (!frameParameters.length) return;
 
   const bridge = runtimeLocalBridge();
@@ -340,12 +302,6 @@ function flushLocalCubismFrame() {
   });
 }
 
-function writeLocalCubismFrame(parameters) {
-  queueLocalCubismFrame(parameters);
-  if (flushTimer) return;
-  flushTimer = window.requestAnimationFrame(flushLocalCubismFrame);
-}
-
 export function mountLocalCubismBridge() {
   if (typeof window === 'undefined') return () => {};
 
@@ -363,9 +319,6 @@ export function mountLocalCubismBridge() {
       delete window.TSUKUYOMI_LOCAL_CUBISM_BRIDGE_MOUNTED;
     }
     setLocalBridgeState({ mounted: false, output: 'destroyed', parameterCount: 0 });
-    if (flushTimer) window.cancelAnimationFrame(flushTimer);
-    pendingFrame = new Map();
-    flushTimer = 0;
     lastSmoothedFrame = new Map();
     lastVelocityFrame = new Map();
     lastSmoothedAt = 0;

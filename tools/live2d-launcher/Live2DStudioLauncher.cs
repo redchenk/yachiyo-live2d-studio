@@ -4521,7 +4521,7 @@ internal static class DesktopApiProxy
                 CreateNoWindow = true
             };
             start.EnvironmentVariables["YACHIYO_REPO_ROOT"] = repoRoot;
-            start.EnvironmentVariables["YACHIYO_MEMORY_AUTOSTART_MANAGED_MILVUS"] = "1";
+            start.EnvironmentVariables["YACHIYO_MEMORY_AUTOSTART_MANAGED_MILVUS"] = "0";
             start.EnvironmentVariables["YACHIYO_MEMORY_MILVUS_URL"] = "http://127.0.0.1:19530";
             start.EnvironmentVariables["YACHIYO_MEMORY_MILVUS_IMAGE"] = "milvusdb/milvus:v2.6.13";
             start.EnvironmentVariables["YACHIYO_PERSONA_CORPUS_PATH"] = Path.GetFullPath(Path.Combine(repoRoot, "..", "yachiyo_novel_detailed_corpus.txt"));

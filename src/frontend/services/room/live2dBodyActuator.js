@@ -694,8 +694,8 @@ export function mountLive2DStageBodyActuator(containerSelector = '#live2d-contai
     }
     activeMotion = motion;
     startMs = now;
-    stopFrame();
-    frameId = window.requestAnimationFrame(render);
+    // Keep the existing frame order when a new action arrives.
+    if (!frameId) frameId = window.requestAnimationFrame(render);
   }
 
   function onRoomAct(event) {

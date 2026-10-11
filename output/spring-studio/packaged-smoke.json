@@ -1,0 +1,12 @@
+{
+  "smoke": "passed",
+  "packaged": true,
+  "title": "月读 · 八千代直播台",
+  "mounted": true,
+  "nodeExposed": false,
+  "embeddedMemory": true,
+  "sqliteReady": true,
+  "minecraftReady": true,
+  "indexed": 35,
+  "databasePath": "/tmp/yachiyo-spring-smoke-0.2.0/MemoryData/yachiyo-memory.sqlite"
+}

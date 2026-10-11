@@ -1,0 +1,19 @@
+{
+  "mode": "built-in imagegen",
+  "intent": "generate",
+  "createdAt": "2026-10-11",
+  "assets": [
+    {
+      "name": "spring-lake-stage",
+      "transparent_background": false,
+      "prompt": "Use case: stylized-concept\nAsset type: original background illustration for a Live2D broadcasting desktop application, landscape 16:9.\nPrimary request: an airy spring cherry-blossom lakeside terrace in the moon-white, dusty-rose and pale-lilac visual language of Tsukuyomi Space. Hand-painted anime environment with refined editorial softness.\nScene/backdrop: still pale-blue lake, distant hazy wooded shore, a subtle round moon in a bright afternoon sky, a few blossom branches framing the upper corners, delicate petals along the water edge, light stone terrace at the bottom.\nComposition/framing: wide panorama, horizon in lower middle; center 55 percent is calm open negative space for an existing animated character; decoration concentrated near edges. Keep details gentle so the character and captions remain legible.\nLighting/mood: luminous spring daylight, tranquil and playful, natural soft light.\nColor palette: moon white #f8f9fc, dusty pink #e5a4bc, rose #ac4d6d, mist blue, pale lilac #d7c2ff, subtle ink-blue shadows.\nConstraints: environment only, no character, no people, no typography, no logos, no watermark, no interface, no black frame. Professional finished original illustration.",
+      "path": "assets/images/spring-studio-v1/spring-lake-stage.png"
+    },
+    {
+      "name": "sakura-branch",
+      "transparent_background": true,
+      "prompt": "Use case: stylized-concept\nAsset type: original transparent decorative asset for a spring-themed Live2D desktop studio.\nPrimary request: one elegant, gently curved cherry blossom twig with a small cluster of five-petal sakura flowers and buds, with two loose petals nearby.\nStyle/medium: polished delicate hand-painted anime illustration, softly shaded petals with crisp clean silhouette.\nComposition/framing: a diagonal corner ornament, full branch visible with generous empty transparent margin, isolated single element.\nColor palette: dusty rose #e5a4bc, moon-white petal highlights, subdued mauve #ac4d6d, pale lilac shadows; thin warm-gray branch.\nConstraints: genuinely transparent background with alpha, no backdrop, no vase, no text, no logo, no watermark, no border, no cast shadow outside the subject.",
+      "path": "assets/images/spring-studio-v1/sakura-branch.png"
+    }
+  ]
+}

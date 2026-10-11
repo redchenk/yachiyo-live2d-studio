@@ -3,6 +3,7 @@ import App from './App.vue';
 import { configureAssetCssVars } from '../../src/frontend/utils/assetUrl';
 import { installYachiyoMusicWindowApi } from '../../src/frontend/services/room/yachiyoMusicAdapter';
 import './style.css';
+import './spring.css';
 
 configureAssetCssVars();
 installYachiyoMusicWindowApi();

@@ -1,6 +1,6 @@
 {
   "name": "yachiyo-live2d-studio",
-  "version": "0.1.0",
+  "version": "0.2.2",
   "private": true,
   "description": "Standalone Live2D Studio for Yachiyo AI VTuber tests.",
   "type": "module",
@@ -14,7 +14,13 @@
     "install:vosk-model": "powershell.exe -ExecutionPolicy Bypass -File tools/asr/install-vosk-model.ps1",
     "install:vosk-python": "py -3.9 -m pip install vosk",
     "start:netease-api": "node tools/music/netease-api-enhanced-service.mjs --port 3302 --host 127.0.0.1",
-    "start:minecraft-agent": "node tools/minecraft/minecraft-agent-service.mjs --port 3303"
+    "start:minecraft-agent": "node tools/minecraft/minecraft-agent-service.mjs --port 3303",
+    "desktop": "electron .",
+    "start": "electron .",
+    "pack:desktop": "electron-builder",
+    "dist:desktop": "npm run build && electron-builder",
+    "test:desktop": "node --test tools/desktop/tests/*.test.mjs",
+    "smoke:desktop": "electron . --smoke-test"
   },
   "dependencies": {
     "@lucide/vue": "^1.17.0",
@@ -35,6 +41,12 @@
     "vosk": "^0.3.39"
   },
   "engines": {
-    "node": ">=20.0.0"
-  }
+    "node": ">=22.13.0"
+  },
+  "devDependencies": {
+    "electron": "44.5.1",
+    "electron-builder": "26.15.3"
+  },
+  "main": "tools/desktop/main.mjs",
+  "author": "Yachiyo Live2D Studio contributors"
 }

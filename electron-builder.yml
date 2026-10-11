@@ -1,0 +1,68 @@
+appId: ai.yachiyo.live2dstudio
+productName: Yachiyo Live2D Studio
+copyright: Yachiyo Live2D Studio contributors
+directories:
+  output: release
+asar: true
+npmRebuild: false
+beforePack: tools/desktop/before-pack.cjs
+afterPack: tools/desktop/after-pack.cjs
+artifactBuildCompleted: tools/desktop/verify-windows-artifact.cjs
+files:
+  - tools/desktop/**
+  - tools/runtime/**
+  - tools/memory/**
+  - tools/minecraft/**
+  - tools/live2d-studio/bilibili-wbi.mjs
+  - src/shared/**
+  - licenses/**
+  - docs/tsukuyomi-source.json
+  - package.json
+  - '!node_modules/better-sqlite3/**'
+  - '!node_modules/vosk/**'
+  - '!node_modules/ffi-napi/**'
+  - '!node_modules/ref-napi/**'
+extraResources:
+  - from: dist/live2d-studio
+    to: studio/dist/live2d-studio
+    filter:
+      - '**/*'
+      - '!index 2.html'
+      - '!assets/* 2.css'
+  - from: models
+    to: studio/models
+    filter:
+      - '**/*'
+      - '!vosk/**'
+  - from: lib
+    to: studio/lib
+  - from: assets
+    to: studio/assets
+  - from: memory-seeds
+    to: studio/memory-seeds
+mac:
+  identity: '-'
+  category: public.app-category.entertainment
+  target:
+    - target: dmg
+      arch: [arm64, x64]
+    - target: zip
+      arch: [arm64, x64]
+  extendInfo:
+    NSMicrophoneUsageDescription: 用于接收主播语音输入。
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+nsis:
+  include: tools/desktop/installer.nsh
+  oneClick: true
+  perMachine: false
+  deleteAppDataOnUninstall: false
+linux:
+  category: AudioVideo
+  target:
+    - target: AppImage
+      arch: [x64, arm64]
+artifactName: '${productName}-${version}-${os}-${arch}.${ext}'
+publish: null

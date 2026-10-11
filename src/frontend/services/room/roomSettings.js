@@ -1,4 +1,6 @@
 import { readJson, writeJson } from './roomStorage';
+import { DEFAULT_ROOM_LIVE2D_STREAM_SETTINGS, normalizeRoomLive2DStreamSettings } from './live2dStreamSchedule';
+export { DEFAULT_ROOM_LIVE2D_STREAM_SETTINGS, normalizeRoomLive2DStreamSettings };
 
 export const ROOM_LLM_SETTINGS_KEY = 'roomLLMSettings';
 export const ROOM_TTS_SETTINGS_KEY = 'roomTTSSettings';
@@ -8,11 +10,13 @@ export const ROOM_MEMORY_SETTINGS_KEY = 'roomMemorySettings';
 export const ROOM_ASR_SETTINGS_KEY = 'roomASRSettings';
 export const ROOM_MUSIC_SETTINGS_KEY = 'roomMusicSettings';
 export const ROOM_BILIBILI_DANMAKU_SETTINGS_KEY = 'roomBilibiliDanmakuSettings';
+export const ROOM_LIVE2D_STREAM_SETTINGS_KEY = 'roomLive2DStreamSettings';
 export const ROOM_VISION_SETTINGS_KEY = 'roomVisionSettings';
 export const ROOM_MINECRAFT_SETTINGS_KEY = 'roomMinecraftSettings';
 const ROOM_MODEL_STAGE_DEFAULTS_MIGRATION_KEY = 'roomModelStageDefaultsMigratedV2';
 const ROOM_MODEL_RENDER_DEFAULTS_MIGRATION_KEY = 'roomModelRenderDefaultsMigratedV2';
 const ROOM_MEMORY_MANAGED_MILVUS_DEFAULTS_MIGRATION_KEY = 'roomMemoryManagedMilvusDefaultsMigratedV1';
+const ROOM_MEMORY_EMBEDDED_MIGRATION_KEY = 'roomMemoryEmbeddedDefaultsMigratedV2';
 const ROOM_MUSIC_LOCAL_DEFAULTS_MIGRATION_KEY = 'roomMusicLocalDefaultsMigratedV1';
 const ROOM_MUSIC_NETEASE_DEFAULTS_MIGRATION_KEY = 'roomMusicNeteaseDefaultsMigratedV1';
 const ROOM_MUSIC_ENABLED_DEFAULTS_MIGRATION_KEY = 'roomMusicEnabledDefaultsMigratedV1';
@@ -21,8 +25,8 @@ const LEGACY_ROOM_MODEL_STAGE_IDLE_SCALE = 0.9;
 const LEGACY_ROOM_MODEL_STAGE_MOTION_SCALE = 0.75;
 const LEGACY_ROOM_MODEL_RENDER_DPRS = [3, 4];
 
-export const DEFAULT_GPT_SOVITS_GPT_WEIGHT = 'GPT_weights_v2ProPlus/yachiyo-v2pro-e15.ckpt';
-export const DEFAULT_GPT_SOVITS_SOVITS_WEIGHT = 'SoVITS_weights_v2ProPlus/yachiyo-v2pro_e8_s456.pth';
+export const DEFAULT_GPT_SOVITS_GPT_WEIGHT = 'GPT_weights_v2ProPlus/yachiyo-v2pro-e20.ckpt';
+export const DEFAULT_GPT_SOVITS_SOVITS_WEIGHT = 'SoVITS_weights_v2ProPlus/yachiyo-v2pro_e12_s684.pth';
 export const DEFAULT_MIMO_TTS_API_URL = 'https://api.xiaomimimo.com/v1/chat/completions';
 export const DEFAULT_MIMO_TTS_MODEL = 'mimo-v2.5-tts';
 export const DEFAULT_MIMO_TTS_VOICE = 'mimo_default';
@@ -43,7 +47,7 @@ export const ROOM_LLM_PROVIDER_PRESETS = {
   deepseek: {
     label: 'DeepSeek',
     apiUrl: 'https://api.deepseek.com/v1/chat/completions',
-    model: 'deepseek-chat',
+    model: 'deepseek-flash',
     useProxy: true
   },
   moonshot: {
@@ -84,13 +88,15 @@ export const ROOM_LLM_VISION_IMAGE_MODE_OPTIONS = [
 ];
 
 export const DEFAULT_ROOM_LLM_SETTINGS = {
-  provider: 'openai',
-  apiUrl: 'https://api.openai.com/v1/chat/completions',
+  provider: 'deepseek',
+  apiUrl: 'https://api.deepseek.com/v1/chat/completions',
   apiKey: '',
-  model: 'gpt-4o-mini',
+  model: 'deepseek-flash',
   useProxy: true,
   visionImageMode: 'auto',
-  systemPrompt: ''
+  systemPrompt: '',
+  historyMaxTurns: 24,
+  historyMaxChars: 24000
 };
 
 export const DEFAULT_ROOM_TTS_SETTINGS = {
@@ -100,8 +106,8 @@ export const DEFAULT_ROOM_TTS_SETTINGS = {
   apiKey: '',
   model: 'auto',
   voice: '',
-  refAudioPath: '',
-  promptText: '',
+  refAudioPath: 'E:\\visualstudio\\cankao.wav',
+  promptText: '八千年分の知識と経験で、どんなお悩み相談もお任せあれ。',
   textLang: 'ja',
   promptLang: 'ja',
   gptWeightPath: DEFAULT_GPT_SOVITS_GPT_WEIGHT,
@@ -146,12 +152,12 @@ export const DEFAULT_ROOM_VTS_SETTINGS = {
 
 export const DEFAULT_ROOM_MEMORY_SETTINGS = {
   enabled: true,
-  provider: 'sqlite-milvus',
+  provider: 'sqlite',
   vaultPath: '',
   databasePath: '',
-  personaCorpusPath: 'E:\\visualstudio\\yachiyo_novel_detailed_corpus.txt',
-  milvusEnabled: true,
-  milvusManaged: true,
+  personaCorpusPath: '',
+  milvusEnabled: false,
+  milvusManaged: false,
   milvusUrl: 'http://127.0.0.1:19530',
   milvusToken: '',
   milvusCollection: 'yachiyo_memory',
@@ -162,7 +168,9 @@ export const DEFAULT_ROOM_MEMORY_SETTINGS = {
   embeddingDimension: 384,
   writeMode: 'auto-approved',
   retrievalMode: 'hybrid',
-  maxNotesPerTurn: 4,
+  maxNotesPerTurn: 8,
+  contextMaxChars: 12000,
+  snippetMaxChars: 1400,
   allowViewerMemory: true,
   allowSessionMemory: true,
   sessionRollupEnabled: true,
@@ -209,7 +217,7 @@ export const DEFAULT_ROOM_BILIBILI_DANMAKU_SETTINGS = {
   roomId: '',
   autoConnect: false,
   autoForward: true,
-  autoStartDirector: true,
+  autoStartDirector: false,
   readAloud: true,
   readUserName: true,
   maxForwardPerMinute: 24,
@@ -378,7 +386,9 @@ export function normalizeRoomLLMSettings(settings = {}) {
     model: asText(merged.model) || preset.model || DEFAULT_ROOM_LLM_SETTINGS.model,
     useProxy: asBoolean(merged.useProxy),
     visionImageMode,
-    systemPrompt: String(merged.systemPrompt || '').trim()
+    systemPrompt: String(merged.systemPrompt || '').trim(),
+    historyMaxTurns: asNumber(merged.historyMaxTurns, 24, 4, 64),
+    historyMaxChars: asNumber(merged.historyMaxChars, 24000, 4000, 100000)
   };
 }
 
@@ -503,9 +513,10 @@ export function normalizeRoomVTubeStudioSettings(settings = {}) {
 
 export function normalizeRoomMemorySettings(settings = {}) {
   const merged = { ...DEFAULT_ROOM_MEMORY_SETTINGS, ...(settings || {}) };
-  const provider = ['obsidian', 'sqlite-milvus', 'sqlite'].includes(asText(merged.provider))
+  const requestedProvider = ['obsidian', 'sqlite-milvus', 'sqlite'].includes(asText(merged.provider))
     ? asText(merged.provider)
     : DEFAULT_ROOM_MEMORY_SETTINGS.provider;
+  const provider = typeof window !== 'undefined' && window.yachiyoDesktop?.embeddedMemory ? 'sqlite' : requestedProvider;
   const writeMode = ['off', 'inbox-only', 'auto-approved'].includes(asText(merged.writeMode))
     ? asText(merged.writeMode)
     : DEFAULT_ROOM_MEMORY_SETTINGS.writeMode;
@@ -518,8 +529,8 @@ export function normalizeRoomMemorySettings(settings = {}) {
     vaultPath: String(merged.vaultPath || '').trim(),
     databasePath: String(merged.databasePath || '').trim(),
     personaCorpusPath: String(merged.personaCorpusPath || '').trim() || DEFAULT_ROOM_MEMORY_SETTINGS.personaCorpusPath,
-    milvusEnabled: asBoolean(merged.milvusEnabled),
-    milvusManaged: asBoolean(merged.milvusManaged),
+    milvusEnabled: provider === 'sqlite-milvus' && asBoolean(merged.milvusEnabled),
+    milvusManaged: provider === 'sqlite-milvus' && asBoolean(merged.milvusManaged),
     milvusUrl: asText(merged.milvusUrl) || DEFAULT_ROOM_MEMORY_SETTINGS.milvusUrl,
     milvusToken: String(merged.milvusToken || '').trim(),
     milvusCollection: asText(merged.milvusCollection) || DEFAULT_ROOM_MEMORY_SETTINGS.milvusCollection,
@@ -530,7 +541,9 @@ export function normalizeRoomMemorySettings(settings = {}) {
     embeddingDimension: asNumber(merged.embeddingDimension, DEFAULT_ROOM_MEMORY_SETTINGS.embeddingDimension, 32, 4096),
     writeMode,
     retrievalMode,
-    maxNotesPerTurn: asNumber(merged.maxNotesPerTurn, DEFAULT_ROOM_MEMORY_SETTINGS.maxNotesPerTurn, 1, 8),
+    maxNotesPerTurn: asNumber(merged.maxNotesPerTurn, DEFAULT_ROOM_MEMORY_SETTINGS.maxNotesPerTurn, 1, 16),
+    contextMaxChars: asNumber(merged.contextMaxChars, 12000, 2000, 32000),
+    snippetMaxChars: asNumber(merged.snippetMaxChars, 1400, 300, 4000),
     allowViewerMemory: asBoolean(merged.allowViewerMemory),
     allowSessionMemory: asBoolean(merged.allowSessionMemory),
     sessionRollupEnabled: asBoolean(merged.sessionRollupEnabled),
@@ -616,7 +629,8 @@ export function normalizeRoomBilibiliDanmakuSettings(settings = {}) {
     roomId: asText(merged.roomId).replace(/[^\d]/g, ''),
     autoConnect: asBoolean(merged.autoConnect),
     autoForward: asBoolean(merged.autoForward),
-    autoStartDirector: asBoolean(merged.autoStartDirector),
+    // A legacy saved opt-in must never bypass the host's start/stop button.
+    autoStartDirector: false,
     readAloud: asBoolean(merged.readAloud),
     readUserName: asBoolean(merged.readUserName),
     maxForwardPerMinute: Math.round(asNumber(
@@ -754,9 +768,9 @@ function upgradeLegacyRoomMemoryDefaults(settings, rawSettings = {}) {
     const upgraded = normalizeRoomMemorySettings({
       ...settings,
       enabled: true,
-      provider: 'sqlite-milvus',
-      milvusEnabled: true,
-      milvusManaged: true,
+      provider: 'sqlite',
+      milvusEnabled: false,
+      milvusManaged: false,
       retrievalMode: 'hybrid',
       writeMode: 'auto-approved',
       maxNotesPerTurn: 4
@@ -769,11 +783,30 @@ function upgradeLegacyRoomMemoryDefaults(settings, rawSettings = {}) {
 }
 
 export function readRoomLLMSettings() {
-  return normalizeRoomLLMSettings(readJson(ROOM_LLM_SETTINGS_KEY, clone(DEFAULT_ROOM_LLM_SETTINGS)));
+  let raw = readJson(ROOM_LLM_SETTINGS_KEY, clone(DEFAULT_ROOM_LLM_SETTINGS));
+  if (typeof localStorage !== 'undefined' && localStorage.getItem('roomSpringDefaultsV1:llm') !== '1') {
+    const untouched = !raw.apiKey && (!raw.model || raw.model === 'gpt-4o-mini') && (!raw.apiUrl || raw.apiUrl === 'https://api.openai.com/v1/chat/completions');
+    if (untouched) raw = { ...raw, provider: 'deepseek', apiUrl: DEFAULT_ROOM_LLM_SETTINGS.apiUrl, model: 'deepseek-flash' };
+    else if (raw.provider === 'deepseek' && raw.model === 'deepseek-chat') raw = { ...raw, model: 'deepseek-flash' };
+    writeJson(ROOM_LLM_SETTINGS_KEY, raw);
+    localStorage.setItem('roomSpringDefaultsV1:llm', '1');
+  }
+  return normalizeRoomLLMSettings(raw);
 }
 
 export function readRoomTTSSettings() {
-  return normalizeRoomTTSSettings(readJson(ROOM_TTS_SETTINGS_KEY, clone(DEFAULT_ROOM_TTS_SETTINGS)));
+  let raw = readJson(ROOM_TTS_SETTINGS_KEY, clone(DEFAULT_ROOM_TTS_SETTINGS));
+  if (typeof localStorage !== 'undefined' && localStorage.getItem('roomSpringDefaultsV1:tts') !== '1') {
+    if (!raw.provider || raw.provider === 'gpt-sovits') {
+      const legacy = { gptWeightPath: 'GPT_weights_v2ProPlus/yachiyo-v2pro-e15.ckpt', sovitsWeightPath: 'SoVITS_weights_v2ProPlus/yachiyo-v2pro_e8_s456.pth' };
+      for (const key of ['refAudioPath', 'promptText', 'gptWeightPath', 'sovitsWeightPath']) {
+        if (!raw[key] || raw[key] === legacy[key]) raw[key] = DEFAULT_ROOM_TTS_SETTINGS[key];
+      }
+    }
+    writeJson(ROOM_TTS_SETTINGS_KEY, raw);
+    localStorage.setItem('roomSpringDefaultsV1:tts', '1');
+  }
+  return normalizeRoomTTSSettings(raw);
 }
 
 export function readRoomASRSettings() {
@@ -791,7 +824,15 @@ export function readRoomVTubeStudioSettings() {
 }
 
 export function readRoomMemorySettings() {
-  const raw = readJson(ROOM_MEMORY_SETTINGS_KEY, clone(DEFAULT_ROOM_MEMORY_SETTINGS));
+  let raw = readJson(ROOM_MEMORY_SETTINGS_KEY, clone(DEFAULT_ROOM_MEMORY_SETTINGS));
+  if (typeof localStorage !== 'undefined' && localStorage.getItem(ROOM_MEMORY_EMBEDDED_MIGRATION_KEY) !== '1') {
+    // Milvus is a derived index: switching backends retains the SQLite source of truth.
+    if (raw.provider === 'sqlite-milvus' && asBoolean(raw.milvusManaged)) {
+      raw = { ...raw, provider: 'sqlite', milvusEnabled: false, milvusManaged: false };
+      writeJson(ROOM_MEMORY_SETTINGS_KEY, raw);
+    }
+    localStorage.setItem(ROOM_MEMORY_EMBEDDED_MIGRATION_KEY, '1');
+  }
   return upgradeLegacyRoomMemoryDefaults(
     normalizeRoomMemorySettings(raw),
     raw
@@ -815,6 +856,19 @@ export function readRoomBilibiliDanmakuSettings() {
     normalizeRoomBilibiliDanmakuSettings(raw),
     raw
   );
+}
+
+export function readRoomLive2DStreamSettings() {
+  return normalizeRoomLive2DStreamSettings(readJson(
+    ROOM_LIVE2D_STREAM_SETTINGS_KEY,
+    clone(DEFAULT_ROOM_LIVE2D_STREAM_SETTINGS)
+  ));
+}
+
+export function writeRoomLive2DStreamSettings(settings) {
+  const normalized = normalizeRoomLive2DStreamSettings(settings);
+  writeJson(ROOM_LIVE2D_STREAM_SETTINGS_KEY, normalized);
+  return normalized;
 }
 
 export function normalizeRoomMinecraftSettings(settings = {}) {
@@ -914,6 +968,7 @@ export function readRoomStudioSettings() {
     memory: readRoomMemorySettings(),
     music: readRoomMusicSettings(),
     bilibiliDanmaku: readRoomBilibiliDanmakuSettings(),
+    liveStream: readRoomLive2DStreamSettings(),
     vision: readRoomVisionSettings(),
     minecraft: readRoomMinecraftSettings()
   };

@@ -29,14 +29,21 @@ try {
   );
   const {
     normalizeRoomBilibiliDanmakuSettings,
-    readRoomBilibiliDanmakuSettings
+    readRoomBilibiliDanmakuSettings,
+    readRoomLive2DStreamSettings,
+    writeRoomLive2DStreamSettings
   } = await server.ssrLoadModule(
     '/src/frontend/services/room/roomSettings.js'
   );
 
   const defaults = normalizeRoomBilibiliDanmakuSettings({});
   assert.equal(defaults.autoForward, true);
-  assert.equal(defaults.autoStartDirector, true);
+  assert.equal(defaults.autoStartDirector, false);
+  assert.equal(normalizeRoomBilibiliDanmakuSettings({ autoStartDirector: true }).autoStartDirector, false,
+    'a legacy auto-start setting cannot override the host start button');
+  assert.deepEqual(readRoomLive2DStreamSettings(), { durationMinutes: 60, closingMinutes: 5 });
+  writeRoomLive2DStreamSettings({ durationMinutes: 120, closingMinutes: 10 });
+  assert.deepEqual(readRoomLive2DStreamSettings(), { durationMinutes: 120, closingMinutes: 10 });
   assert.equal(defaults.readAloud, true);
   assert.equal(defaults.readUserName, true);
   assert.equal(defaults.maxForwardPerMinute, 24);

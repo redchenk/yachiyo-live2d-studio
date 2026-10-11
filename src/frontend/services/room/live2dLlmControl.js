@@ -1,3 +1,6 @@
+import { liveChatModelOptions } from '../../../shared/chat-model-options.mjs';
+import { boundedConversation, followupRetrievalQuery } from '../../../shared/retrieval-context.mjs';
+import { buildYachiyoCanonPrompt } from './yachiyoCanon';
 import {
   inferLive2DIntentFromText,
   normalizeLive2DIntent
@@ -1075,6 +1078,7 @@ export async function translateLive2DReplyToChinese(text, options = {}) {
               { role: 'user', content: source }
             ],
             temperature: isKimiChatTarget(apiUrl, model) ? 1 : 0.2,
+            ...liveChatModelOptions(apiUrl, model),
             max_tokens: 120
           }),
       signal: options.signal
@@ -1134,6 +1138,7 @@ function buildDirectRequestBody(settings, systemPrompt, history, message, vision
       { role: 'user', content: visionUserContent(message, visionPayload, false) }
     ],
     temperature: isKimiChatTarget(apiUrl, model) ? 1 : 0.4,
+    ...liveChatModelOptions(apiUrl, model),
     max_tokens: 1000
   };
 }
@@ -1159,12 +1164,12 @@ function flushLive2DHistorySettlements() {
     pendingHistorySettlements.delete(nextHistorySettlementSequence);
     nextHistorySettlementSequence += 1;
     if (!settlement || settlement.epoch !== historyEpoch) continue;
-    const currentHistory = readLive2DLLMHistory();
+    const currentHistory = readStoredLive2DLLMHistory();
     writeJson(HISTORY_KEY, [
       ...currentHistory,
       { role: 'user', content: settlement.message },
       { role: 'assistant', content: settlement.reply }
-    ].slice(-8));
+    ].slice(-128));
     try {
       settlement.afterCommit?.();
     } catch (_) {
@@ -1314,12 +1319,12 @@ function finishLive2DControlRequest(
   if (historyReservation?.commit) {
     historyReservation.commit(message, parsed.reply, recordSessionTurn);
   } else {
-    const currentHistory = readLive2DLLMHistory();
+    const currentHistory = readStoredLive2DLLMHistory();
     writeJson(HISTORY_KEY, [
       ...currentHistory,
       { role: 'user', content: String(message || '') },
       { role: 'assistant', content: parsed.reply }
-    ].slice(-8));
+    ].slice(-128));
     recordSessionTurn();
   }
   return parsed;
@@ -1378,9 +1383,13 @@ export function live2DStreamingControlSystemPrompt() {
   ].join('\n');
 }
 
-export function readLive2DLLMHistory() {
+function readStoredLive2DLLMHistory() {
   const history = readJson(HISTORY_KEY, []);
-  return Array.isArray(history) ? history.filter((item) => item && ['user', 'assistant'].includes(item.role)).slice(-8) : [];
+  return Array.isArray(history) ? history.filter(item => item && ['user', 'assistant'].includes(item.role) && typeof item.content === 'string').slice(-128) : [];
+}
+
+export function readLive2DLLMHistory() {
+  return boundedConversation(readStoredLive2DLLMHistory(), readRoomLLMSettings());
 }
 
 export function clearLive2DLLMHistory() {
@@ -1415,12 +1424,12 @@ async function requestLive2DControlInternal(message, options = {}, historyReserv
   const history = readLive2DLLMHistory();
   const memoryContext = options.memoryContext || {};
   const [memoryPrompt, visionContext, minecraftPrompt] = await Promise.all([
-    buildLive2DMemoryPrompt(message, memoryContext),
+    buildLive2DMemoryPrompt(followupRetrievalQuery(message, history), memoryContext),
     buildLive2DVisionPrompt(),
     buildLive2DMinecraftPrompt()
   ]);
   throwIfLive2DRequestAborted(signal);
-  const systemPrompt = [yachiyoCorePersonalityPrompt(), settings.systemPrompt, memoryPrompt, visionContext.prompt, minecraftPrompt, live2DControlSystemPrompt()].filter(Boolean).join('\n\n');
+  const systemPrompt = [yachiyoCorePersonalityPrompt(), settings.systemPrompt, buildYachiyoCanonPrompt(message, history), memoryPrompt, visionContext.prompt, minecraftPrompt, live2DControlSystemPrompt()].filter(Boolean).join('\n\n');
   let rawReply = '';
 
   if (settings.useProxy) {
@@ -1508,14 +1517,14 @@ async function requestLive2DControlStreamInternal(message, handlers = {}, histor
   const [memoryPrompt, visionContext, minecraftPrompt] = handlers.fastRecovery
     ? ['', { prompt: '', payload: null }, '']
     : await Promise.all([
-        buildLive2DMemoryPrompt(message, memoryContext),
+        buildLive2DMemoryPrompt(followupRetrievalQuery(message, history), memoryContext),
         buildLive2DVisionPrompt(),
         buildLive2DMinecraftPrompt()
       ]);
   throwIfLive2DRequestAborted(signal);
   const systemPrompt = handlers.fastRecovery
     ? live2DCompactRecoverySystemPrompt()
-    : [yachiyoCorePersonalityPrompt(), settings.systemPrompt, memoryPrompt, visionContext.prompt, minecraftPrompt, live2DStreamingControlSystemPrompt()].filter(Boolean).join('\n\n');
+    : [yachiyoCorePersonalityPrompt(), settings.systemPrompt, buildYachiyoCanonPrompt(message, history), memoryPrompt, visionContext.prompt, minecraftPrompt, live2DStreamingControlSystemPrompt()].filter(Boolean).join('\n\n');
   const sentenceEmitter = createReplySentenceEmitter(handlers);
   let rawReply = '';
 

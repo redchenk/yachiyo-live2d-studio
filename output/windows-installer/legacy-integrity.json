@@ -1,0 +1,35 @@
+[
+  {
+    "version": "0.1.0",
+    "sha256": "57935749e1d275858ea14c766cfc81ab89bbfe39e5253e97156d8e97c7a9eaad",
+    "offset": 58368,
+    "end": 140596,
+    "flags": 1,
+    "storedCrc": 4139231943,
+    "actualCrc": 4184094422,
+    "crcValid": false,
+    "uninstaller": true
+  },
+  {
+    "version": "0.1.1",
+    "sha256": "33f2b48dbf3d68e042f17dbf256dc2f43f61e6642982d982521fa0c5b9917565",
+    "offset": 58368,
+    "end": 140597,
+    "flags": 1,
+    "storedCrc": 4110762584,
+    "actualCrc": 2679812406,
+    "crcValid": false,
+    "uninstaller": true
+  },
+  {
+    "version": "0.2.0",
+    "sha256": "8abce0c7c60b22803453f4c90dff0684dcaa4dbe9ad34d2651bd837e7dae6dc8",
+    "offset": 58368,
+    "end": 140597,
+    "flags": 1,
+    "storedCrc": 3971111653,
+    "actualCrc": 2249042315,
+    "crcValid": false,
+    "uninstaller": true
+  }
+]

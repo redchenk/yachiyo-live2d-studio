@@ -1,0 +1,342 @@
+PASS test-action-queue-handoff.mjs
+action queue handoff checks passed
+
+PASS test-action-transition-continuity.mjs
+action transition continuity checks passed
+
+PASS test-asr-continuous-input.mjs
+Continuous ASR input checks passed
+
+PASS test-asr-input-quality.mjs
+ASR input quality checks passed
+
+PASS test-audience-music-request.mjs
+audience music request routing checks passed
+
+PASS test-audience-safety-filter.mjs
+audience safety filter checks passed
+
+PASS test-audience-turn-selector.mjs
+audience turn selector checks passed
+
+PASS test-audience-viewer-state.mjs
+audience viewer state checks passed
+
+PASS test-auto-monitor-lifecycle.mjs
+Automatic monitor lifecycle checks passed
+
+PASS test-bilibili-audience-safety-integration.mjs
+Bilibili audience safety integration checks passed
+
+PASS test-bilibili-danmaku-burst.mjs
+Bilibili danmaku burst checks passed: 2000 messages, 1 UI state event(s), 21.42ms publish time
+
+PASS test-bilibili-danmaku-connection.mjs
+Bilibili danmaku connection checks passed
+
+PASS test-bilibili-danmaku-speech.mjs
+Bilibili danmaku speech checks passed
+
+PASS test-bilibili-gift-ack-gate.mjs
+Bilibili gift acknowledgement gate checks passed
+
+PASS test-bilibili-paid-events.mjs
+Bilibili paid event checks passed
+
+PASS test-bilibili-rate-gate.mjs
+Bilibili rate gate checks passed
+
+PASS test-bilibili-reply-policy.mjs
+Bilibili reply policy checks passed
+
+PASS test-bilibili-wbi.mjs
+Bilibili WBI signing checks passed
+
+PASS test-bilingual-streaming-caption-fast-path.mjs
+✔ Japanese VOICE is emitted before its Chinese CAPTION and carries a caption promise (10.51ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 1
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 180.192708
+
+PASS test-broadcast-scene-switcher.mjs
+Broadcast scene switcher checks passed
+
+PASS test-character-state-speaking-hold.mjs
+character state speaking hold checks passed
+
+PASS test-cubism-action-handoff-posture.mjs
+cubism action handoff posture checks passed
+
+PASS test-cubism-runtime-cadence.mjs
+Cubism runtime cadence and single-owner motion checks passed
+Cubism expression hold and reset checks passed
+
+PASS test-cubism-smile-expression-separation.mjs
+cubism smile expression separation checks passed
+
+PASS test-gpt-sovits-japanese-only.mjs
+GPT-SoVITS Japanese-only realtime checks passed
+
+PASS test-launcher-client-disconnect-safety.mjs
+launcher client disconnect safety checks passed
+
+PASS test-launcher-live-reply-telemetry.mjs
+Launcher live reply telemetry checks passed
+
+PASS test-launcher-webview-runtime-fallback.mjs
+launcher WebView2 runtime fallback checks passed
+
+PASS test-launcher-window-aspect-ratio.mjs
+launcher 16:9 window checks passed
+
+PASS test-live-caption-nonblocking-playback.mjs
+live caption nonblocking playback checks passed
+
+PASS test-live-caption-synchronizer.mjs
+live caption synchronizer checks passed
+
+PASS test-live-director-scheduler.mjs
+live director scheduler checks passed
+
+PASS test-live-reply-monitor-policy.mjs
+Live reply monitor policy checks passed
+
+PASS test-live-reply-repetition-guard.mjs
+live reply repetition guard checks passed
+
+PASS test-live-reply-telemetry.mjs
+Live reply telemetry checks passed
+
+PASS test-live-turn-pipeline.mjs
+live turn pipeline checks passed
+
+PASS test-live2d-prefetch-trigger.mjs
+Live2D prefetch trigger checks passed
+
+PASS test-llm-concurrent-history.mjs
+concurrent LLM history checks passed
+
+PASS test-llm-live-recovery.mjs
+LLM live recovery checks passed
+
+FAIL test-llm-provider-switch.mjs
+node:internal/modules/run_main:107
+    triggerUncaughtException(
+    ^
+
+AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
++ actual - expected
+
++ 'deepseek-flash'
+- 'deepseek-chat'
+            ^
+
+    at file:///Users/yxy/Desktop/codex/yachiyo-live2d-studio/tools/live2d-studio/test-llm-provider-switch.mjs:26:10 {
+  generatedMessage: true,
+  code: 'ERR_ASSERTION',
+  actual: 'deepseek-flash',
+  expected: 'deepseek-chat',
+  operator: 'strictEqual',
+  diff: 'simple'
+}
+
+Node.js v24.19.0
+
+PASS test-llm-request-abort.mjs
+LLM request abort checks passed
+
+PASS test-llm-stream-timeout-recovery.mjs
+LLM stream timeout recovery checks passed
+
+PASS test-local-cubism-frame-delivery.mjs
+Local Cubism frame delivery and shared-character checks passed
+
+PASS test-local-cubism-smoothing.mjs
+local cubism smoothing checks passed
+
+PASS test-local-vts-item-overlay.mjs
+local VTS item overlay checks passed
+
+PASS test-managed-milvus-policy.mjs
+managed Milvus startup policy checks passed
+
+PASS test-managed-milvus-recovery.mjs
+managed Milvus recovery integration checks passed
+
+PASS test-memory-durable-outbox.mjs
+memory durable outbox checks passed
+
+PASS test-memory-indexeddb-outbox.mjs
+memory IndexedDB outbox burst elapsed: 65ms
+memory IndexedDB outbox capacity checks passed
+
+FAIL test-memory-large-scale-viewer-isolation.mjs
+node:internal/modules/run_main:107
+    triggerUncaughtException(
+    ^
+
+AssertionError [ERR_ASSERTION]: viewer-scoped memory must survive the 50k global boundary and conflicts must remain viewer-isolated
++ actual - expected
+
+  {
+    crossViewerConflict: false,
++   targetStillSearchable: false
+-   targetStillSearchable: true
+  }
+
+    at file:///Users/yxy/Desktop/codex/yachiyo-live2d-studio/tools/live2d-studio/test-memory-large-scale-viewer-isolation.mjs:254:10
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5) {
+  generatedMessage: false,
+  code: 'ERR_ASSERTION',
+  actual: { targetStillSearchable: false, crossViewerConflict: false },
+  expected: { targetStillSearchable: true, crossViewerConflict: false },
+  operator: 'deepStrictEqual',
+  diff: 'simple'
+}
+
+Node.js v24.19.0
+
+PASS test-memory-lifecycle.mjs
+Memory lifecycle test passed
+
+PASS test-memory-long-run-stability.mjs
+memory long-run stability checks passed: 600 turns, 3 restarts, 60 segments, 108 rollups, record p95=10.9ms, total=1.3s
+
+PASS test-memory-outbox-localstorage-fallback.mjs
+memory outbox localStorage fallback checks passed
+
+PASS test-memory-outbox-quota-fallback.mjs
+memory outbox quota fallback checks passed
+
+PASS test-memory-outbox-reload.mjs
+memory outbox reload checks passed
+
+PASS test-memory-outbox-timeout-recovery.mjs
+memory outbox timeout recovery checks passed
+
+PASS test-memory-retrieval-nonblocking-outbox.mjs
+memory retrieval nonblocking outbox checks passed
+
+PASS test-memory-segment-stability.mjs
+memory segment stability checks passed
+
+PASS test-memory-session-restart-boundary.mjs
+memory session restart boundary checks passed
+
+PASS test-memory-session-summary-backlog.mjs
+memory session summary backlog checks passed
+
+PASS test-memory-session-summary-cadence.mjs
+memory session summary cadence checks passed
+
+PASS test-memory-session-summary-timeout.mjs
+memory session summary timeout checks passed
+
+PASS test-memory-synthetic-recovery-filter.mjs
+Synthetic recovery memory filter checks passed
+
+PASS test-minecraft-action-pipeline.mjs
+Minecraft action pipeline checks passed
+
+PASS test-minecraft-agent-integration.mjs
+Minecraft agent integration checks passed
+
+PASS test-minecraft-agent-runtime.mjs
+Minecraft agent runtime checks passed
+
+PASS test-minecraft-autonomy-controller.mjs
+Minecraft autonomy controller checks passed
+
+PASS test-minecraft-llm-control.mjs
+Minecraft LLM control checks passed
+
+PASS test-minecraft-movement-primitives.mjs
+Minecraft movement primitive checks passed
+
+PASS test-minecraft-safety.mjs
+Minecraft safety checks passed
+
+PASS test-minecraft-survival-planner.mjs
+Minecraft survival planner checks passed
+
+PASS test-minecraft-survival-skills.mjs
+Minecraft survival skill checks passed
+
+PASS test-music-browser-playback.mjs
+music browser playback checks passed
+
+PASS test-music-control-payload.mjs
+music control payload checks passed
+
+PASS test-music-request-engine.mjs
+music request engine checks passed
+
+PASS test-music-volume-persistence.mjs
+Music volume persistence checks passed
+
+PASS test-natural-blink-timing.mjs
+natural blink timing checks passed
+
+PASS test-natural-gaze-motion.mjs
+natural gaze motion checks passed
+
+PASS test-netease-account.mjs
+netease account and managed sidecar checks passed
+
+FAIL test-netease-vip-full-track.mjs
+node:internal/modules/run_main:107
+    triggerUncaughtException(
+    ^
+
+AssertionError [ERR_ASSERTION]: Error: spawnSync powershell.exe ENOENT
+
+null !== 0
+
+    at file:///Users/yxy/Desktop/codex/yachiyo-live2d-studio/tools/live2d-studio/test-netease-vip-full-track.mjs:40:8
+    at ModuleJob.run (node:internal/modules/esm/module_job:439:25)
+    at async node:internal/modules/esm/loader:643:26
+    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:101:5) {
+  generatedMessage: false,
+  code: 'ERR_ASSERTION',
+  actual: null,
+  expected: 0,
+  operator: 'strictEqual',
+  diff: 'simple'
+}
+
+Node.js v24.19.0
+
+PASS test-semantic-retrieval.mjs
+Semantic cross-language fixture, long-document chunking, cache and strict vector dimension checks passed
+
+PASS test-smile-expression-file.mjs
+closed-eye smile expression file checks passed
+
+PASS test-speech-queue-backpressure.mjs
+speech queue backpressure checks passed
+
+PASS test-spring-context.mjs
+Spring defaults, canon, follow-up, long history and query-focused memory checks passed
+
+PASS test-streaming-behavior-plan-speaking-mode.mjs
+streaming behavior plan speaking mode checks passed
+
+PASS test-streaming-settle-and-eye-timing.mjs
+streaming settle and eye timing checks passed
+
+PASS test-streaming-speech-motion-continuity.mjs
+streaming speech motion continuity checks passed
+
+PASS test-streaming-speech-session.mjs
+streaming speech session checks passed
+
+PASS test-viewer-memory-persistence.mjs
+viewer memory persistence checks passed
+
+PASS test-yachiyo-music-adapter.mjs
+Yachiyo music adapter checks passed

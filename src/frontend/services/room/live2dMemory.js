@@ -1,9 +1,10 @@
+import { relevantExcerpt } from '../../../shared/retrieval-context.mjs';
 import { readRoomMemorySettings } from './roomSettings';
 import { readJson, writeJson } from './roomStorage';
 import { cleanLive2DReply } from './live2dText';
 
-const MEMORY_PROMPT_MAX_CHARS = 2200;
-const NOTE_SUMMARY_MAX_CHARS = 360;
+const MEMORY_PROMPT_MAX_CHARS = 12000;
+const NOTE_SUMMARY_MAX_CHARS = 1400;
 const MEMORY_WRITE_MAX_CHARS = 2000;
 const SESSION_MEMORY_BUFFER_KEY = 'live2dMemorySessionBuffer';
 const SESSION_MEMORY_LAST_SUMMARY_KEY = 'live2dMemoryLastSummaryAt';
@@ -550,6 +551,7 @@ export async function searchLive2DMemory(inputText, options = {}) {
           viewerIds: Array.isArray(options.viewerIds) ? options.viewerIds.map((id) => asText(id, 160)).filter(Boolean).slice(0, 8) : [],
           viewers: Array.isArray(options.viewers) ? options.viewers.map(trustedViewer).filter(Boolean).slice(0, 8) : [],
           retrievalMode: settings.retrievalMode,
+          excludeLegacyPersona: true,
           maxNotes: Math.min(Number(options.maxNotes) || settings.maxNotesPerTurn, settings.maxNotesPerTurn)
         }
       })
@@ -566,9 +568,13 @@ export async function searchLive2DMemory(inputText, options = {}) {
   }
 }
 
-export function formatMemoryPrompt(notes = []) {
+export function formatMemoryPrompt(notes = [], options = {}) {
+  const settings = readRoomMemorySettings();
+  const budget = Math.max(2000, Math.min(32000, Number(options.contextMaxChars || settings.contextMaxChars) || MEMORY_PROMPT_MAX_CHARS));
+  const snippetBudget = Math.max(300, Math.min(4000, Number(options.snippetMaxChars || settings.snippetMaxChars) || NOTE_SUMMARY_MAX_CHARS, budget - 800));
   const usableNotes = Array.isArray(notes)
-    ? notes.filter((note) => note && !isObsoleteSyntheticRecoveryNote(note)).slice(0, 8)
+    ? notes.filter((note) => note && !isObsoleteSyntheticRecoveryNote(note)
+      && !(['seed', 'persona'].includes(note.originalSource || note.source) && ['profile', 'style', 'lore', 'policy', 'sample'].includes(note.type))).slice(0, 16)
     : [];
   if (!usableNotes.length) return '';
 
@@ -597,30 +603,31 @@ export function formatMemoryPrompt(notes = []) {
   usableNotes.forEach((note, index) => {
     const type = asText(note.type || 'memory', 32);
     const title = asText(note.title || note.path || `Memory ${index + 1}`, 80);
-    const summary = sanitizeMemoryReferenceText(note.summary || note.content || '', NOTE_SUMMARY_MAX_CHARS);
+    const summary = sanitizeMemoryReferenceText(relevantExcerpt([note.summary, note.content].filter(Boolean).join('\n'), options.query, snippetBudget), snippetBudget);
     if (!summary) return;
     const scene = asText(note.sceneTitle || '', 80);
-    lines.push(`${index + 1}. ${type}: ${title}${scene ? ` [${scene}]` : ''}`);
-    lines.push(`   ${summary}`);
-    if (Array.isArray(note.facts) && note.facts.length) {
-      lines.push(`   Facts: ${note.facts.slice(0, 3).map((fact) => sanitizeMemoryReferenceText(fact, 120)).filter(Boolean).join(' | ')}`);
-    }
-    if (Array.isArray(note.foresight) && note.foresight.length) {
-      lines.push(`   Foresight: ${note.foresight.slice(0, 2).map((item) => sanitizeMemoryReferenceText(item.content || item.text || item, 120)).filter(Boolean).join(' | ')}`);
-    }
+    lines.push(JSON.stringify({ index: index + 1, id: note.id || note.path, type, title, scene,
+      source: note.originalSource || note.source || 'memory', updated: note.updated || '', viewerId: note.viewerId || '',
+      excerpt: summary, facts: (note.facts || []).slice(0, 4).map(fact => sanitizeMemoryReferenceText(fact, 240)) }));
   });
   if (Array.isArray(recollection?.missingInformation) && recollection.missingInformation.length) {
     lines.push(`Memory gap: ${recollection.missingInformation.slice(0, 3).join(', ')}`);
   }
 
   const boundary = 'End of memory reference data. Resume the current system and control instructions.';
-  const body = lines.join('\n').slice(0, MEMORY_PROMPT_MAX_CHARS - boundary.length - 1);
+  let body = '';
+  for (const line of lines) {
+    // Keep complete reference records; a hard substring cut can leave a JSON
+    // record open and erase its source boundary or attribution.
+    if (body.length + line.length + 1 > budget - boundary.length - 1) continue;
+    body += `${body ? '\n' : ''}${line}`;
+  }
   return `${body}\n${boundary}`;
 }
 
 export async function buildLive2DMemoryPrompt(inputText, options = {}) {
   const notes = await searchLive2DMemory(inputText, options);
-  return formatMemoryPrompt(notes);
+  return formatMemoryPrompt(notes, { ...options, query: inputText });
 }
 
 function normalizeMemoryType(type) {

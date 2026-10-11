@@ -220,10 +220,6 @@ onUnmounted(() => {
             <span>交给 AI 回应</span>
           </label>
           <label class="studio-check-row">
-            <input v-model="settings.autoStartDirector" type="checkbox">
-            <span>首条弹幕自动开播</span>
-          </label>
-          <label class="studio-check-row">
             <input v-model="settings.readAloud" type="checkbox" :disabled="settings.autoForward">
             <span>直接朗读弹幕（关闭 AI 回复时生效）</span>
           </label>
@@ -269,6 +265,9 @@ onUnmounted(() => {
             placeholder="每行一个词；命中后不会交给点歌、AI、TTS或观众记忆"
           ></textarea>
         </label>
+        <p class="studio-danmaku-hint">
+          弹幕可提前连接和查看；AI 回应、朗读及点歌仅在直播舞台点击“开始直播”后启用，停止后不再触发。
+        </p>
         <p class="studio-danmaku-hint">
           请勿逐项拼接 Cookie。请在已登录的 B站页面打开开发者工具 → Network，刷新后选中 api.bilibili.com 请求，从 Request Headers 复制完整 Cookie 请求头值（不含 Cookie: 前缀）并整段粘贴。Cookie 只发送给本机代理；认证失败仍会匿名连接。
         </p>

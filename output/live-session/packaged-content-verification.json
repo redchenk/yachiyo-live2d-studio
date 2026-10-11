@@ -1,0 +1,57 @@
+[
+  {
+    "platform": "Windows-x64",
+    "version": "0.2.2",
+    "criticalFiles": {
+      "dist/live2d-studio/index.html": "2069063bad11affcd7f8aa675472882e2e234c8dd4bfe4e2e8bfc2140fc30adc",
+      "dist/live2d-studio/assets/index-wfrNS_kO.js": "3684ce4406fa8a17cf220aba61e352a28a3439761135a0e82793de665a42a090",
+      "dist/live2d-studio/assets/index-C-la55xe.css": "f11c75c9936be9be8efccc383957b6db213997ae9939935cec6d0e18a5e8b0a0",
+      "lib/bundled/live2d-room-neuro-live.iife.js": "28372da1ed718873637d0a6683c1f484a9d3e8b01fa5a8477db93585f03e0be8"
+    },
+    "packagedAppCodeMatches": true
+  },
+  {
+    "platform": "macOS-arm64",
+    "version": "0.2.2",
+    "criticalFiles": {
+      "dist/live2d-studio/index.html": "2069063bad11affcd7f8aa675472882e2e234c8dd4bfe4e2e8bfc2140fc30adc",
+      "dist/live2d-studio/assets/index-wfrNS_kO.js": "3684ce4406fa8a17cf220aba61e352a28a3439761135a0e82793de665a42a090",
+      "dist/live2d-studio/assets/index-C-la55xe.css": "f11c75c9936be9be8efccc383957b6db213997ae9939935cec6d0e18a5e8b0a0",
+      "lib/bundled/live2d-room-neuro-live.iife.js": "28372da1ed718873637d0a6683c1f484a9d3e8b01fa5a8477db93585f03e0be8"
+    },
+    "packagedAppCodeMatches": true
+  },
+  {
+    "platform": "macOS-x64",
+    "version": "0.2.2",
+    "criticalFiles": {
+      "dist/live2d-studio/index.html": "2069063bad11affcd7f8aa675472882e2e234c8dd4bfe4e2e8bfc2140fc30adc",
+      "dist/live2d-studio/assets/index-wfrNS_kO.js": "3684ce4406fa8a17cf220aba61e352a28a3439761135a0e82793de665a42a090",
+      "dist/live2d-studio/assets/index-C-la55xe.css": "f11c75c9936be9be8efccc383957b6db213997ae9939935cec6d0e18a5e8b0a0",
+      "lib/bundled/live2d-room-neuro-live.iife.js": "28372da1ed718873637d0a6683c1f484a9d3e8b01fa5a8477db93585f03e0be8"
+    },
+    "packagedAppCodeMatches": true
+  },
+  {
+    "platform": "Linux-arm64",
+    "version": "0.2.2",
+    "criticalFiles": {
+      "dist/live2d-studio/index.html": "2069063bad11affcd7f8aa675472882e2e234c8dd4bfe4e2e8bfc2140fc30adc",
+      "dist/live2d-studio/assets/index-wfrNS_kO.js": "3684ce4406fa8a17cf220aba61e352a28a3439761135a0e82793de665a42a090",
+      "dist/live2d-studio/assets/index-C-la55xe.css": "f11c75c9936be9be8efccc383957b6db213997ae9939935cec6d0e18a5e8b0a0",
+      "lib/bundled/live2d-room-neuro-live.iife.js": "28372da1ed718873637d0a6683c1f484a9d3e8b01fa5a8477db93585f03e0be8"
+    },
+    "packagedAppCodeMatches": true
+  },
+  {
+    "platform": "Linux-x64",
+    "version": "0.2.2",
+    "criticalFiles": {
+      "dist/live2d-studio/index.html": "2069063bad11affcd7f8aa675472882e2e234c8dd4bfe4e2e8bfc2140fc30adc",
+      "dist/live2d-studio/assets/index-wfrNS_kO.js": "3684ce4406fa8a17cf220aba61e352a28a3439761135a0e82793de665a42a090",
+      "dist/live2d-studio/assets/index-C-la55xe.css": "f11c75c9936be9be8efccc383957b6db213997ae9939935cec6d0e18a5e8b0a0",
+      "lib/bundled/live2d-room-neuro-live.iife.js": "28372da1ed718873637d0a6683c1f484a9d3e8b01fa5a8477db93585f03e0be8"
+    },
+    "packagedAppCodeMatches": true
+  }
+]

@@ -1,0 +1,172 @@
+{
+  "total": 33,
+  "passed": 33,
+  "failed": 0,
+  "checks": [
+    {
+      "file": "test-action-transition-continuity.mjs",
+      "passed": true,
+      "output": "action transition continuity checks passed\n"
+    },
+    {
+      "file": "test-audience-viewer-state.mjs",
+      "passed": true,
+      "output": "audience viewer state checks passed\n"
+    },
+    {
+      "file": "test-cubism-action-handoff-posture.mjs",
+      "passed": true,
+      "output": "cubism action handoff posture checks passed\n"
+    },
+    {
+      "file": "test-cubism-runtime-cadence.mjs",
+      "passed": true,
+      "output": "Cubism runtime cadence and single-owner motion checks passed\nCubism expression hold and reset checks passed\n"
+    },
+    {
+      "file": "test-cubism-smile-expression-separation.mjs",
+      "passed": true,
+      "output": "cubism smile expression separation checks passed\n"
+    },
+    {
+      "file": "test-gpt-sovits-japanese-only.mjs",
+      "passed": true,
+      "output": "GPT-SoVITS Japanese-only realtime checks passed\n"
+    },
+    {
+      "file": "test-llm-concurrent-history.mjs",
+      "passed": true,
+      "output": "concurrent LLM history checks passed\n"
+    },
+    {
+      "file": "test-llm-live-recovery.mjs",
+      "passed": true,
+      "output": "LLM live recovery checks passed\n"
+    },
+    {
+      "file": "test-llm-provider-switch.mjs",
+      "passed": true,
+      "output": "llm provider switch checks passed\n"
+    },
+    {
+      "file": "test-llm-request-abort.mjs",
+      "passed": true,
+      "output": "LLM request abort checks passed\n"
+    },
+    {
+      "file": "test-llm-stream-timeout-recovery.mjs",
+      "passed": true,
+      "output": "LLM stream timeout recovery checks passed\n"
+    },
+    {
+      "file": "test-local-cubism-frame-delivery.mjs",
+      "passed": true,
+      "output": "Local Cubism frame delivery and shared-character checks passed\n"
+    },
+    {
+      "file": "test-local-cubism-smoothing.mjs",
+      "passed": true,
+      "output": "local cubism smoothing checks passed\n"
+    },
+    {
+      "file": "test-memory-durable-outbox.mjs",
+      "passed": true,
+      "output": "memory durable outbox checks passed\n"
+    },
+    {
+      "file": "test-memory-indexeddb-outbox.mjs",
+      "passed": true,
+      "output": "memory IndexedDB outbox burst elapsed: 68ms\nmemory IndexedDB outbox capacity checks passed\n"
+    },
+    {
+      "file": "test-memory-large-scale-viewer-isolation.mjs",
+      "passed": true,
+      "output": "large-scale viewer isolation checks passed: 50025 global memories\n"
+    },
+    {
+      "file": "test-memory-lifecycle.mjs",
+      "passed": true,
+      "output": "Memory lifecycle test passed\n"
+    },
+    {
+      "file": "test-memory-long-run-stability.mjs",
+      "passed": true,
+      "output": "memory long-run stability checks passed: 600 turns, 3 restarts, 60 segments, 108 rollups, record p95=12.6ms, total=1.4s\n"
+    },
+    {
+      "file": "test-memory-outbox-localstorage-fallback.mjs",
+      "passed": true,
+      "output": "memory outbox localStorage fallback checks passed\n"
+    },
+    {
+      "file": "test-memory-outbox-quota-fallback.mjs",
+      "passed": true,
+      "output": "memory outbox quota fallback checks passed\n"
+    },
+    {
+      "file": "test-memory-outbox-reload.mjs",
+      "passed": true,
+      "output": "memory outbox reload checks passed\n"
+    },
+    {
+      "file": "test-memory-outbox-timeout-recovery.mjs",
+      "passed": true,
+      "output": "memory outbox timeout recovery checks passed\n"
+    },
+    {
+      "file": "test-memory-retrieval-nonblocking-outbox.mjs",
+      "passed": true,
+      "output": "memory retrieval nonblocking outbox checks passed\n"
+    },
+    {
+      "file": "test-memory-segment-stability.mjs",
+      "passed": true,
+      "output": "memory segment stability checks passed\n"
+    },
+    {
+      "file": "test-memory-session-restart-boundary.mjs",
+      "passed": true,
+      "output": "memory session restart boundary checks passed\n"
+    },
+    {
+      "file": "test-memory-session-summary-backlog.mjs",
+      "passed": true,
+      "output": "memory session summary backlog checks passed\n"
+    },
+    {
+      "file": "test-memory-session-summary-cadence.mjs",
+      "passed": true,
+      "output": "memory session summary cadence checks passed\n"
+    },
+    {
+      "file": "test-memory-session-summary-timeout.mjs",
+      "passed": true,
+      "output": "memory session summary timeout checks passed\n"
+    },
+    {
+      "file": "test-memory-synthetic-recovery-filter.mjs",
+      "passed": true,
+      "output": "Synthetic recovery memory filter checks passed\n"
+    },
+    {
+      "file": "test-minecraft-llm-control.mjs",
+      "passed": true,
+      "output": "Minecraft LLM control checks passed\n"
+    },
+    {
+      "file": "test-semantic-retrieval.mjs",
+      "passed": true,
+      "output": "Semantic cross-language fixture, long-document chunking, cache and strict vector dimension checks passed\n"
+    },
+    {
+      "file": "test-spring-context.mjs",
+      "passed": true,
+      "output": "Spring defaults, canon, follow-up, long history and query-focused memory checks passed\n"
+    },
+    {
+      "file": "test-viewer-memory-persistence.mjs",
+      "passed": true,
+      "output": "viewer memory persistence checks passed\n"
+    }
+  ]
+}

@@ -1,5 +1,5 @@
 import http from 'node:http';
-import os from 'node:os';
+import { studioDataDirectory } from '../runtime/paths.mjs';
 import path from 'node:path';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
@@ -43,16 +43,14 @@ function arg(name, fallback = '') {
   return inline ? inline.slice(name.length + 1) : fallback;
 }
 
-const servicePort = Math.max(1, Math.min(65535, Number(arg('--port', DEFAULT_PORT)) || DEFAULT_PORT));
+const servicePort = Math.max(0, Math.min(65535, Number(arg('--port', DEFAULT_PORT))));
 const parentPid = Math.max(0, Number(arg('--parent-pid', 0)) || 0);
 const authProfilesFolder = path.join(
-  process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'),
-  'YachiyoLive2DStudio',
+  studioDataDirectory(),
   'minecraft-auth'
 );
 const skillMemoryPath = path.join(
-  process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'),
-  'YachiyoLive2DStudio',
+  studioDataDirectory(),
   'minecraft-skill-memory.json'
 );
 
@@ -1347,7 +1345,11 @@ process.on('unhandledRejection', fatal);
 server.on('error', fatal);
 
 server.listen(servicePort, SERVICE_HOST, () => {
-  event('service-started', { port: servicePort });
+  const actualPort = server.address().port;
+  event('service-started', { port: actualPort });
+  const ready = { type: 'ready', service: 'minecraft', port: actualPort };
+  process.parentPort?.postMessage(ready);
+  process.send?.(ready);
 });
 
 if (parentPid > 0) {

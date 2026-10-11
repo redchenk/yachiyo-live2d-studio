@@ -1,0 +1,66 @@
+{
+  "passed": true,
+  "targets": [
+    {
+      "target": "mac-arm64",
+      "matchedAppFiles": 10,
+      "matchedResourceFiles": 9,
+      "version": "0.2.0",
+      "embeddedSqlite": true,
+      "foreignNativeBindings": false
+    },
+    {
+      "target": "mac-x64",
+      "matchedAppFiles": 10,
+      "matchedResourceFiles": 9,
+      "version": "0.2.0",
+      "embeddedSqlite": true,
+      "foreignNativeBindings": false
+    },
+    {
+      "target": "win-x64",
+      "matchedAppFiles": 10,
+      "matchedResourceFiles": 9,
+      "version": "0.2.0",
+      "embeddedSqlite": true,
+      "foreignNativeBindings": false
+    },
+    {
+      "target": "linux-x64",
+      "matchedAppFiles": 10,
+      "matchedResourceFiles": 9,
+      "version": "0.2.0",
+      "embeddedSqlite": true,
+      "foreignNativeBindings": false
+    },
+    {
+      "target": "linux-arm64",
+      "matchedAppFiles": 10,
+      "matchedResourceFiles": 9,
+      "version": "0.2.0",
+      "embeddedSqlite": true,
+      "foreignNativeBindings": false
+    }
+  ],
+  "sourceHashes": {
+    "tools/desktop/main.mjs": "154c70f69185d75928667152f474fdd5cfbb633a827c90aadffe3a03a3bf40f7",
+    "tools/desktop/chat.mjs": "d108a8f321bee9a2c8d3d1f6ca90c3020dfcbda9c65a9092ad6f411ac938bc73",
+    "tools/desktop/tts.mjs": "14b44672374299fdc31a8227daa6ff3b60529fd4e774f06eefc1c16cc2a52f42",
+    "tools/memory/memory-data-service.mjs": "c4e05ffef83620da0e25670c0cf1bb63f4e899764a38c91c304e55cf9174742a",
+    "tools/memory/sqlite-runtime.mjs": "f81e71733192b7e98a27141e7d791645aeb84b461a49f84e8f7e73d997159f73",
+    "src/shared/chat-model-options.mjs": "a2ff531dfd7cff662715e61eb5f289cf40dc17c770de27c97a0d010b8b8b082d",
+    "src/shared/retrieval-context.mjs": "97e97bc37118db851d27ac3472a5188ef05b9ee2213d7cf80248cbaba11b2a36",
+    "src/shared/yachiyo-canon.mjs": "b7a1031248a737e4801729daf7c3c2e0f7c57bb8dd7da20ff44a537f3604e174",
+    "licenses/tsukuyomi-space-MIT.txt": "3125380381dd14b0113ac6e8ad93da3b9c3a2202aa5bbd8627d71b6434907b8c",
+    "docs/tsukuyomi-source.json": "e457ef9162a0f1572006774cbf8bacd3010242c59e26d497e612d57d72cac6ad",
+    "dist/live2d-studio/assets/index-BTIZ99BS.js": "3c2f3c24e26a8c29bfc1959008d66115ddd5edd1b0d568bae4e2bb7b3e730207",
+    "dist/live2d-studio/assets/index-CU5O61Px.css": "5e61254597409899d071e490b9ab91c1aa4f4e51a8c21c009c45ebc6fdbfadc5",
+    "dist/live2d-studio/assets/sakura-branch-RloD_XbS.png": "488ce1e53aca609f67c0594b5128222b5735c871c10e9dc2c71260649dac8076",
+    "dist/live2d-studio/assets/spring-lake-stage-D-_oB_Fq.png": "ada3ee5c11c45436781f5d7b98fe6e5d3d8eec34af2fe2fb3d909bef5bce53d3",
+    "dist/live2d-studio/index.html": "8d7dcb2d07d91487482d61f0197c6464a6335a136564eee634b6cf08bd72a1a9",
+    "lib/bundled/live2d-room-neuro-live.iife.js": "28372da1ed718873637d0a6683c1f484a9d3e8b01fa5a8477db93585f03e0be8",
+    "assets/images/spring-studio-v1/spring-lake-stage.png": "ada3ee5c11c45436781f5d7b98fe6e5d3d8eec34af2fe2fb3d909bef5bce53d3",
+    "assets/images/spring-studio-v1/sakura-branch.png": "488ce1e53aca609f67c0594b5128222b5735c871c10e9dc2c71260649dac8076",
+    "assets/images/spring-studio-v1/prompts.json": "e3664017c51bcafea9a41191c315b226319082be0b1390c58b72d27d39881f87"
+  }
+}

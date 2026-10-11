@@ -1,0 +1,12 @@
+{
+  "switches": 18,
+  "renders": 424,
+  "fps": 53.111534222341774,
+  "p50Ms": 16.700000047683716,
+  "p95Ms": 33.300000071525574,
+  "maxMs": 33.60000002384186,
+  "maxEventCostMs": 1.1999999284744263,
+  "devicePixelRatio": 2,
+  "renderer": "WebGL clear on actual Cubism canvas",
+  "providerCalls": false
+}

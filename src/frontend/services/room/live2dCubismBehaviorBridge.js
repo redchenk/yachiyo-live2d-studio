@@ -727,9 +727,9 @@ export function mountCubismBehaviorBridge(options = {}) {
   let frameId = 0;
   let momentaryPulse = null;
 
-  function dispatchFrame(parameters) {
+  function dispatchFrame(parameters, now) {
     if (frameSink) {
-      frameSink(parameters);
+      frameSink(parameters, now);
       return;
     }
     window.dispatchEvent(new CustomEvent(FACE_CAPTURE_EVENT, {
@@ -747,7 +747,7 @@ export function mountCubismBehaviorBridge(options = {}) {
   }
 
   function tick(now = performance.now()) {
-    dispatchFrame(sample(now));
+    dispatchFrame(sample(now), now);
     frameId = window.requestAnimationFrame(tick);
   }
 

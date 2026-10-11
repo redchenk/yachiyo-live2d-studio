@@ -1,0 +1,11 @@
+{
+  "repository": "https://github.com/redchenk/tsukuyomi-space",
+  "commit": "49b5a45e8e4ce7fd155296b4c0749aa5c2d777e7",
+  "verifiedAt": "2026-10-11",
+  "license": "../licenses/tsukuyomi-space-MIT.txt",
+  "personaSource": "src/frontend/composables/room/useRoomChat.js#fallbackRoomPersona",
+  "knowledgeSource": "src/frontend/constants/room/knowledgeEntries.js",
+  "version": "2026-10-09-movie-subtitles",
+  "entries": 101,
+  "adaptation": "Broadcast output protocol retained; spoiler facts retrieved only on request; no raw audio, subtitles or novel copied."
+}

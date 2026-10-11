@@ -23,7 +23,7 @@ try {
   }, 'deepseek');
   assert.equal(deepseek.provider, 'deepseek');
   assert.equal(deepseek.apiUrl, 'https://api.deepseek.com/v1/chat/completions');
-  assert.equal(deepseek.model, 'deepseek-chat');
+  assert.equal(deepseek.model, 'deepseek-flash');
   assert.equal(deepseek.apiKey, 'keep-key');
   assert.equal(deepseek.systemPrompt, 'keep prompt');
 

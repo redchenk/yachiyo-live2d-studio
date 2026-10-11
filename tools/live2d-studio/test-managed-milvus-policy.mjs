@@ -63,10 +63,12 @@ assert.match(
   /repoRoot/,
   'the launcher must not reuse a healthy memory sidecar from another checkout'
 );
+const listenerGuardStart = launcherSource.indexOf('var listenerKind = ProbeMemoryDataServiceListener()');
 const listenerGuardSource = launcherSource.slice(
-  launcherSource.indexOf('var listenerKind = ProbeMemoryDataServiceListener()'),
-  launcherSource.indexOf('var nodeExe = Live2DStudioLauncher.FindMemoryNodeExecutable(repoRoot)')
+  listenerGuardStart,
+  launcherSource.indexOf('var nodeExe = Live2DStudioLauncher.FindMemoryNodeExecutable(repoRoot)', listenerGuardStart)
 );
+assert.match(launcherSource, /YACHIYO_MEMORY_AUTOSTART_MANAGED_MILVUS"\]\s*=\s*"0"/, 'normal startup must not require Docker');
 assert.match(
   listenerGuardSource,
   /listenerKind == MemoryDataServiceListenerKind\.ForeignProject[\s\S]*?throw new InvalidOperationException/,

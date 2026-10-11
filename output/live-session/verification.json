@@ -1,0 +1,164 @@
+{
+  "passed": true,
+  "collapsed": {
+    "stage": {
+      "x": 96,
+      "y": 88,
+      "right": 1044,
+      "bottom": 779,
+      "width": 948,
+      "height": 691
+    },
+    "nav": {
+      "x": 16,
+      "y": 88,
+      "right": 80,
+      "bottom": 779,
+      "width": 64,
+      "height": 691
+    },
+    "panel": {
+      "x": 1062,
+      "y": 88,
+      "right": 1422,
+      "bottom": 779,
+      "width": 360,
+      "height": 691
+    }
+  },
+  "expanded": {
+    "stage": {
+      "x": 202,
+      "y": 88,
+      "right": 1044,
+      "bottom": 779,
+      "width": 842,
+      "height": 691
+    },
+    "nav": {
+      "x": 16,
+      "y": 88,
+      "right": 186,
+      "bottom": 779,
+      "width": 170,
+      "height": 691
+    },
+    "panel": {
+      "x": 1062,
+      "y": 88,
+      "right": 1422,
+      "bottom": 779,
+      "width": 360,
+      "height": 691
+    }
+  },
+  "compact": {
+    "stage": {
+      "x": 96,
+      "y": 88,
+      "right": 614,
+      "bottom": 702,
+      "width": 518,
+      "height": 614
+    },
+    "nav": {
+      "x": 16,
+      "y": 88,
+      "right": 80,
+      "bottom": 702,
+      "width": 64,
+      "height": 614
+    },
+    "panel": {
+      "x": 632,
+      "y": 88,
+      "right": 942,
+      "bottom": 702,
+      "width": 310,
+      "height": 614
+    }
+  },
+  "small": {
+    "stage": {
+      "x": 76,
+      "y": 74,
+      "right": 708,
+      "bottom": 422.4140625,
+      "width": 632,
+      "height": 348.4140625
+    },
+    "nav": {
+      "x": 8,
+      "y": 74,
+      "right": 64,
+      "bottom": 785,
+      "width": 56,
+      "height": 711
+    },
+    "panel": {
+      "x": 76,
+      "y": 438.34375,
+      "right": 708,
+      "bottom": 785,
+      "width": 632,
+      "height": 346.65625
+    }
+  },
+  "requests": {
+    "chat": 10,
+    "tts": 2,
+    "music": 0,
+    "acts": 8
+  },
+  "audioEvents": [
+    {
+      "event": "playing",
+      "at": 6722.900000095367,
+      "duration": 2,
+      "text": "",
+      "source": "blob:http://127.0.0.1:50225/4a141897-6a37-4df8-b076-cf3a703f63ea",
+      "liveState": "on"
+    },
+    {
+      "event": "ended",
+      "at": 8738.800000071526,
+      "duration": 2,
+      "text": "",
+      "source": "blob:http://127.0.0.1:50225/4a141897-6a37-4df8-b076-cf3a703f63ea",
+      "liveState": "on"
+    },
+    {
+      "event": "playing",
+      "at": 10897.300000071526,
+      "duration": 2,
+      "text": "",
+      "source": "blob:http://127.0.0.1:50225/527d7f53-8ff7-4334-8914-6fad1f3e6947",
+      "liveState": "on"
+    },
+    {
+      "event": "ended",
+      "at": 12941.5,
+      "duration": 2,
+      "text": "",
+      "source": "blob:http://127.0.0.1:50225/527d7f53-8ff7-4334-8914-6fad1f3e6947",
+      "liveState": "on"
+    }
+  ],
+  "consoleErrors": [],
+  "realCubism": true,
+  "realAudioPlayback": true,
+  "remoteProviderCalls": false,
+  "checks": [
+    "idle auto-forward/gift gate",
+    "read-aloud and song gate",
+    "explicit start",
+    "stop and batch cancellation",
+    "closing cue once",
+    "farewell waits for current audio then plays completely",
+    "late gift cannot restart",
+    "abort/restart",
+    "deadline fail-safe with unavailable LLM",
+    "collapsible workspace and compact layout",
+    "duration and collapse persist after reload"
+  ]
+}

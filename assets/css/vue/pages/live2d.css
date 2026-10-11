@@ -1,20 +1,20 @@
 body.vue-live2d-route {
     overflow: hidden;
-    background: #050816;
+    background: #f7f9fc;
 }
 
 .live2d-page {
-    --live2d-cyan: #49dcff;
-    --live2d-green: #37ee7a;
-    --live2d-violet: #9b62ff;
-    --live2d-pink: #ff80c5;
-    --live2d-gold: #ffd064;
-    --live2d-ink: rgba(248, 251, 255, 0.96);
-    --live2d-muted: rgba(220, 231, 255, 0.66);
-    --live2d-faint: rgba(220, 231, 255, 0.42);
-    --live2d-line: rgba(165, 190, 255, 0.18);
-    --live2d-panel: rgba(21, 28, 54, 0.66);
-    --live2d-panel-strong: rgba(18, 25, 49, 0.82);
+    --live2d-cyan: #ac4d6d;
+    --live2d-green: #3b8973;
+    --live2d-violet: #6f62b4;
+    --live2d-pink: #c27792;
+    --live2d-gold: #a17335;
+    --live2d-ink: rgba(32, 43, 70, 0.96);
+    --live2d-muted: rgba(32, 43, 70, 0.66);
+    --live2d-faint: rgba(32, 43, 70, 0.60);
+    --live2d-line: rgba(144, 153, 173, 0.20);
+    --live2d-panel: rgba(255, 255, 255, 0.80);
+    --live2d-panel-strong: rgba(255, 255, 255, 0.82);
     position: fixed;
     inset: 0;
     z-index: 20;
@@ -23,8 +23,8 @@ body.vue-live2d-route {
     overflow: hidden;
     color: var(--live2d-ink);
     background:
-        linear-gradient(90deg, rgba(4, 7, 18, 0.58), rgba(8, 10, 24, 0.12) 28%, rgba(7, 9, 20, 0.14) 66%, rgba(4, 7, 18, 0.72)),
-        linear-gradient(180deg, rgba(3, 6, 18, 0.18), rgba(4, 6, 15, 0.76)),
+        linear-gradient(90deg, rgba(255, 255, 255, 0.80), rgba(255, 255, 255, 0.80) 28%, rgba(255, 255, 255, 0.80) 66%, rgba(255, 255, 255, 0.80)),
+        linear-gradient(180deg, rgba(255, 255, 255, 0.80), rgba(255, 255, 255, 0.80)),
         var(--ts-live2d-studio-bg-image) center / cover no-repeat;
 }
 
@@ -33,8 +33,8 @@ body.vue-live2d-route {
     inset: 0;
     pointer-events: none;
     background:
-        linear-gradient(180deg, rgba(6, 9, 24, 0.18), rgba(4, 8, 20, 0.7)),
-        linear-gradient(90deg, rgba(8, 12, 30, 0.72), transparent 18%, transparent 68%, rgba(6, 9, 23, 0.72));
+        linear-gradient(180deg, rgba(255, 255, 255, 0.80), rgba(255, 255, 255, 0.80)),
+        linear-gradient(90deg, rgba(255, 255, 255, 0.80), transparent 18%, transparent 68%, rgba(255, 255, 255, 0.80));
 }
 
 .live2d-stage {
@@ -72,7 +72,7 @@ body.vue-live2d-route {
     height: 17%;
     z-index: -1;
     border-radius: 50%;
-    background: rgba(0, 0, 0, 0.44);
+    background: rgba(37, 48, 70, 0.12);
     filter: blur(28px);
     pointer-events: none;
 }
@@ -129,9 +129,9 @@ body.vue-live2d-route {
 }
 
 .live2d-vts-item.selected {
-    outline: 2px solid rgba(73, 220, 255, 0.86);
+    outline: 2px solid rgba(172, 77, 109, 0.86);
     outline-offset: 5px;
-    filter: drop-shadow(0 0 12px rgba(73, 220, 255, 0.62));
+    filter: drop-shadow(0 0 12px rgba(172, 77, 109, 0.62));
 }
 
 .live2d-vts-item.delete-target {
@@ -146,14 +146,14 @@ body.vue-live2d-route {
     z-index: 12;
     display: grid;
     place-items: center;
-    border: 1px solid rgba(255, 128, 165, 0.44);
-    border-radius: 8px;
-    background-color: rgba(60, 18, 34, 0.5);
+    border: 1px solid rgba(172, 77, 109, 0.44);
+    border-radius: 12px;
+    background-color: rgba(255, 255, 255, 0.80);
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='48' height='48' viewBox='0 0 24 24' fill='none' stroke='%23ffd7e2' stroke-width='2.3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3 6h18'/%3E%3Cpath d='M8 6V4h8v2'/%3E%3Cpath d='M19 6l-1 14H6L5 6'/%3E%3Cpath d='M10 11v5'/%3E%3Cpath d='M14 11v5'/%3E%3C/svg%3E");
     background-position: center;
     background-repeat: no-repeat;
     background-size: 48% 48%;
-    box-shadow: 0 14px 34px rgba(0, 0, 0, 0.32), inset 0 0 22px rgba(255, 100, 130, 0.14);
+    box-shadow: 0 14px 34px rgba(37, 48, 70, 0.12), inset 0 0 22px rgba(255, 100, 130, 0.14);
     pointer-events: none;
     opacity: 0;
     transform: translateY(0.35rem) scale(0.96);
@@ -169,7 +169,7 @@ body.vue-live2d-route {
     transform: translateY(0) scale(1.08);
     border-color: rgba(255, 112, 145, 0.95);
     background-color: rgba(100, 20, 45, 0.72);
-    box-shadow: 0 18px 42px rgba(0, 0, 0, 0.38), 0 0 24px rgba(255, 100, 130, 0.4);
+    box-shadow: 0 18px 42px rgba(37, 48, 70, 0.12), 0 0 24px rgba(255, 100, 130, 0.4);
 }
 
 .live2d-page.model-hidden .live2d-model {
@@ -207,11 +207,11 @@ body.vue-live2d-route {
 .live2d-debug-panel,
 .live2d-error,
 .live2d-loading {
-    border: 1px solid rgba(160, 184, 255, 0.24);
-    border-radius: 8px;
-    background: rgba(18, 25, 49, 0.62);
-    box-shadow: 0 24px 64px rgba(0, 0, 0, 0.3);
-    backdrop-filter: blur(22px) saturate(1.16);
+    border: 1px solid rgba(144, 153, 173, 0.24);
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.80);
+    box-shadow: 0 24px 64px rgba(37, 48, 70, 0.12);
+    backdrop-filter: none;
 }
 
 .live2d-caption {
@@ -244,11 +244,11 @@ body.vue-live2d-route {
 
 .live2d-caption p {
     margin: 0;
-    color: #fff;
+    color: #202b46;
     font-size: clamp(1.25rem, 2vw, 1.75rem);
     font-weight: 900;
     line-height: 1.48;
-    text-shadow: 0 2px 16px rgba(0, 0, 0, 0.4);
+    text-shadow: 0 2px 16px rgba(37, 48, 70, 0.12);
     white-space: pre-wrap;
 }
 
@@ -269,7 +269,7 @@ body.vue-live2d-route {
 
 .live2d-feed header {
     justify-content: space-between;
-    border-bottom: 1px solid rgba(160, 184, 255, 0.14);
+    border-bottom: 1px solid rgba(144, 153, 173, 0.20);
     padding-bottom: 0.56rem;
 }
 
@@ -297,7 +297,7 @@ body.vue-live2d-route {
     gap: 0.55rem;
     align-items: center;
     min-height: 2.35rem;
-    border-bottom: 1px solid rgba(160, 184, 255, 0.08);
+    border-bottom: 1px solid rgba(144, 153, 173, 0.20);
 }
 
 .live2d-feed-line strong {
@@ -322,7 +322,7 @@ body.vue-live2d-route {
 .live2d-feed-line span {
     min-width: 0;
     overflow: hidden;
-    color: rgba(238, 243, 255, 0.82);
+    color: rgba(32, 43, 70, 0.82);
     font-size: 0.82rem;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -364,11 +364,11 @@ body.vue-live2d-route {
     gap: 0.72rem;
     padding: 0.86rem;
     overflow: auto;
-    border: 1px solid rgba(160, 184, 255, 0.22);
-    border-radius: 8px;
-    background: rgba(18, 25, 49, 0.7);
-    box-shadow: 0 24px 64px rgba(0, 0, 0, 0.32);
-    backdrop-filter: blur(22px) saturate(1.16);
+    border: 1px solid rgba(144, 153, 173, 0.22);
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.80);
+    box-shadow: 0 24px 64px rgba(37, 48, 70, 0.12);
+    backdrop-filter: none;
 }
 
 .live2d-item-file-input {
@@ -391,9 +391,9 @@ body.vue-live2d-route {
     top: 0;
     z-index: 2;
     padding: 0.1rem 0 0.72rem;
-    border-bottom: 1px solid rgba(160, 184, 255, 0.12);
-    background: linear-gradient(180deg, rgba(18, 25, 49, 0.96), rgba(18, 25, 49, 0.78));
-    backdrop-filter: blur(18px) saturate(1.12);
+    border-bottom: 1px solid rgba(144, 153, 173, 0.20);
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(255, 255, 255, 0.80));
+    backdrop-filter: none;
 }
 
 .live2d-item-editor-head > div {
@@ -444,9 +444,9 @@ body.vue-live2d-route {
 .live2d-item-asset,
 .live2d-item-row,
 .live2d-item-detail {
-    border: 1px solid rgba(160, 184, 255, 0.14);
-    border-radius: 8px;
-    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(144, 153, 173, 0.20);
+    border-radius: 12px;
+    background: rgba(98, 110, 132, 0.05);
 }
 
 .live2d-item-asset {
@@ -483,7 +483,7 @@ body.vue-live2d-route {
     display: grid;
     place-items: center;
     color: var(--live2d-cyan);
-    background: rgba(73, 220, 255, 0.1);
+    background: rgba(172, 77, 109, 0.10);
 }
 
 .live2d-item-asset-preview {
@@ -523,14 +523,14 @@ body.vue-live2d-route {
 }
 
 .live2d-item-row.active {
-    border-color: rgba(73, 220, 255, 0.62);
-    background: rgba(73, 220, 255, 0.12);
+    border-color: rgba(172, 77, 109, 0.62);
+    background: rgba(172, 77, 109, 0.12);
 }
 
 .live2d-item-asset:hover,
 .live2d-item-row:hover {
-    border-color: rgba(73, 220, 255, 0.46);
-    background: rgba(73, 220, 255, 0.1);
+    border-color: rgba(172, 77, 109, 0.46);
+    background: rgba(172, 77, 109, 0.10);
 }
 
 .live2d-item-detail {
@@ -565,10 +565,10 @@ body.vue-live2d-route {
 
 .live2d-item-detail select {
     min-height: 2.3rem;
-    border: 1px solid rgba(160, 184, 255, 0.16);
-    border-radius: 8px;
+    border: 1px solid rgba(144, 153, 173, 0.20);
+    border-radius: 12px;
     color: var(--live2d-ink);
-    background: rgba(8, 12, 28, 0.62);
+    background: rgba(255, 255, 255, 0.80);
     font: inherit;
 }
 
@@ -590,8 +590,8 @@ body.vue-live2d-route {
     display: grid;
     place-items: center;
     margin: 0;
-    border: 1px dashed rgba(160, 184, 255, 0.16);
-    border-radius: 8px;
+    border: 1px dashed rgba(144, 153, 173, 0.20);
+    border-radius: 12px;
 }
 
 .live2d-panel-header {
@@ -606,8 +606,8 @@ body.vue-live2d-route {
     width: 3rem;
     height: 3rem;
     border-radius: 50%;
-    background: rgba(255, 208, 100, 0.16);
-    box-shadow: inset 0 0 0 1px rgba(255, 208, 100, 0.24);
+    background: rgba(161, 115, 53, 0.16);
+    box-shadow: inset 0 0 0 1px rgba(161, 115, 53, 0.24);
     position: relative;
 }
 
@@ -617,12 +617,12 @@ body.vue-live2d-route {
     inset: 1.04rem;
     border-radius: 50%;
     background: var(--live2d-gold);
-    box-shadow: 0 0 24px rgba(255, 208, 100, 0.74);
+    box-shadow: 0 0 24px rgba(161, 115, 53, 0.74);
 }
 
 .live2d-status-orb.ready::after {
     background: var(--live2d-cyan);
-    box-shadow: 0 0 26px rgba(73, 220, 255, 0.82);
+    box-shadow: 0 0 26px rgba(172, 77, 109, 0.82);
 }
 
 .live2d-status-orb.error::after {
@@ -666,10 +666,10 @@ body.vue-live2d-route {
 .live2d-tile-btn,
 .live2d-quick-btn,
 .live2d-tabbar button {
-    border: 1px solid rgba(160, 184, 255, 0.18);
-    border-radius: 8px;
-    color: rgba(237, 244, 255, 0.9);
-    background: rgba(255, 255, 255, 0.055);
+    border: 1px solid rgba(144, 153, 173, 0.20);
+    border-radius: 12px;
+    color: rgba(32, 43, 70, 0.90);
+    background: rgba(98, 110, 132, 0.055);
     font: inherit;
     font-weight: 850;
     cursor: pointer;
@@ -690,8 +690,8 @@ body.vue-live2d-route {
 .live2d-quick-btn:hover:not(:disabled),
 .live2d-tabbar button:hover {
     transform: translateY(-1px);
-    border-color: rgba(125, 105, 255, 0.58);
-    background: rgba(126, 96, 255, 0.16);
+    border-color: rgba(111, 98, 180, 0.58);
+    background: rgba(111, 98, 180, 0.16);
 }
 
 .live2d-icon-btn:disabled,
@@ -703,7 +703,7 @@ body.vue-live2d-route {
 }
 
 .live2d-debug-toggle[aria-pressed="true"] {
-    border-color: rgba(73, 220, 255, 0.6);
+    border-color: rgba(172, 77, 109, 0.60);
     color: var(--live2d-cyan);
 }
 
@@ -711,9 +711,9 @@ body.vue-live2d-route {
     display: grid;
     gap: 0.8rem;
     padding: 1rem;
-    border: 1px solid rgba(160, 184, 255, 0.14);
-    border-radius: 8px;
-    background: rgba(255, 255, 255, 0.045);
+    border: 1px solid rgba(144, 153, 173, 0.20);
+    border-radius: 12px;
+    background: rgba(98, 110, 132, 0.045);
 }
 
 .live2d-live-director label {
@@ -743,11 +743,11 @@ body.vue-live2d-route {
 .live2d-llm-form textarea {
     width: 100%;
     min-height: 2.9rem;
-    border: 1px solid rgba(160, 184, 255, 0.16);
-    border-radius: 8px;
+    border: 1px solid rgba(144, 153, 173, 0.20);
+    border-radius: 12px;
     outline: none;
     color: var(--live2d-ink);
-    background: rgba(8, 12, 28, 0.5);
+    background: rgba(255, 255, 255, 0.80);
     font: inherit;
     font-size: 0.9rem;
 }
@@ -764,8 +764,8 @@ body.vue-live2d-route {
 
 .live2d-live-director input:not([type="checkbox"]):focus,
 .live2d-llm-form textarea:focus {
-    border-color: rgba(73, 220, 255, 0.54);
-    box-shadow: 0 0 0 3px rgba(73, 220, 255, 0.1);
+    border-color: rgba(172, 77, 109, 0.54);
+    box-shadow: 0 0 0 3px rgba(172, 77, 109, 0.10);
 }
 
 .live2d-audience-row,
@@ -792,7 +792,7 @@ body.vue-live2d-route {
     justify-content: center;
     gap: 0.5rem;
     padding: 0 1rem;
-    background: rgba(126, 96, 255, 0.17);
+    background: rgba(111, 98, 180, 0.17);
 }
 
 .live2d-switch {
@@ -803,9 +803,9 @@ body.vue-live2d-route {
     align-items: center;
     gap: 0.48rem;
     padding: 0 0.78rem;
-    border: 1px solid rgba(160, 184, 255, 0.16);
-    border-radius: 8px;
-    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(144, 153, 173, 0.20);
+    border-radius: 12px;
+    background: rgba(98, 110, 132, 0.05);
     cursor: pointer;
 }
 
@@ -831,9 +831,9 @@ body.vue-live2d-route {
     display: grid;
     gap: 0.66rem;
     padding: 0.82rem;
-    border: 1px solid rgba(160, 184, 255, 0.14);
-    border-radius: 8px;
-    background: rgba(255, 255, 255, 0.045);
+    border: 1px solid rgba(144, 153, 173, 0.20);
+    border-radius: 12px;
+    background: rgba(98, 110, 132, 0.045);
 }
 
 .live2d-music-head,
@@ -888,26 +888,26 @@ body.vue-live2d-route {
     width: 100%;
     min-height: 2.65rem;
     padding: 0 0.78rem;
-    border: 1px solid rgba(160, 184, 255, 0.16);
-    border-radius: 8px;
+    border: 1px solid rgba(144, 153, 173, 0.20);
+    border-radius: 12px;
     outline: none;
     color: var(--live2d-ink);
-    background: rgba(8, 12, 28, 0.5);
+    background: rgba(255, 255, 255, 0.80);
     font: inherit;
     font-size: 0.86rem;
 }
 
 .live2d-music-request input:focus {
-    border-color: rgba(73, 220, 255, 0.54);
-    box-shadow: 0 0 0 3px rgba(73, 220, 255, 0.1);
+    border-color: rgba(172, 77, 109, 0.54);
+    box-shadow: 0 0 0 3px rgba(172, 77, 109, 0.10);
 }
 
 .live2d-music-current,
 .live2d-music-empty,
 .live2d-music-row {
-    border: 1px solid rgba(160, 184, 255, 0.12);
-    border-radius: 8px;
-    background: rgba(3, 7, 18, 0.34);
+    border: 1px solid rgba(144, 153, 173, 0.20);
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.80);
 }
 
 .live2d-music-current {
@@ -983,9 +983,9 @@ body.vue-live2d-route {
 .live2d-music-history span {
     display: block;
     padding: 0.32rem 0.45rem;
-    border: 1px solid rgba(160, 184, 255, 0.1);
+    border: 1px solid rgba(144, 153, 173, 0.20);
     border-radius: 999px;
-    background: rgba(255, 255, 255, 0.045);
+    background: rgba(98, 110, 132, 0.045);
     font-size: 0.72rem;
 }
 
@@ -998,10 +998,10 @@ body.vue-live2d-route {
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
     min-height: 3rem;
-    border: 1px solid rgba(160, 184, 255, 0.14);
-    border-radius: 8px;
+    border: 1px solid rgba(144, 153, 173, 0.20);
+    border-radius: 12px;
     overflow: hidden;
-    background: rgba(255, 255, 255, 0.05);
+    background: rgba(98, 110, 132, 0.05);
 }
 
 .live2d-tabbar button {
@@ -1025,7 +1025,7 @@ body.vue-live2d-route {
     height: 0.2rem;
     border-radius: 999px;
     background: linear-gradient(90deg, #7f5cff, #c164ff);
-    box-shadow: 0 0 18px rgba(155, 98, 255, 0.74);
+    box-shadow: 0 0 18px rgba(111, 98, 180, 0.74);
 }
 
 .live2d-control-grid {
@@ -1041,12 +1041,12 @@ body.vue-live2d-route {
     place-items: center;
     gap: 0.38rem;
     padding: 0.52rem 0.3rem;
-    color: rgba(229, 237, 255, 0.82);
-    background: rgba(255, 255, 255, 0.052);
+    color: rgba(32, 43, 70, 0.82);
+    background: rgba(98, 110, 132, 0.052);
 }
 
 .live2d-tile-btn svg {
-    color: rgba(218, 229, 255, 0.76);
+    color: rgba(32, 43, 70, 0.76);
 }
 
 .live2d-tile-btn span {
@@ -1092,9 +1092,9 @@ body.vue-live2d-route {
 }
 
 .live2d-quick-btn.active {
-    border-color: rgba(73, 220, 255, 0.52);
+    border-color: rgba(172, 77, 109, 0.52);
     color: var(--live2d-cyan);
-    background: rgba(73, 220, 255, 0.11);
+    background: rgba(172, 77, 109, 0.11);
 }
 
 .live2d-quick-btn span {
@@ -1107,7 +1107,7 @@ body.vue-live2d-route {
 }
 
 .live2d-volume-panel {
-    border-top: 1px solid rgba(160, 184, 255, 0.12);
+    border-top: 1px solid rgba(144, 153, 173, 0.20);
     padding-top: 0.75rem;
 }
 
@@ -1132,7 +1132,7 @@ body.vue-live2d-route {
 .live2d-director-command {
     display: grid;
     gap: 0.65rem;
-    border-top: 1px solid rgba(160, 184, 255, 0.12);
+    border-top: 1px solid rgba(144, 153, 173, 0.20);
     padding-top: 0.74rem;
 }
 
@@ -1160,7 +1160,7 @@ body.vue-live2d-route {
 .live2d-mic-meter span {
     height: 0.48rem;
     border-radius: 999px;
-    background: rgba(220, 231, 255, 0.2);
+    background: rgba(32, 43, 70, 0.60);
 }
 
 .live2d-mic-meter span:nth-child(3n) {
@@ -1169,7 +1169,7 @@ body.vue-live2d-route {
 
 .live2d-mic-meter span.active {
     background: linear-gradient(180deg, #67ffe0, #27d79b);
-    box-shadow: 0 0 10px rgba(39, 215, 155, 0.42);
+    box-shadow: 0 0 10px rgba(59, 137, 115, 0.42);
 }
 
 .live2d-error {
@@ -1275,9 +1275,9 @@ body.vue-live2d-route {
 .live2d-debug-metrics div,
 .live2d-debug-section {
     min-width: 0;
-    border: 1px solid rgba(160, 184, 255, 0.13);
-    border-radius: 8px;
-    background: rgba(3, 7, 18, 0.36);
+    border: 1px solid rgba(144, 153, 173, 0.20);
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.80);
 }
 
 .live2d-debug-metrics div {
@@ -1315,7 +1315,7 @@ body.vue-live2d-route {
     max-height: 12rem;
     margin: 0;
     overflow: auto;
-    color: rgba(235, 242, 255, 0.76);
+    color: rgba(32, 43, 70, 0.76);
     font-size: 0.68rem;
     line-height: 1.45;
     white-space: pre-wrap;
@@ -1335,9 +1335,9 @@ body.vue-live2d-route {
     align-items: center;
     gap: 0.52rem;
     padding: 0.42rem 0.48rem;
-    border: 1px solid rgba(160, 184, 255, 0.1);
-    border-radius: 8px;
-    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(144, 153, 173, 0.20);
+    border-radius: 12px;
+    background: rgba(98, 110, 132, 0.05);
 }
 
 .live2d-debug-list strong,
@@ -1367,10 +1367,10 @@ body.vue-live2d-route {
 .live2d-debug-expression-state span,
 .live2d-debug-chip-row span {
     min-width: 0;
-    border: 1px solid rgba(160, 184, 255, 0.12);
+    border: 1px solid rgba(144, 153, 173, 0.20);
     border-radius: 999px;
-    background: rgba(255, 255, 255, 0.06);
-    color: rgba(235, 242, 255, 0.78);
+    background: rgba(98, 110, 132, 0.06);
+    color: rgba(32, 43, 70, 0.78);
     font-size: 0.68rem;
     font-weight: 850;
 }
@@ -1513,22 +1513,22 @@ body.vue-live2d-route {
     --live2d-green: #38e8a5;
     --live2d-violet: #8067f2;
     --live2d-pink: #f078b8;
-    --live2d-ink: rgba(248, 251, 255, 0.96);
-    --live2d-muted: rgba(219, 228, 248, 0.64);
-    --live2d-faint: rgba(219, 228, 248, 0.42);
-    --live2d-line: rgba(164, 184, 225, 0.14);
-    --live2d-panel: rgba(11, 16, 32, 0.78);
-    --live2d-panel-strong: rgba(13, 18, 36, 0.9);
+    --live2d-ink: rgba(32, 43, 70, 0.96);
+    --live2d-muted: rgba(32, 43, 70, 0.64);
+    --live2d-faint: rgba(32, 43, 70, 0.60);
+    --live2d-line: rgba(144, 153, 173, 0.20);
+    --live2d-panel: rgba(255, 255, 255, 0.80);
+    --live2d-panel-strong: rgba(255, 255, 255, 0.90);
     background:
-        linear-gradient(90deg, rgba(3, 6, 16, 0.74), rgba(5, 8, 18, 0.16) 24%, rgba(6, 9, 19, 0.24) 69%, rgba(3, 6, 14, 0.8)),
-        linear-gradient(180deg, rgba(4, 8, 20, 0.08), rgba(4, 6, 14, 0.74)),
+        linear-gradient(90deg, rgba(255, 255, 255, 0.80), rgba(255, 255, 255, 0.80) 24%, rgba(255, 255, 255, 0.80) 69%, rgba(255, 255, 255, 0.80)),
+        linear-gradient(180deg, rgba(255, 255, 255, 0.80), rgba(255, 255, 255, 0.80)),
         var(--ts-live2d-studio-bg-image) center / cover no-repeat;
 }
 
 .live2d-backdrop {
     background:
-        linear-gradient(180deg, rgba(2, 6, 18, 0.16), rgba(2, 5, 13, 0.68)),
-        linear-gradient(90deg, rgba(4, 8, 19, 0.82), transparent 16%, transparent 70%, rgba(4, 8, 19, 0.8));
+        linear-gradient(180deg, rgba(255, 255, 255, 0.80), rgba(255, 255, 255, 0.80)),
+        linear-gradient(90deg, rgba(255, 255, 255, 0.82), transparent 16%, transparent 70%, rgba(255, 255, 255, 0.80));
 }
 
 .live2d-stage {
@@ -1539,11 +1539,11 @@ body.vue-live2d-route {
     left: 6.45rem;
     overflow: hidden;
     border: 1px solid rgba(158, 177, 219, 0.18);
-    border-radius: 8px;
+    border-radius: 12px;
     background:
-        linear-gradient(180deg, rgba(8, 12, 27, 0.18), rgba(7, 10, 21, 0.36)),
-        rgba(4, 7, 17, 0.18);
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.045), 0 24px 70px rgba(0, 0, 0, 0.28);
+        linear-gradient(180deg, rgba(255, 255, 255, 0.80), rgba(255, 255, 255, 0.80)),
+        rgba(255, 255, 255, 0.80);
+    box-shadow: inset 0 1px 0 rgba(98, 110, 132, 0.045), 0 24px 70px rgba(37, 48, 70, 0.12);
 }
 
 .live2d-stage-topbar {
@@ -1573,7 +1573,7 @@ body.vue-live2d-route {
     border-radius: 0;
     color: var(--live2d-ink);
     background: transparent;
-    text-shadow: 0 2px 12px rgba(0, 0, 0, 0.58);
+    text-shadow: 0 2px 12px rgba(37, 48, 70, 0.12);
 }
 
 .live2d-stage-title div {
@@ -1607,13 +1607,13 @@ body.vue-live2d-route {
     flex: 0 0 auto;
     border-radius: 999px;
     background: var(--live2d-gold);
-    box-shadow: 0 0 16px rgba(255, 208, 100, 0.52);
+    box-shadow: 0 0 16px rgba(161, 115, 53, 0.52);
 }
 
 .live2d-stage-dot.active,
 .live2d-page[data-live-state="on"] .live2d-stage-dot {
     background: var(--live2d-green);
-    box-shadow: 0 0 18px rgba(56, 232, 165, 0.56);
+    box-shadow: 0 0 18px rgba(59, 137, 115, 0.56);
 }
 
 .live2d-stage-actions {
@@ -1623,9 +1623,9 @@ body.vue-live2d-route {
 .live2d-stage-actions .live2d-icon-btn {
     width: 2.25rem;
     height: 2.25rem;
-    border-color: rgba(164, 184, 225, 0.14);
-    background: rgba(6, 10, 22, 0.46);
-    backdrop-filter: blur(18px) saturate(1.08);
+    border-color: rgba(144, 153, 173, 0.20);
+    background: rgba(255, 255, 255, 0.80);
+    backdrop-filter: none;
 }
 
 .live2d-model {
@@ -1641,7 +1641,7 @@ body.vue-live2d-route {
     right: 20%;
     bottom: 3.1rem;
     height: 15%;
-    background: rgba(0, 0, 0, 0.5);
+    background: rgba(37, 48, 70, 0.12);
     filter: blur(34px);
 }
 
@@ -1660,10 +1660,10 @@ body.vue-live2d-route {
 .live2d-debug-panel,
 .live2d-error,
 .live2d-loading {
-    border-color: rgba(164, 184, 225, 0.16);
-    background: rgba(8, 12, 26, 0.68);
-    box-shadow: 0 20px 58px rgba(0, 0, 0, 0.24);
-    backdrop-filter: blur(20px) saturate(1.08);
+    border-color: rgba(144, 153, 173, 0.20);
+    background: rgba(255, 255, 255, 0.80);
+    box-shadow: 0 20px 58px rgba(37, 48, 70, 0.12);
+    backdrop-filter: none;
 }
 
 .live2d-caption {
@@ -1672,7 +1672,7 @@ body.vue-live2d-route {
     grid-template-columns: minmax(0, 1fr);
     gap: 0.34rem;
     padding: 0.72rem 0.85rem;
-    background: rgba(8, 12, 26, 0.56);
+    background: rgba(255, 255, 255, 0.80);
 }
 
 .live2d-caption-head {
@@ -1700,11 +1700,11 @@ body.vue-live2d-route {
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 0.2rem;
     padding: 0.22rem;
-    border: 1px solid rgba(164, 184, 225, 0.15);
+    border: 1px solid rgba(144, 153, 173, 0.20);
     border-radius: 10px;
-    background: rgba(5, 9, 21, 0.72);
-    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.22);
-    backdrop-filter: blur(18px) saturate(1.08);
+    background: rgba(255, 255, 255, 0.80);
+    box-shadow: 0 12px 32px rgba(37, 48, 70, 0.12);
+    backdrop-filter: none;
     pointer-events: auto;
     transform: translateX(-50%);
 }
@@ -1717,9 +1717,9 @@ body.vue-live2d-route {
     justify-content: center;
     gap: 0.38rem;
     border: 0;
-    border-radius: 7px;
+    border-radius: 12px;
     padding: 0 0.72rem;
-    color: rgba(219, 228, 248, 0.6);
+    color: rgba(32, 43, 70, 0.60);
     background: transparent;
     font: inherit;
     font-size: 0.72rem;
@@ -1729,14 +1729,14 @@ body.vue-live2d-route {
 }
 
 .live2d-scene-switcher button:hover {
-    color: rgba(248, 251, 255, 0.94);
-    background: rgba(255, 255, 255, 0.05);
+    color: rgba(32, 43, 70, 0.94);
+    background: rgba(98, 110, 132, 0.05);
 }
 
 .live2d-scene-switcher button.active {
-    color: #fff;
-    background: rgba(78, 230, 255, 0.13);
-    box-shadow: inset 0 0 0 1px rgba(78, 230, 255, 0.24);
+    color: #202b46;
+    background: rgba(172, 77, 109, 0.13);
+    box-shadow: inset 0 0 0 1px rgba(172, 77, 109, 0.24);
 }
 
 .live2d-scene-switcher button.active svg {
@@ -1744,7 +1744,7 @@ body.vue-live2d-route {
 }
 
 .live2d-scene-switcher button:focus-visible {
-    outline: 2px solid rgba(78, 230, 255, 0.76);
+    outline: 2px solid rgba(172, 77, 109, 0.76);
     outline-offset: 2px;
 }
 
@@ -1753,7 +1753,7 @@ body.vue-live2d-route {
 }
 
 .live2d-page[data-broadcast-scene="game"] .live2d-stage {
-    border-color: rgba(78, 230, 255, 0.2);
+    border-color: rgba(172, 77, 109, 0.20);
     background: #02040b;
 }
 
@@ -1784,9 +1784,9 @@ body.vue-live2d-route {
 
 .live2d-page[data-broadcast-scene="game"] .live2d-caption {
     min-height: 3.9rem;
-    border-color: rgba(164, 184, 225, 0.2);
-    background: rgba(4, 8, 18, 0.78);
-    box-shadow: 0 18px 46px rgba(0, 0, 0, 0.34);
+    border-color: rgba(144, 153, 173, 0.20);
+    background: rgba(255, 255, 255, 0.80);
+    box-shadow: 0 18px 46px rgba(37, 48, 70, 0.12);
 }
 
 .live2d-page[data-broadcast-scene="game"] .live2d-caption p {
@@ -1857,22 +1857,22 @@ body.vue-live2d-route {
     width: min(23.4rem, calc(100vw - 2rem));
     gap: 0;
     padding: 0.92rem;
-    border-color: rgba(164, 184, 225, 0.17);
-    background: rgba(9, 13, 28, 0.74);
-    box-shadow: 0 26px 80px rgba(0, 0, 0, 0.32);
+    border-color: rgba(144, 153, 173, 0.20);
+    background: rgba(255, 255, 255, 0.80);
+    box-shadow: 0 26px 80px rgba(37, 48, 70, 0.12);
 }
 
 .live2d-panel-header {
     min-height: 3.85rem;
     padding-bottom: 0.68rem;
-    border-bottom: 1px solid rgba(164, 184, 225, 0.12);
+    border-bottom: 1px solid rgba(144, 153, 173, 0.20);
 }
 
 .live2d-status-orb {
     width: 2.72rem;
     height: 2.72rem;
-    background: rgba(73, 220, 255, 0.09);
-    box-shadow: inset 0 0 0 1px rgba(73, 220, 255, 0.24), 0 0 28px rgba(73, 220, 255, 0.1);
+    background: rgba(172, 77, 109, 0.10);
+    box-shadow: inset 0 0 0 1px rgba(172, 77, 109, 0.24), 0 0 28px rgba(172, 77, 109, 0.10);
 }
 
 .live2d-status-orb::after {
@@ -1889,8 +1889,8 @@ body.vue-live2d-route {
 .live2d-tile-btn,
 .live2d-quick-btn,
 .live2d-tabbar button {
-    border-color: rgba(164, 184, 225, 0.14);
-    background: rgba(255, 255, 255, 0.04);
+    border-color: rgba(144, 153, 173, 0.20);
+    background: rgba(98, 110, 132, 0.04);
 }
 
 .live2d-icon-btn:hover:not(:disabled),
@@ -1898,8 +1898,8 @@ body.vue-live2d-route {
 .live2d-tile-btn:hover:not(:disabled),
 .live2d-quick-btn:hover:not(:disabled),
 .live2d-tabbar button:hover {
-    border-color: rgba(78, 230, 255, 0.42);
-    background: rgba(78, 230, 255, 0.1);
+    border-color: rgba(172, 77, 109, 0.42);
+    background: rgba(172, 77, 109, 0.10);
 }
 
 .live2d-live-director,
@@ -1909,7 +1909,7 @@ body.vue-live2d-route {
 .live2d-volume-panel,
 .live2d-director-command {
     border: 0;
-    border-top: 1px solid rgba(164, 184, 225, 0.1);
+    border-top: 1px solid rgba(144, 153, 173, 0.20);
     border-radius: 0;
     background: transparent;
 }
@@ -1933,28 +1933,28 @@ body.vue-live2d-route {
 .live2d-music-request input,
 .live2d-llm-form textarea {
     min-height: 2.55rem;
-    border-color: rgba(164, 184, 225, 0.13);
-    background: rgba(3, 7, 18, 0.32);
+    border-color: rgba(144, 153, 173, 0.20);
+    background: rgba(255, 255, 255, 0.80);
     font-size: 0.82rem;
 }
 
 .live2d-run-btn {
     min-height: 3rem;
-    border-color: rgba(128, 103, 242, 0.46);
-    background: rgba(128, 103, 242, 0.42);
-    color: #fff;
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.11);
+    border-color: rgba(111, 98, 180, 0.46);
+    background: rgba(111, 98, 180, 0.42);
+    color: #202b46;
+    box-shadow: inset 0 1px 0 rgba(98, 110, 132, 0.11);
 }
 
 .live2d-page[data-live-state="on"] .live2d-run-btn {
-    border-color: rgba(56, 232, 165, 0.42);
-    background: rgba(56, 232, 165, 0.18);
+    border-color: rgba(59, 137, 115, 0.42);
+    background: rgba(59, 137, 115, 0.18);
 }
 
 .live2d-switch {
     min-height: 3rem;
-    border-color: rgba(164, 184, 225, 0.12);
-    background: rgba(255, 255, 255, 0.035);
+    border-color: rgba(144, 153, 173, 0.20);
+    background: rgba(98, 110, 132, 0.035);
 }
 
 .live2d-volume-panel {
@@ -1979,8 +1979,8 @@ body.vue-live2d-route {
 
 .live2d-tabbar {
     min-height: 2.45rem;
-    border-color: rgba(164, 184, 225, 0.11);
-    background: rgba(255, 255, 255, 0.035);
+    border-color: rgba(144, 153, 173, 0.20);
+    background: rgba(98, 110, 132, 0.035);
 }
 
 .live2d-tabbar button {
@@ -1993,7 +1993,7 @@ body.vue-live2d-route {
     bottom: 0.26rem;
     height: 0.14rem;
     background: var(--live2d-cyan);
-    box-shadow: 0 0 14px rgba(78, 230, 255, 0.48);
+    box-shadow: 0 0 14px rgba(172, 77, 109, 0.48);
 }
 
 .live2d-control-grid {
@@ -2006,7 +2006,7 @@ body.vue-live2d-route {
     min-height: 3.35rem;
     gap: 0.24rem;
     padding: 0.42rem 0.28rem;
-    background: rgba(255, 255, 255, 0.035);
+    background: rgba(98, 110, 132, 0.035);
 }
 
 .live2d-tile-btn span {
@@ -2043,8 +2043,8 @@ body.vue-live2d-route {
 .live2d-music-current,
 .live2d-music-empty,
 .live2d-music-row {
-    border-color: rgba(164, 184, 225, 0.1);
-    background: rgba(3, 7, 18, 0.22);
+    border-color: rgba(144, 153, 173, 0.20);
+    background: rgba(255, 255, 255, 0.80);
 }
 
 .live2d-quick-actions {
@@ -2068,7 +2068,7 @@ body.vue-live2d-route {
     min-height: 3.05rem;
     gap: 0.2rem;
     padding: 0.36rem 0.2rem;
-    background: rgba(255, 255, 255, 0.032);
+    background: rgba(98, 110, 132, 0.032);
 }
 
 .live2d-quick-btn svg {
@@ -2206,13 +2206,13 @@ body.vue-live2d-route {
 }
 
 .live2d-status-copy span {
-    color: rgba(220, 231, 250, 0.62);
+    color: rgba(32, 43, 70, 0.62);
     font-size: 0.66rem;
     letter-spacing: 0.11em;
 }
 
 .live2d-status-copy small {
-    color: rgba(220, 231, 250, 0.66);
+    color: rgba(32, 43, 70, 0.66);
     font-size: 0.68rem;
 }
 
@@ -2221,11 +2221,11 @@ body.vue-live2d-route {
     display: grid;
     gap: 0.58rem;
     padding: 0.66rem;
-    border: 1px solid rgba(164, 184, 225, 0.13);
+    border: 1px solid rgba(144, 153, 173, 0.20);
     border-radius: 10px;
     background:
-        linear-gradient(135deg, rgba(128, 103, 242, 0.11), transparent 58%),
-        rgba(255, 255, 255, 0.025);
+        linear-gradient(135deg, rgba(111, 98, 180, 0.11), transparent 58%),
+        rgba(98, 110, 132, 0.025);
 }
 
 .live2d-primary-actions {
@@ -2241,20 +2241,20 @@ body.vue-live2d-route {
 }
 
 .live2d-primary-control .live2d-run-btn {
-    border-color: rgba(128, 103, 242, 0.52);
-    background: linear-gradient(135deg, rgba(128, 103, 242, 0.72), rgba(108, 81, 221, 0.48));
-    box-shadow: 0 10px 28px rgba(76, 49, 166, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.13);
+    border-color: rgba(111, 98, 180, 0.52);
+    background: linear-gradient(135deg, rgba(111, 98, 180, 0.72), rgba(108, 81, 221, 0.48));
+    box-shadow: 0 10px 28px rgba(76, 49, 166, 0.2), inset 0 1px 0 rgba(98, 110, 132, 0.13);
 }
 
 .live2d-page[data-live-state="on"] .live2d-primary-control .live2d-run-btn {
-    border-color: rgba(56, 232, 165, 0.45);
+    border-color: rgba(59, 137, 115, 0.45);
     background: linear-gradient(135deg, rgba(32, 173, 117, 0.56), rgba(23, 116, 88, 0.38));
 }
 
 .live2d-primary-control .live2d-switch {
     padding: 0 0.68rem;
-    border-color: rgba(164, 184, 225, 0.13);
-    background: rgba(255, 255, 255, 0.035);
+    border-color: rgba(144, 153, 173, 0.20);
+    background: rgba(98, 110, 132, 0.035);
     font-size: 0.72rem;
     white-space: nowrap;
 }
@@ -2278,19 +2278,19 @@ body.vue-live2d-route {
     width: 100%;
     min-height: 2.35rem;
     padding: 0 0.7rem;
-    border: 1px solid rgba(164, 184, 225, 0.13);
-    border-radius: 8px;
+    border: 1px solid rgba(144, 153, 173, 0.20);
+    border-radius: 12px;
     outline: none;
     color: var(--live2d-ink);
-    background: rgba(3, 7, 18, 0.32);
+    background: rgba(255, 255, 255, 0.80);
     font: inherit;
     font-size: 0.78rem;
 }
 
 .live2d-topic-field input:focus,
 .live2d-audience-field input:focus {
-    border-color: rgba(78, 230, 255, 0.5);
-    box-shadow: 0 0 0 3px rgba(78, 230, 255, 0.09);
+    border-color: rgba(172, 77, 109, 0.50);
+    box-shadow: 0 0 0 3px rgba(172, 77, 109, 0.10);
 }
 
 .live2d-workspace-tabs {
@@ -2299,9 +2299,9 @@ body.vue-live2d-route {
     gap: 0.26rem;
     min-height: 2.62rem;
     padding: 0.25rem;
-    border: 1px solid rgba(164, 184, 225, 0.12);
+    border: 1px solid rgba(144, 153, 173, 0.20);
     border-radius: 10px;
-    background: rgba(2, 6, 17, 0.26);
+    background: rgba(255, 255, 255, 0.80);
 }
 
 .live2d-workspace-tabs button {
@@ -2311,8 +2311,8 @@ body.vue-live2d-route {
     justify-content: center;
     gap: 0.38rem;
     border: 0;
-    border-radius: 7px;
-    color: rgba(220, 231, 250, 0.58);
+    border-radius: 12px;
+    color: rgba(32, 43, 70, 0.60);
     background: transparent;
     font: inherit;
     font-size: 0.74rem;
@@ -2322,14 +2322,14 @@ body.vue-live2d-route {
 }
 
 .live2d-workspace-tabs button:hover {
-    color: rgba(241, 247, 255, 0.9);
-    background: rgba(255, 255, 255, 0.04);
+    color: rgba(32, 43, 70, 0.90);
+    background: rgba(98, 110, 132, 0.04);
 }
 
 .live2d-workspace-tabs button.active {
-    color: #fff;
-    background: rgba(78, 230, 255, 0.1);
-    box-shadow: inset 0 0 0 1px rgba(78, 230, 255, 0.18);
+    color: #202b46;
+    background: rgba(172, 77, 109, 0.10);
+    box-shadow: inset 0 0 0 1px rgba(172, 77, 109, 0.18);
 }
 
 .live2d-workspace-tabs button.active svg {
@@ -2341,18 +2341,18 @@ body.vue-live2d-route {
 .live2d-control-panel select:focus-visible,
 .live2d-control-panel textarea:focus-visible,
 .live2d-control-panel summary:focus-visible {
-    outline: 2px solid rgba(78, 230, 255, 0.72);
+    outline: 2px solid rgba(172, 77, 109, 0.72);
     outline-offset: 2px;
 }
 
 .live2d-workspace {
     min-height: 0;
     overflow: auto;
-    border: 1px solid rgba(164, 184, 225, 0.1);
+    border: 1px solid rgba(144, 153, 173, 0.20);
     border-radius: 10px;
-    background: rgba(3, 7, 18, 0.2);
+    background: rgba(255, 255, 255, 0.80);
     scrollbar-width: thin;
-    scrollbar-color: rgba(164, 184, 225, 0.24) transparent;
+    scrollbar-color: rgba(144, 153, 173, 0.24) transparent;
 }
 
 .live2d-interaction-panel,
@@ -2387,7 +2387,7 @@ body.vue-live2d-route {
 
 .live2d-section-heading > div span {
     overflow: hidden;
-    color: rgba(220, 231, 250, 0.6);
+    color: rgba(32, 43, 70, 0.60);
     font-size: 0.7rem;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -2399,10 +2399,10 @@ body.vue-live2d-route {
     align-items: center;
     gap: 0.3rem;
     padding: 0.28rem 0.48rem;
-    border: 1px solid rgba(164, 184, 225, 0.12);
+    border: 1px solid rgba(144, 153, 173, 0.20);
     border-radius: 999px;
-    color: rgba(220, 231, 250, 0.62);
-    background: rgba(255, 255, 255, 0.025);
+    color: rgba(32, 43, 70, 0.62);
+    background: rgba(98, 110, 132, 0.025);
     font-size: 0.68rem;
     font-weight: 850;
 }
@@ -2412,18 +2412,18 @@ body.vue-live2d-route {
     width: 0.38rem;
     height: 0.38rem;
     border-radius: 50%;
-    background: rgba(220, 231, 250, 0.34);
+    background: rgba(32, 43, 70, 0.60);
 }
 
 .live2d-live-dot.active {
     color: rgba(174, 250, 218, 0.9);
-    border-color: rgba(56, 232, 165, 0.22);
-    background: rgba(56, 232, 165, 0.07);
+    border-color: rgba(59, 137, 115, 0.22);
+    background: rgba(59, 137, 115, 0.12);
 }
 
 .live2d-live-dot.active::before {
     background: var(--live2d-green);
-    box-shadow: 0 0 10px rgba(56, 232, 165, 0.58);
+    box-shadow: 0 0 10px rgba(59, 137, 115, 0.58);
 }
 
 .live2d-audience-preview {
@@ -2434,10 +2434,10 @@ body.vue-live2d-route {
     align-items: center;
     min-height: 3.15rem;
     padding: 0.52rem 0.62rem;
-    border: 1px solid rgba(78, 230, 255, 0.11);
-    border-radius: 8px;
+    border: 1px solid rgba(172, 77, 109, 0.11);
+    border-radius: 12px;
     color: var(--live2d-cyan);
-    background: linear-gradient(90deg, rgba(78, 230, 255, 0.07), rgba(255, 255, 255, 0.018));
+    background: linear-gradient(90deg, rgba(172, 77, 109, 0.10), rgba(98, 110, 132, 0.018));
 }
 
 .live2d-audience-preview > div {
@@ -2447,13 +2447,13 @@ body.vue-live2d-route {
 }
 
 .live2d-audience-preview span {
-    color: rgba(220, 231, 250, 0.62);
+    color: rgba(32, 43, 70, 0.62);
     font-size: 0.68rem;
 }
 
 .live2d-audience-preview strong {
     overflow: hidden;
-    color: rgba(241, 247, 255, 0.88);
+    color: rgba(32, 43, 70, 0.88);
     font-size: 0.76rem;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -2481,11 +2481,11 @@ body.vue-live2d-route {
     width: 100%;
     min-height: 2.46rem;
     padding: 0 0.68rem;
-    border: 1px solid rgba(164, 184, 225, 0.13);
-    border-radius: 8px;
+    border: 1px solid rgba(144, 153, 173, 0.20);
+    border-radius: 12px;
     outline: none;
     color: var(--live2d-ink);
-    background: rgba(3, 7, 18, 0.34);
+    background: rgba(255, 255, 255, 0.80);
     font: inherit;
     font-size: 0.78rem;
 }
@@ -2495,7 +2495,7 @@ body.vue-live2d-route {
     order: initial;
     padding: 0.56rem 0 0;
     border: 0;
-    border-top: 1px solid rgba(164, 184, 225, 0.09);
+    border-top: 1px solid rgba(144, 153, 173, 0.20);
     background: transparent;
 }
 
@@ -2570,7 +2570,7 @@ body.vue-live2d-route {
 
 .yachiyo-music-header > div span,
 .yachiyo-music-now .yachiyo-music-track-copy > span {
-    color: rgba(220, 231, 250, 0.56);
+    color: rgba(32, 43, 70, 0.60);
     font-size: 0.66rem;
     font-weight: 700;
     letter-spacing: 0.08em;
@@ -2589,10 +2589,10 @@ body.vue-live2d-route {
     gap: 0.34rem;
     min-height: 1.7rem;
     padding: 0 0.52rem;
-    border: 1px solid rgba(56, 232, 165, 0.2);
+    border: 1px solid rgba(59, 137, 115, 0.20);
     border-radius: 999px;
     color: rgba(174, 250, 218, 0.9);
-    background: rgba(56, 232, 165, 0.06);
+    background: rgba(59, 137, 115, 0.12);
     font-size: 0.65rem;
     font-weight: 800;
     white-space: nowrap;
@@ -2603,7 +2603,7 @@ body.vue-live2d-route {
     height: 0.4rem;
     border-radius: 50%;
     background: var(--live2d-green);
-    box-shadow: 0 0 9px rgba(56, 232, 165, 0.62);
+    box-shadow: 0 0 9px rgba(59, 137, 115, 0.62);
 }
 
 .live2d-continuous-asr-btn {
@@ -2612,10 +2612,10 @@ body.vue-live2d-route {
     align-items: center;
     gap: 0.68rem;
     padding: 0.62rem 0.72rem;
-    border: 1px solid rgba(164, 184, 225, 0.14);
+    border: 1px solid rgba(144, 153, 173, 0.20);
     border-radius: 10px;
     color: var(--live2d-muted);
-    background: rgba(3, 7, 18, 0.34);
+    background: rgba(255, 255, 255, 0.80);
     font: inherit;
     text-align: left;
     cursor: pointer;
@@ -2623,15 +2623,15 @@ body.vue-live2d-route {
 }
 
 .live2d-continuous-asr-btn:hover {
-    border-color: rgba(78, 230, 255, 0.3);
-    background: rgba(78, 230, 255, 0.06);
+    border-color: rgba(172, 77, 109, 0.30);
+    background: rgba(172, 77, 109, 0.10);
 }
 
 .live2d-continuous-asr-btn.active {
-    border-color: rgba(78, 230, 255, 0.46);
-    color: rgba(220, 252, 255, 0.96);
-    background: linear-gradient(110deg, rgba(78, 230, 255, 0.14), rgba(154, 118, 255, 0.1));
-    box-shadow: inset 0 0 0 1px rgba(78, 230, 255, 0.06);
+    border-color: rgba(172, 77, 109, 0.46);
+    color: rgba(32, 43, 70, 0.96);
+    background: linear-gradient(110deg, rgba(172, 77, 109, 0.14), rgba(111, 98, 180, 0.1));
+    box-shadow: inset 0 0 0 1px rgba(172, 77, 109, 0.10);
 }
 
 .live2d-continuous-asr-btn > span {
@@ -2660,12 +2660,12 @@ body.vue-live2d-route {
 .yachiyo-music-tool-status.disabled {
     color: rgba(255, 225, 232, 0.78);
     background: rgba(136, 67, 84, 0.3);
-    border-color: rgba(255, 153, 177, 0.22);
+    border-color: rgba(172, 77, 109, 0.22);
 }
 
 .yachiyo-music-tool-status.disabled i {
     background: #ff8ba8;
-    box-shadow: 0 0 0 3px rgba(255, 139, 168, 0.12);
+    box-shadow: 0 0 0 3px rgba(172, 77, 109, 0.12);
 }
 
 .yachiyo-music-preferences {
@@ -2674,7 +2674,7 @@ body.vue-live2d-route {
     padding: 12px;
     border: 1px solid rgba(198, 187, 255, 0.14);
     border-radius: 14px;
-    background: rgba(22, 20, 48, 0.52);
+    background: rgba(255, 255, 255, 0.80);
 }
 
 .yachiyo-music-request-switch,
@@ -2707,7 +2707,7 @@ body.vue-live2d-route {
     width: 16px;
     height: 16px;
     border-radius: 50%;
-    background: #fff;
+    background: #202b46;
     transition: transform 160ms ease;
 }
 
@@ -2722,7 +2722,7 @@ body.vue-live2d-route {
 .yachiyo-music-request-switch strong,
 .yachiyo-music-volume > span,
 .yachiyo-music-volume > strong {
-    color: rgba(248, 246, 255, 0.9);
+    color: rgba(32, 43, 70, 0.90);
     font-size: 12px;
 }
 
@@ -2746,7 +2746,7 @@ body.vue-live2d-route {
     padding: 0.38rem 0.44rem;
     border: 1px solid rgba(255, 80, 103, 0.15);
     border-radius: 9px;
-    background: linear-gradient(110deg, rgba(255, 80, 103, 0.07), rgba(255, 255, 255, 0.025));
+    background: linear-gradient(110deg, rgba(255, 80, 103, 0.07), rgba(98, 110, 132, 0.025));
 }
 
 .yachiyo-music-account-avatar {
@@ -2782,12 +2782,12 @@ body.vue-live2d-route {
 }
 
 .yachiyo-music-account-copy strong {
-    color: rgba(244, 248, 255, 0.88);
+    color: rgba(32, 43, 70, 0.88);
     font-size: 0.72rem;
 }
 
 .yachiyo-music-account-copy small {
-    color: rgba(220, 231, 250, 0.5);
+    color: rgba(32, 43, 70, 0.60);
     font-size: 0.61rem;
 }
 
@@ -2810,8 +2810,8 @@ body.vue-live2d-route {
     padding: 0.62rem 2.3rem 0.62rem 0.62rem;
     border: 1px solid rgba(255, 80, 103, 0.22);
     border-radius: 10px;
-    background: rgba(10, 12, 23, 0.94);
-    box-shadow: 0 12px 30px rgba(0, 0, 0, 0.24);
+    background: rgba(255, 255, 255, 0.94);
+    box-shadow: 0 12px 30px rgba(37, 48, 70, 0.12);
 }
 
 .yachiyo-music-qr-close {
@@ -2828,9 +2828,9 @@ body.vue-live2d-route {
     display: grid;
     place-items: center;
     overflow: hidden;
-    border-radius: 8px;
-    color: rgba(33, 38, 50, 0.66);
-    background: #fff;
+    border-radius: 12px;
+    color: rgba(255, 255, 255, 0.80);
+    background: #202b46;
 }
 
 .yachiyo-music-qr-image img {
@@ -2848,12 +2848,12 @@ body.vue-live2d-route {
 }
 
 .yachiyo-music-qr-copy strong {
-    color: rgba(247, 249, 255, 0.92);
+    color: rgba(32, 43, 70, 0.92);
     font-size: 0.75rem;
 }
 
 .yachiyo-music-qr-copy small {
-    color: rgba(220, 231, 250, 0.58);
+    color: rgba(32, 43, 70, 0.60);
     font-size: 0.64rem;
     line-height: 1.45;
 }
@@ -2872,11 +2872,11 @@ body.vue-live2d-route {
 .yachiyo-music-search input {
     width: 100%;
     height: 2.5rem;
-    border: 1px solid rgba(164, 184, 225, 0.14);
-    border-radius: 8px;
+    border: 1px solid rgba(144, 153, 173, 0.20);
+    border-radius: 12px;
     outline: none;
     color: var(--live2d-ink);
-    background: rgba(3, 7, 18, 0.44);
+    background: rgba(255, 255, 255, 0.80);
     font: inherit;
     font-size: 0.72rem;
 }
@@ -2899,14 +2899,14 @@ body.vue-live2d-route {
 .yachiyo-music-error {
     margin: 0;
     padding: 0.44rem 0.56rem;
-    border-radius: 7px;
+    border-radius: 12px;
     font-size: 0.68rem;
     line-height: 1.4;
 }
 
 .yachiyo-music-message {
-    color: rgba(177, 237, 250, 0.88);
-    background: rgba(78, 230, 255, 0.06);
+    color: rgba(172, 77, 109, 0.88);
+    background: rgba(172, 77, 109, 0.10);
 }
 
 .yachiyo-music-error {
@@ -2924,9 +2924,9 @@ body.vue-live2d-route {
 .yachiyo-music-now,
 .yachiyo-music-empty,
 .yachiyo-music-queue-list > article {
-    border: 1px solid rgba(164, 184, 225, 0.1);
+    border: 1px solid rgba(144, 153, 173, 0.20);
     border-radius: 9px;
-    background: rgba(255, 255, 255, 0.028);
+    background: rgba(98, 110, 132, 0.028);
 }
 
 .yachiyo-music-result {
@@ -2939,8 +2939,8 @@ body.vue-live2d-route {
 }
 
 .yachiyo-music-result:hover {
-    border-color: rgba(78, 230, 255, 0.2);
-    background: rgba(78, 230, 255, 0.045);
+    border-color: rgba(172, 77, 109, 0.20);
+    background: rgba(172, 77, 109, 0.10);
 }
 
 .yachiyo-music-cover {
@@ -2949,16 +2949,16 @@ body.vue-live2d-route {
     display: grid;
     place-items: center;
     overflow: hidden;
-    border: 1px solid rgba(164, 184, 225, 0.12);
-    border-radius: 8px;
-    color: rgba(220, 231, 250, 0.52);
-    background: linear-gradient(145deg, rgba(126, 96, 255, 0.17), rgba(78, 230, 255, 0.08));
+    border: 1px solid rgba(144, 153, 173, 0.20);
+    border-radius: 12px;
+    color: rgba(32, 43, 70, 0.60);
+    background: linear-gradient(145deg, rgba(111, 98, 180, 0.17), rgba(172, 77, 109, 0.10));
 }
 
 .yachiyo-music-cover-small {
     width: 2.2rem;
     height: 2.2rem;
-    border-radius: 7px;
+    border-radius: 12px;
 }
 
 .yachiyo-music-cover img {
@@ -2982,13 +2982,13 @@ body.vue-live2d-route {
 }
 
 .yachiyo-music-track-copy strong {
-    color: rgba(241, 247, 255, 0.9);
+    color: rgba(32, 43, 70, 0.90);
     font-size: 0.75rem;
     font-weight: 750;
 }
 
 .yachiyo-music-track-copy small {
-    color: rgba(220, 231, 250, 0.54);
+    color: rgba(32, 43, 70, 0.60);
     font-size: 0.64rem;
 }
 
@@ -3010,7 +3010,7 @@ body.vue-live2d-route {
 .yachiyo-music-queue-list .live2d-icon-btn {
     width: 2rem;
     height: 2rem;
-    border-radius: 7px;
+    border-radius: 12px;
 }
 
 .yachiyo-music-now {
@@ -3019,8 +3019,8 @@ body.vue-live2d-route {
     align-items: center;
     gap: 0.58rem;
     padding: 0.56rem;
-    border-color: rgba(78, 230, 255, 0.16);
-    background: linear-gradient(110deg, rgba(78, 230, 255, 0.07), rgba(126, 96, 255, 0.055));
+    border-color: rgba(172, 77, 109, 0.16);
+    background: linear-gradient(110deg, rgba(172, 77, 109, 0.10), rgba(111, 98, 180, 0.055));
 }
 
 .yachiyo-music-empty {
@@ -3029,7 +3029,7 @@ body.vue-live2d-route {
     align-items: center;
     gap: 0.58rem;
     padding: 0.58rem;
-    color: rgba(220, 231, 250, 0.54);
+    color: rgba(32, 43, 70, 0.60);
 }
 
 .yachiyo-music-empty > div {
@@ -3039,7 +3039,7 @@ body.vue-live2d-route {
 }
 
 .yachiyo-music-empty strong {
-    color: rgba(241, 247, 255, 0.82);
+    color: rgba(32, 43, 70, 0.82);
     font-size: 0.75rem;
 }
 
@@ -3055,7 +3055,7 @@ body.vue-live2d-route {
 
 .yachiyo-music-queue > header {
     min-height: 1.9rem;
-    color: rgba(220, 231, 250, 0.62);
+    color: rgba(32, 43, 70, 0.62);
     font-size: 0.68rem;
     font-weight: 800;
 }
@@ -3075,7 +3075,7 @@ body.vue-live2d-route {
 }
 
 .yachiyo-music-queue-list > article > span {
-    color: rgba(78, 230, 255, 0.72);
+    color: rgba(172, 77, 109, 0.72);
     font-size: 0.68rem;
     font-weight: 850;
     text-align: center;
@@ -3084,9 +3084,9 @@ body.vue-live2d-route {
 .yachiyo-music-queue > p {
     margin: 0;
     padding: 0.48rem;
-    border: 1px dashed rgba(164, 184, 225, 0.1);
-    border-radius: 8px;
-    color: rgba(220, 231, 250, 0.48);
+    border: 1px dashed rgba(144, 153, 173, 0.20);
+    border-radius: 12px;
+    color: rgba(32, 43, 70, 0.60);
     font-size: 0.65rem;
     text-align: center;
 }
@@ -3098,9 +3098,9 @@ body.vue-live2d-route {
     gap: 0.58rem;
     align-items: center;
     padding: 0.48rem 0.54rem;
-    border: 1px solid rgba(164, 184, 225, 0.1);
+    border: 1px solid rgba(144, 153, 173, 0.20);
     border-radius: 10px;
-    background: rgba(3, 7, 18, 0.26);
+    background: rgba(255, 255, 255, 0.80);
 }
 
 .live2d-quick-actions h2 {

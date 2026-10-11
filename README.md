@@ -1,16 +1,52 @@
 # Yachiyo Live2D Studio
 
+## 0.2.2 直播状态、定时收尾与折叠工作空间
+
+只有在舞台点击“开始直播”后，弹幕才会触发 AI 回复、直接朗读和点歌。旧配置中的“首条弹幕自动开播”不再生效；待机时仍可连接并查看弹幕，但不会把待机消息带入下一场回复队列。停止会取消生成、播放和待处理弹幕。
+
+开播前可填写直播时长（默认 60 分钟，0 为不限时）与提前收尾时间（默认 5 分钟）。开播后显示已播时长、剩余时长和预计结束时间；进入收尾阶段时主动引导总结与感谢，后续回复保持简短，不再开启长话题或追加点歌。短直播的收尾窗口最多占总时长的三分之一，避免刚开始就告别。时间由本地绝对截止时间计算，睡眠恢复后不会从暂停处继续倒数。到时等待现有回复完成、生成最后的感谢告别，告别语音播放完成后自动停止 AI 主播；服务无响应时最多再等待 90 秒。此计时控制 AI 主播，OBS/B站等推流工具仍需由主播结束推流。
+
+左侧工作空间默认折叠为图标栏，可通过顶部按钮展开/折叠，记住选择；折叠后直播舞台自动扩宽。所有导航和设置仍可访问。
+
+0.2.2 已提供 Windows x64、macOS Apple Silicon / Intel、Linux x64 / arm64 安装包，继续包含 Windows 旧卸载器修复。真实 Electron/Cubism 界面、收尾语音播放顺序、待机弹幕拦截和布局验证见 `output/live-session/verification.json`；验证使用本地 LLM/TTS 夹具，不连接真实服务商。
+
+## 0.2.1 Windows 安装修复
+
+0.1.0、0.1.1 和 0.2.0 的 macOS 交叉构建遗漏了 NSIS `WriteUninstaller` 的 PE 资源补丁，导致安装包本身校验正常，但内嵌卸载器 CRC 错误。旧版卸载时会报 `Installer integrity check has failed`，覆盖升级则会反复显示“无法关闭”。这是打包缺陷。
+
+Windows 用户关闭旧安装器及错误窗口后，直接运行 `Yachiyo Live2D Studio-0.2.1-win-x64.exe`。新版安装器按 SHA-256 识别三个已知损坏的旧卸载器，先将原文件备份至 `%LOCALAPPDATA%\YachiyoLive2DStudio\InstallerBackups\`，再用已核验的新卸载器替换，随后继续正常升级。配置、API 密钥和长记忆数据库不删除，不需要先手动卸载、清理注册表或关闭完整性检查。未知文件不会被当作这些旧版本自动替换。
+
+打包现在正确应用 NSIS 资源补丁，保留原始 CRC；构建结束时分别核验最终安装器、卸载器和用于修复的卸载器副本。校验失败会中止构建。macOS/Linux 继续使用 0.2.0，本次仅更新 Windows 分发。Windows 实机安装、覆盖升级和卸载仍需验收。
+
+## 0.2.0 春日工作室
+
+界面参考 [月读空间](https://github.com/redchenk/tsukuyomi-space) 当前春日设计：月白、灰粉、淡紫、常显文字导航和独立直播舞台。原创樱花湖畔背景与透明花枝位于 `assets/images/spring-studio-v1/`，完整 imagegen 提示词与生成方式在 `prompts.json`；真实 Electron/Cubism 界面验证截图位于 `output/spring-studio/`。
+
+八千代人格依据月读空间当前聊天人格重写，内置 101 条原创总结的角色知识，保留来源、电影/小说版本与剧透标记。当前资料优先于旧人格 seed，普通用户不会被自动当作彩叶或恋人；继续追问沿用最近的人类问题，不拿助理猜测补造事实。来源版本和 MIT 许可记录见 `docs/tsukuyomi-source.json` 与 `licenses/tsukuyomi-space-MIT.txt`。
+
+对话默认 `deepseek-flash`，官方 DeepSeek Chat Completions 请求显式关闭思考模式以适应直播节奏。已有自定义模型、接口、密钥与手动 TTS 配置会保留；未修改的旧默认值升级一次。GPT-SoVITS 默认如下，路径属于运行语音服务的设备：
+
+- 参考音频：`E:\visualstudio\cankao.wav`
+- 参考原文：`八千年分の知識と経験で、どんなお悩み相談もお任せあれ。`
+- 合成与参考语言：`ja`
+- GPT：`GPT_weights_v2ProPlus/yachiyo-v2pro-e20.ckpt`
+- SoVITS：`SoVITS_weights_v2ProPlus/yachiyo-v2pro_e12_s684.pth`
+
+近期历史默认注入 24 轮、最多 24,000 字符；浏览器保留最近 64 轮，原始会话仍持久化在内置记忆数据库中。长记忆默认检索 8 条、注入 12,000 字符、每条相关片段 1,400 字符，均可在设置中调整。长文按有重叠的片段入库，关键词、向量与可选 Milvus 排名融合，跨场景召回、原文/摘要去重、来源标注与问题相关片段提取共同避免关键事实被截掉。
+
+没有 embedding 接口时采用本地词项哈希与关键词检索；这不等于语义 embedding。需要跨语言/同义改写召回时，在“长记忆 → 语义向量”填写兼容 `/embeddings` 的接口、模型和实际维度，本地无鉴权接口可留空密钥，然后重建索引。维度不符或接口失效会降级为词项哈希，隔离不兼容的向量；重复请求缓存向量，API 索引修复在后台进行，不在每轮回复前重建整个库。跨语言自动测试使用确定性的语义接口夹具，不代表真实服务商的召回率或延迟。
+
 ## Memory Runtime Note
 
-As of 2026-06-01, the default runtime memory layer is SQLite + Milvus. The persona corpus at `E:\visualstudio\yachiyo_novel_detailed_corpus.txt` is imported as stable `persona` source data; Obsidian remains the bottom Markdown layer for seed files, manual editing, and cross-device sync.
+As of 2026-10-02, the default memory provider is built-in SQLite (`sqlite`). The desktop application bundles its runtime, database engine and persona seeds; memory does not require Docker, Milvus, Python or an installed Node.js. Original turns, viewer profiles, memory cells, scenes, anchors and vectors persist in the same SQLite database. Obsidian remains an optional Markdown import/editing layer.
 
 Runtime memory is persistent and self-updating: `/api/memory/record-turn` stores raw turns and updates a durable session rollup MemCell, `/api/memory/write` promotes important events into `memory_anchors`, `/api/memory/search` boosts anchored recall and updates recall counters, and `/api/memory/gc` protects persona/seed/vault/profile/policy/anchored memories while archiving or forgetting low-value expired runtime noise.
 
-Desktop vision update: the launcher exposes local `/api/vision/context`, which returns cursor position, the window under the cursor, foreground window metadata, and an optional cursor-neighborhood screenshot. The Live2D LLM layer can attach this screenshot to vision-capable chat models so Yachiyo can ground replies in what the user is pointing at on screen. Vision has a Settings tab and redacts screenshots for sensitive-looking windows.
+The original Windows launcher exposes local `/api/vision/context` with cursor position, foreground/window metadata and optional screenshots, redacting sensitive-looking windows. The new cross-platform desktop shell currently returns cursor position and an explicit unavailable status for screenshots until platform-specific foreground-window adapters are added.
 
 ## Minecraft Java Agent
 
-The Studio now includes an optional Mineflayer-based Minecraft Java agent inspired by Airi's layered Minecraft runtime. Open the `MC` page in the left rail, enter a trusted/private server, choose Offline or Microsoft authentication, confirm the trust checkbox, and connect. Microsoft authentication uses a device code and stores its reusable profile under the current Windows user's local application data; the code and profile are never sent to the LLM.
+The Studio now includes an optional Mineflayer-based Minecraft Java agent inspired by Airi's layered Minecraft runtime. Open the `MC` page in the left rail, enter a trusted/private server, choose Offline or Microsoft authentication, confirm the trust checkbox, and connect. Microsoft authentication uses a device code and stores its reusable profile under the current user's application data directory; the code and profile are never sent to the LLM.
 
 When `LLM autonomous play` is enabled, current position, health, inventory, nearby players/entities, and task status are added to the LLM context in parallel with memory and vision. The LLM may issue at most one allow-listed action per decision: observe, move, follow, collect, craft, place, attack, explore, eat, equip, sleep, smelt, safe chat, or stop. Actions are queued in a localhost-only sidecar so pathfinding cannot block danmaku, subtitles, or TTS. Low health cancels pending work and attempts to eat; chat beginning with `/` and arbitrary code execution are rejected.
 
@@ -22,7 +58,7 @@ Mining is route-aware: Yachiyo searches loaded terrain for a reachable natural c
 
 Minecraft movement safety is enforced on both the main pathfinder and the collection plugin: damaging blocks and their immediate edges are excluded, fluid-opening digs, parkour, sprinting and implicit towers are disabled, and drop height is capped. A runtime supervisor cancels stationary repeated jumping, swims toward a safe shore after lava contact, cancels every queued action on death, retries respawn, and only releases the safety lock after the new spawn is confirmed.
 
-The EXE starts the sidecar lazily on the first Minecraft request and stops it on exit. For frontend development, run `npm run start:minecraft-agent` alongside `npm run dev` and proxy `/api/minecraft/*` to `http://127.0.0.1:3303` if the native launcher is not being used.
+Both desktop shells start the sidecar lazily on the first Minecraft request and stop it on exit. For frontend development, run `npm run start:minecraft-agent` alongside `npm run dev` and proxy `/api/minecraft/*` to `http://127.0.0.1:3303` if the desktop application is not being used.
 
 八千代 Live2D 本地桌面工作室，面向 AI VTuber / Neuro-sama 风格直播实验。
 
@@ -49,6 +85,55 @@ OBS / 推流工具
 
 ## 一键启动
 
+新的独立桌面应用使用 Electron，支持为 Windows、macOS 和 Linux 构建安装包。用户安装后直接打开 **Yachiyo Live2D Studio**，无需安装 Node、npm、数据库或 Docker。
+
+0.1.1 修复本地 Cubism 动作切换时的帧调度：渲染使用连续时钟，避免 60 Hz 回调因小数舍入被误跳过；动作参数在当前帧送达，语义桥接启用时由它统一控制身体动作，重复表情只续期、不重启淡入。显示质量设置保持兼容。可运行 `node tools/live2d-studio/test-cubism-runtime-cadence.mjs` 和 `node tools/live2d-studio/test-local-cubism-frame-delivery.mjs` 验证调度和交接。仓库未包含 Cubism 应用的上游源码，更新运行时 bundle 后需运行 `node tools/live2d-studio/patch-cubism-runtime-cadence.mjs` 并重新验证；补丁遇到不匹配的上游代码会报错。
+
+| 系统 | 分发文件 | 启动方式 |
+| --- | --- | --- |
+| Windows x64 | `.exe` 安装程序 | 安装后打开快捷方式 |
+| macOS Apple Silicon / Intel | `.dmg` 或 `.zip` | 将 `.app` 放入 Applications 后双击 |
+| Linux x64 / arm64 | `.AppImage` | 在文件属性中允许执行，然后双击 |
+
+前端、模型、资源和人格记忆种子随安装包分发；聊天模型 API 和 GPT-SoVITS 服务仍需在设置中配置。记忆服务随应用启动和退出，不需要另开终端。
+
+默认数据目录：
+
+- Windows：`%LOCALAPPDATA%\YachiyoLive2DStudio`
+- macOS：`~/Library/Application Support/YachiyoLive2DStudio`
+- Linux：`${XDG_DATA_HOME:-~/.local/share}/YachiyoLive2DStudio`
+
+长期记忆文件位于该目录的 `MemoryData/yachiyo-memory.sqlite`；桌面配置位于 `DesktopProfile/`，日志位于 `desktop.log`。数据不写进 `.app` 或安装目录，应用更新不会替换记忆。开发或便携部署可用 `YACHIYO_DATA_DIR` 指定独立目录。原 Windows 默认数据库路径保持一致；自定义数据库路径仍可在设置中指定。
+
+新桌面后端覆盖聊天流、GPT-SoVITS/兼容 TTS、记忆、B站连接、Live2D 素材、本地/网易云音乐及 Minecraft。VTS 仍在宿主运行。Vosk 模型与 Python 环境未打包：使用 ASR 时配置已有识别服务地址，或设置 `YACHIYO_ASR_URL`。跨平台版尚无前台窗口元数据适配器，自动桌面截图会返回明确的不可用状态；旧 Windows 壳的桌面采集功能继续保留。
+
+### 从源码构建桌面包
+
+以下命令仅供开发者使用；安装包用户不需要运行它们。推荐 Node 24。
+
+```bash
+npm ci
+npm run build
+npm run desktop
+npm run test:desktop
+npm run dist:desktop
+```
+
+按平台构建：
+
+```bash
+npm run pack:desktop -- --mac zip --arm64
+npm run pack:desktop -- --mac dmg --x64
+npm run pack:desktop -- --win nsis --x64
+npm run pack:desktop -- --linux AppImage --x64
+```
+
+`pack:desktop` 使用已构建的前端；修改界面后先运行 `npm run build`。产物在 `release/`。`.github/workflows/desktop.yml` 可手动触发，在三种系统分别构建并保存安装包；工作流不会自动发布 Release。当前 macOS 包使用 ad-hoc 签名，其他包未配置发行者签名；正式分发需要另行配置 macOS Developer ID/公证和 Windows 签名证书。若 macOS 仓库位于云盘同步目录，签名遇到 Finder 元数据错误，可加 `--config.directories.output=/tmp/yachiyo-desktop-release`，在普通目录完成打包后复制分发包。
+
+开发自检：`npm run smoke:desktop` 会以隐藏窗口验证前端挂载与内置记忆；运行测试时用 `YACHIYO_DATA_DIR` 指向临时目录。默认桌面 API 端口为 3289，第二次启动会聚焦已有窗口。端口占用时显示错误及日志路径，不会连接陌生后台。
+
+### 原 Windows 启动器
+
 Windows 下双击仓库根目录：
 
 ```text
@@ -72,14 +157,16 @@ Windows 10/11 通常已经带有 Microsoft Edge WebView2 Runtime；如果启动�
 ## 顶层架构
 
 ```text
-Start-Live2D-Studio.exe
-  ├─ WinForms + WebView2 桌面壳
+Yachiyo Live2D Studio
+  ├─ Electron 跨平台桌面壳 + 内置 Node 运行时
   ├─ 127.0.0.1 本地 HTTP server
   │   ├─ 静态文件: dist/live2d-studio/
   │   ├─ /api/chat
   │   ├─ /api/chat/stream
   │   ├─ /api/tts
-  │   └─ /api/memory/*
+  │   ├─ /api/memory/* → 内置 SQLite 记忆进程
+  │   ├─ /api/music/*
+  │   └─ /api/minecraft/* → 按需启动游戏代理进程
   │
   └─ Vue Studio 前端
       ├─ Live2DPage.vue
@@ -89,10 +176,10 @@ Start-Live2D-Studio.exe
       ├─ 行为控制器
       ├─ VTube Studio Bridge
       ├─ 本地 Cubism 预览 Bridge
-      └─ SQLite/Milvus Memory Kernel Client
+      └─ SQLite Memory Kernel Client
 ```
 
-桌面壳代码在 `tools/live2d-launcher/Live2DStudioLauncher.cs`。
+跨平台桌面壳代码在 `tools/desktop/`，平台数据目录在 `tools/runtime/paths.mjs`，打包配置在 `electron-builder.yml`。原 Windows WinForms/WebView2 壳保留于 `tools/live2d-launcher/Live2DStudioLauncher.cs`。
 
 前端入口在 `live2d-studio/src/`，业务逻辑复用 `src/frontend/` 下的房间、Live2D、TTS、VTS 和记忆服务。
 
@@ -103,9 +190,9 @@ Start-Live2D-Studio.exe
 ```text
 观众输入 / 自动直播话题
   ↓
-SQLite/Milvus Memory Kernel 重构相关长期记忆
+SQLite Memory Kernel 重构相关长期记忆
   ↓
-拼接八千代核心人格 + 用户额外 systemPrompt + 记忆摘要 + 控制协议
+拼接八千代核心人格 + 相关角色知识 + 用户额外 systemPrompt + 相关长记忆 + 近期历史 + 控制协议
   ↓
 LLM 流式输出 VOICE 分句 + CONTROL JSON
   ↓
@@ -117,7 +204,7 @@ CONTROL JSON 里的 emotion/actions 进入语义行为控制器
   ↓
 VTube Studio Bridge 每帧采样动作并注入 VTS 参数
   ↓
-Raw Log / MemCell / MemScene / Profile 写入 SQLite，并同步到 Milvus 向量索引
+Raw Log / MemCell / MemScene / Profile 与向量写入同一个 SQLite 数据库
 ```
 
 关键原则：
@@ -258,22 +345,21 @@ CONTROL: {...}
 
 ## 八千代人格系统
 
-人格来源：
-
-```text
-E:\visualstudio\yachiyo_novel_detailed_corpus.txt
-```
-
-项目内实现为两层：
+当前人格与角色资料来自月读空间已核验版本，来源提交和许可记录见 `docs/tsukuyomi-source.json`。项目内实现为三层：
 
 1. 压缩核心人格 prompt
    - 文件：`src/frontend/constants/room/yachiyoPersonalityPrompt.js`
    - 每轮都会注入，保证基础人格不丢。
 
-2. 人格 seed Markdown
+2. 可检索角色知识
+   - 数据：`src/shared/yachiyo-canon.mjs`，101 条资料。
+   - 选择与注入：`src/frontend/services/room/yachiyoCanon.js`。
+   - 每轮按问题检索，保留版本与来源；默认避开剧透，不把电影和小说的不同事实混在一起。
+
+3. 历史人格 seed Markdown
    - 目录：`memory-seeds/obsidian/`
    - 由 `tools/memory/generate-yachiyo-memory-seeds.mjs` 从语料文件生成。
-   - 作为最底层人格文件，可导入 SQLite/Milvus，也可复制到 Obsidian vault 供用户编辑和跨端同步。
+   - 保留供人工审阅、编辑和跨端同步。旧 profile/style/lore/policy/sample 人格资料不会自动注入直播回复，避免覆盖当前人格；普通会话长记忆继续检索。
 
 seed 笔记覆盖：
 
@@ -283,7 +369,7 @@ seed 笔记覆盖：
 - `07_Samples`: 温柔支持、神秘回避、直播语气样例
 - `08_System`: Prompt fragments、检索规则、记忆策略
 
-重新生成 seed：
+需要维护旧语料管理文件时，可重新生成 seed；这不会替换当前内置人格与角色知识：
 
 ```powershell
 npm run generate:yachiyo-memory-seeds
@@ -447,20 +533,20 @@ API：
 ```text
 前端 fetch('/api/memory/*')
   ↓
-C# LocalStudioServer
+Electron 本地 API（旧 Windows 壳使用 C# LocalStudioServer）
   ↓
-托管 Node memory data service
+应用内置 memory data service
   ↓
-SQLite 记忆库 + 托管 Milvus 向量检索
+SQLite 记忆库 + 本地检索
   ↓
 Obsidian / Markdown 文件层（人格 seed、人工编辑、跨端同步）
 ```
 
-默认配置为 `sqlite-milvus`：点开 `Start-Live2D-Studio.exe` 时，启动器会后台启动 memory data service，并请求项目托管的 `yachiyo-milvus-standalone` Docker 容器；如果 Docker Desktop 已安装但尚未运行，sidecar 会先尝试拉起 Docker Desktop。关闭启动器时会请求 sidecar 停止 Milvus 容器。首次启动需要本机 Docker 可用，并可能拉取 `milvusdb/milvus:latest` 镜像。
+默认配置为 `sqlite`，随应用启动并保存在本机。原托管 Milvus 配置会一次性迁移为内置存储，保留数据库/vault 路径；不会删除旧数据库或 Docker 卷。旧启动器即使仍设置 Milvus 环境变量，也不再触发 Docker。独立桌面版固定使用内置记忆；旧 Windows 壳/独立服务仍保留显式选择外部 Milvus 的兼容入口。
 
-Obsidian 不再是默认运行时记忆引擎。它在当前架构里是最底层 Markdown 文件层：保存八千代人格 seed、让用户手动编辑记忆、通过 Obsidian Sync/Git/网盘等方式做跨端同步。运行时检索、写入、巩固、画像和 trace 以 SQLite + Milvus 为准；Obsidian 文件可作为导入源或人工治理出口。
+Obsidian 不再是默认运行时记忆引擎。它在当前架构里是最底层 Markdown 文件层：保存八千代人格 seed、让用户手动编辑记忆、通过 Obsidian Sync/Git/网盘等方式做跨端同步。运行时检索、写入、巩固、画像和 trace 以 SQLite 为准；Obsidian 文件可作为导入源或人工治理出口。
 
-SQLite/Milvus provider 采用 EverMemOS 风格生命周期：
+内置 SQLite provider 采用 EverMemOS 风格生命周期：
 
 - Raw Log：`/api/memory/record-turn` 保存原始 user/assistant turn，作为可回放证据。
 - MemCell：`/api/memory/write` 把低风险 memory_writes 或 session summary 固化为 episode、facts、foresight。
@@ -473,7 +559,7 @@ SQLite/Milvus provider 采用 EverMemOS 风格生命周期：
 在 Settings > Memory 中配置：
 
 - Memory provider
-- SQLite/Milvus 路径
+- SQLite 数据库路径（留空使用应用数据目录）
 - 可选 Obsidian / Markdown vault 导入路径
 - Retrieval mode
 - Write mode
@@ -494,7 +580,7 @@ SQLite/Milvus provider 采用 EverMemOS 风格生命周期：
 .yachiyo-index/
 ```
 
-并从 `memory-seeds/obsidian/` 写入八千代人格 seed 笔记。默认运行时会把这些 seed 导入 SQLite/Milvus；Obsidian 侧主要用于用户阅读、编辑和跨端同步。
+并从 `memory-seeds/obsidian/` 写入八千代人格 seed 笔记。默认运行时会把这些 seed 导入内置 SQLite；Obsidian 侧主要用于用户阅读、编辑和跨端同步。
 
 如果目标文件已经被你手动编辑过，不会覆盖。只有旧的 TODO 占位文件会被 seed 替换。
 
@@ -504,8 +590,8 @@ SQLite/Milvus provider 采用 EverMemOS 风格生命周期：
 
 1. 前端根据输入推断 tags 和 keywords。
 2. 调用 `/api/memory/search`。
-3. SQLite/Milvus provider 先取相关 MemScene，再在 scene 内 rerank MemCell。
-4. 同时混合关键词、SQLite 向量、Milvus 向量、importance、confidence 和时效状态。
+3. 内置 SQLite provider 先取相关 MemScene，再在 scene 内 rerank MemCell。
+4. 同时混合关键词、本地向量相似度、importance、confidence 和时效状态。未配置 embedding 服务时使用确定性的词法哈希特征，它不是神经语义 embedding；可选 embedding API 能提供语义向量，向量仍保存在本机。Milvus 不参与默认检索。
 5. 生成 sufficiency check；证据不足时返回 missing information。
 6. 前端格式化为 `Reconstructed long-term memory`，包含 scene、facts、foresight 后注入 prompt。
 
@@ -523,7 +609,7 @@ LLM 只能输出结构化 `memory_writes`，不能直接写文件。
 - 敏感信息过滤
 - viewer/session 开关
 
-默认 `writeMode = auto-approved`。运行时低风险记忆会先写入 SQLite `memories`，随后形成 MemCell、归入 MemScene，并同步 Milvus 向量索引；Raw Log 会保留原始 turn 证据。
+默认 `writeMode = auto-approved`。运行时低风险记忆会先写入 SQLite `memories`，随后形成 MemCell、归入 MemScene，并更新内置向量记录；Raw Log 会保留原始 turn 证据。
 
 当用户需要人工编辑或跨端同步时，可以把人格 seed / 记忆文件放在 Obsidian vault 中作为 Markdown 文件层。文件层的 inbox 结构仍保留：
 
@@ -683,7 +769,7 @@ npm run install:yachiyo-vts-parameters
 
 ## 默认端口和服务
 
-- 桌面本地 server 默认端口：`3288`
+- 新桌面本地 server 默认端口：`3289`；旧 Windows EXE：`3288`
 - 前端开发端口：`5174`
 - VTube Studio API：`ws://127.0.0.1:8001`
 - GPT-SoVITS 默认：`http://localhost:9880/tts`
@@ -691,8 +777,8 @@ npm run install:yachiyo-vts-parameters
 ## 当前限制
 
 - 最终直播画面推荐使用 VTube Studio，本地 Cubism 预览仍在追赶 VTS 的自然度。
-- 托管 Milvus 依赖本机 Docker；首次运行可能需要启动 Docker Desktop 并下载 Milvus 镜像。
-- 详细人格 seed 来自本地语料提炼文件，后续如果语料更新，需要重新生成 seed 并重新初始化或手动同步 vault。
+- 内置检索适合个人直播记忆库；很大规模数据下仍需测量检索延迟。默认不依赖 Docker，也不自动下载 embedding 模型。
+- 当前版本人格与角色知识已内置；旧语料 seed 保留用于管理与审阅，不再自动覆盖新的人格。额外自定义语料更新后可重新建立索引。
 - LLM 输出质量仍依赖模型本身，需要使用支持稳定 JSON/流式输出的模型。
 
 

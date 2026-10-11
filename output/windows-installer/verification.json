@@ -1,0 +1,10 @@
+{
+  "desktopTestsPassed": 12,
+  "realMakensisFixture": true,
+  "installerCrc": true,
+  "embeddedUninstallerCrc": true,
+  "repairCopyMatchesUninstaller": true,
+  "packagedCodeMatchesSource": true,
+  "springFrontendAndCubismHashesUnchanged": true,
+  "windowsNativeLifecycle": "CI test added; not executed on the macOS host"
+}

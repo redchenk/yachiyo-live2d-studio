@@ -86,6 +86,8 @@ export function createLive2DPerformanceBrain() {
   let recentReleasedPlan = null;
   let cachedFrameKey = -1;
   let cachedFrame = null;
+  let characterFrameAt = -1;
+  let characterFrame = null;
   let lastRoomActDetail = null;
   let lastRoomActAt = -Infinity;
   let lastRoomActResult = null;
@@ -93,6 +95,8 @@ export function createLive2DPerformanceBrain() {
   function invalidateFrameCache() {
     cachedFrameKey = -1;
     cachedFrame = null;
+    characterFrameAt = -1;
+    characterFrame = null;
   }
 
   function releaseBehaviorPlan(plan, at, fadeOutMs = 0) {
@@ -354,7 +358,7 @@ export function createLive2DPerformanceBrain() {
 
   function sample(now = nowMs(), options = {}) {
     const intensityScale = Number(options.intensityScale) || 1.62;
-    const frameKey = `${Math.floor(Number(now) / 16)}:${intensityScale.toFixed(3)}`;
+    const frameKey = `${Number(now)}:${intensityScale}`;
     if (cachedFrame && cachedFrameKey === frameKey) return cachedFrame;
     const currentPlan = behaviorPlan;
     if (recentReleasedPlan && now > Number(recentReleasedPlan.expiresAt || 0)) {
@@ -373,7 +377,13 @@ export function createLive2DPerformanceBrain() {
     }
     const activePlan = behaviorPlan;
     const activeElapsedMs = activePlan ? now - activePlan.startedAt : 0;
-    const character = characterState.sample(now);
+    // Cubism, stage motion and VTS can sample with different intensity scales
+    // in one display frame. Advance the shared character only once per frame.
+    if (!characterFrame || characterFrameAt !== now) {
+      characterFrame = characterState.sample(now);
+      characterFrameAt = now;
+    }
+    const character = characterFrame;
     const outgoingExpression = outgoingPlan?.plan?.expression;
     const trailingSamples = sampleOutgoingBehaviorActions(now, intensityScale);
     const activeSamples = activePlan ? sampleActiveBehaviorActions(activePlan.actions, activeElapsedMs, {

@@ -1,3 +1,4 @@
+import { diverseMemoryResults, relevantExcerpt, fuseRetrievalRanks } from '../../src/shared/retrieval-context.mjs';
 import crypto from 'node:crypto';
 import { execFile } from 'node:child_process';
 import fs from 'node:fs';
@@ -6,7 +7,8 @@ import path from 'node:path';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { gunzipSync, gzipSync } from 'node:zlib';
-import Database from 'better-sqlite3';
+import Database from './sqlite-runtime.mjs';
+import { studioDataDirectory } from '../runtime/paths.mjs';
 import {
   DEFAULT_MANAGED_MILVUS_IMAGE,
   decideManagedMilvusStartupAction,
@@ -51,6 +53,9 @@ const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const defaultRepoRoot = path.resolve(scriptDir, '..', '..');
 
 const args = parseArgs(process.argv.slice(2));
+// Old shipped launchers set the environment variable unconditionally. Requiring
+// an explicit command-line opt-in prevents them from starting Docker on upgrade.
+const managedMilvusAutostart = args['managed-milvus-autostart'] === 'true';
 const port = Number(args.port || process.env.YACHIYO_MEMORY_PORT || DEFAULT_PORT);
 const repoRoot = path.resolve(args.repoRoot || args['repo-root'] || process.env.YACHIYO_REPO_ROOT || defaultRepoRoot);
 
@@ -108,8 +113,9 @@ function readRequestJson(req) {
 }
 
 function appDataDir() {
-  const root = process.env.LOCALAPPDATA || process.env.APPDATA || repoRoot;
-  return path.join(root, 'YachiyoLive2DStudio', 'MemoryData');
+  const legacy = path.join(repoRoot, 'YachiyoLive2DStudio', 'MemoryData');
+  if (!process.env.YACHIYO_DATA_DIR && fs.existsSync(path.join(legacy, 'yachiyo-memory.sqlite'))) return legacy;
+  return path.join(studioDataDirectory(), 'MemoryData');
 }
 
 function asText(value, max = 500) {
@@ -235,9 +241,9 @@ function normalizeSettings(input = {}) {
     personaCorpusPath: resolveOptionalPath(settings.personaCorpusPath || settings.corpusPath, defaultPersonaCorpusPath()),
     retrievalMode: asText(input.query?.retrievalMode || settings.retrievalMode || 'hybrid', 40).toLowerCase(),
     writeMode: asText(input.mode || settings.writeMode || 'auto-approved', 40).toLowerCase(),
-    maxNotes: Math.round(asNumber(input.query?.maxNotes || settings.maxNotesPerTurn, 4, 1, 12)),
-    milvusEnabled: asBoolean(settings.milvusEnabled || settings.useMilvus),
-    milvusManaged: asBoolean(settings.milvusManaged || settings.manageMilvus),
+    maxNotes: Math.round(asNumber(input.query?.maxNotes || settings.maxNotesPerTurn, 8, 1, 16)),
+    milvusEnabled: settings.provider !== 'sqlite' && asBoolean(settings.milvusEnabled || settings.useMilvus),
+    milvusManaged: settings.provider !== 'sqlite' && asBoolean(settings.milvusManaged || settings.manageMilvus),
     milvusUrl: asText(settings.milvusUrl || settings.milvusEndpoint || process.env.YACHIYO_MEMORY_MILVUS_URL || DEFAULT_MILVUS_URL, 300).replace(/\/+$/, ''),
     milvusToken: asText(settings.milvusToken || '', 1000),
     milvusCollection: asText(settings.milvusCollection || DEFAULT_COLLECTION, 80).replace(/[^a-zA-Z0-9_]/g, '_') || DEFAULT_COLLECTION,
@@ -708,27 +714,20 @@ function parseMarkdownNote(root, file, source) {
 }
 
 function chunkPlainText(rawText, maxChars = 1800) {
-  const paragraphs = String(rawText || '')
-    .replace(/\r\n/g, '\n')
-    .replace(/\r/g, '\n')
-    .split(/\n{2,}/)
-    .map((part) => part.replace(/\s+/g, ' ').trim())
-    .filter(Boolean);
+  const text = String(rawText || '').replace(/\r\n?/g, '\n').trim();
   const chunks = [];
-  let current = '';
-  for (const paragraph of paragraphs) {
-    if (!current) {
-      current = paragraph;
-    } else if ((current.length + paragraph.length + 2) <= maxChars) {
-      current = `${current}\n\n${paragraph}`;
-    } else {
-      chunks.push(current);
-      current = paragraph;
+  const overlap = Math.min(240, Math.floor(maxChars / 4));
+  for (let start = 0; start < text.length && chunks.length < MAX_MEMORY_ROWS;) {
+    let end = Math.min(text.length, start + maxChars);
+    if (end < text.length) {
+      const boundary = Math.max(text.lastIndexOf('\n', end), text.lastIndexOf('。', end), text.lastIndexOf('. ', end));
+      if (boundary > start + maxChars * 0.65) end = boundary + 1;
     }
-    if (chunks.length >= MAX_MEMORY_ROWS) break;
+    chunks.push(text.slice(start, end));
+    if (end === text.length) break;
+    start = Math.max(start + 1, end - overlap);
   }
-  if (current && chunks.length < MAX_MEMORY_ROWS) chunks.push(current);
-  return chunks.length ? chunks : [String(rawText || '').trim()].filter(Boolean);
+  return chunks;
 }
 
 function inferPersonaType(content) {
@@ -854,13 +853,29 @@ function addHashedTerm(vector, term, weight) {
 
 function configuredEmbeddingSignature(settings) {
   const dimension = Math.max(32, Math.min(4096, Math.round(Number(settings.embeddingDimension) || DEFAULT_DIMENSION)));
-  if (!settings.embeddingApiUrl || !settings.embeddingApiKey) return `hash-v2:${dimension}`;
+  if (!settings.embeddingApiUrl) return `hash-v2:${dimension}`;
   return `api:${sha1(settings.embeddingApiUrl).slice(0, 12)}:${settings.embeddingModel}:${dimension}`;
 }
 
+const embeddingCache = new Map();
+const embeddingPending = new Map();
 async function embeddingForDetailed(text, settings) {
+  const key = `${configuredEmbeddingSignature(settings)}:${sha1(settings.embeddingApiKey || '')}:${sha1(String(text || '').slice(0, 8000))}`;
+  const cached = embeddingCache.get(key);
+  if (cached && cached.until > Date.now()) return cached.value;
+  if (embeddingPending.has(key)) return embeddingPending.get(key);
+  const pending = computeEmbeddingDetailed(text, settings).then(value => {
+    embeddingCache.set(key, { value, until: Date.now() + (value.degraded ? 5000 : 10 * 60 * 1000) });
+    if (embeddingCache.size > 1024) embeddingCache.delete(embeddingCache.keys().next().value);
+    return value;
+  }).finally(() => embeddingPending.delete(key));
+  embeddingPending.set(key, pending);
+  return pending;
+}
+
+async function computeEmbeddingDetailed(text, settings) {
   const hashSignature = `hash-v2:${settings.embeddingDimension}`;
-  if (!settings.embeddingApiUrl || !settings.embeddingApiKey) {
+  if (!settings.embeddingApiUrl) {
     return {
       vector: hashEmbedding(text, settings.embeddingDimension),
       signature: hashSignature,
@@ -869,14 +884,14 @@ async function embeddingForDetailed(text, settings) {
     };
   }
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), EMBEDDING_REQUEST_TIMEOUT_MS);
+  const timeout = setTimeout(() => controller.abort(), settings.embeddingTimeoutMs || EMBEDDING_REQUEST_TIMEOUT_MS);
   timeout.unref?.();
   try {
     const response = await fetch(settings.embeddingApiUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${settings.embeddingApiKey}`
+        ...(settings.embeddingApiKey ? { Authorization: `Bearer ${settings.embeddingApiKey}` } : {})
       },
       body: JSON.stringify({
         model: settings.embeddingModel,
@@ -888,7 +903,7 @@ async function embeddingForDetailed(text, settings) {
     if (!response.ok) throw new Error(`embedding ${response.status}`);
     const payload = await response.json();
     const vector = payload?.data?.[0]?.embedding || payload?.embedding;
-    if (!Array.isArray(vector) || !vector.length) throw new Error('empty embedding');
+    if (!Array.isArray(vector) || vector.length !== settings.embeddingDimension || !vector.every(Number.isFinite) || !vector.some(n => n !== 0)) throw new Error('Embedding dimension or values do not match configured index.');
     return {
       vector: normalizeVector(vector, settings.embeddingDimension),
       signature: configuredEmbeddingSignature(settings),
@@ -2844,7 +2859,8 @@ function missingInformationFor(queryType) {
 
 function cellAsNote(cell, scene, score) {
   return {
-    id: cell.id,
+    id: cell.sourceMemoryId || cell.id,
+    cellId: cell.id,
     title: cell.title,
     type: cell.type,
     scope: cell.scope,
@@ -2852,6 +2868,9 @@ function cellAsNote(cell, scene, score) {
     summary: cell.episode,
     content: (cell.facts || []).join('\n'),
     source: 'memcell',
+    originalSource: cell.source,
+    sourceMemoryId: cell.sourceMemoryId,
+    viewerId: cell.viewerId,
     path: cell.id,
     importance: cell.importance,
     confidence: cell.confidence,
@@ -2897,6 +2916,7 @@ async function buildRecollection(db, settings, input, legacyNotes, providedQuery
     await ensureLifecycleForNotes(db, notes, settings);
     cells = viewerScopedCells(db, viewerIds);
   }
+  if (query.excludeLegacyPersona) cells = cells.filter(cell => !(['seed', 'persona'].includes(cell.source) && ['profile', 'style', 'lore', 'policy', 'sample'].includes(cell.type)));
   const scenes = viewerScopedScenes(db, viewerIds);
   const allowedCellIds = new Set(cells.map((cell) => cell.id));
   const queryKeywords = normalizeTags([...(query.keywords || []), ...textKeywords(queryText), ...(query.tags || [])]);
@@ -2917,7 +2937,6 @@ async function buildRecollection(db, settings, input, legacyNotes, providedQuery
   const sceneMap = new Map(scenes.map((scene) => [scene.id, scene]));
   const candidateSceneIds = new Set(sceneScores.map((item) => item.scene.id));
   const cellScores = cells
-    .filter((cell) => !candidateSceneIds.size || candidateSceneIds.has(cell.sceneId) || anchorTargetScores.has(cell.id) || queryText.length < 2)
     .map((cell) => {
       const sceneScore = sceneScores.find((item) => item.scene.id === cell.sceneId)?.score || 0;
       const anchorBoost = Math.min(0.18, anchorTargetScores.get(cell.id) || 0);
@@ -3278,7 +3297,7 @@ async function handleInit(input) {
     db.pragma('wal_checkpoint(PASSIVE)');
     return {
       success: true,
-      provider: 'sqlite-milvus',
+      provider: settings.milvusEnabled ? 'sqlite-milvus' : 'sqlite',
       databasePath: settings.databasePath,
       indexed: notes.length,
       imported,
@@ -3348,6 +3367,18 @@ async function handleList(input) {
   }
 }
 
+const vectorRepairJobs = new Map();
+function scheduleVectorRepair(settings) {
+  const key = `${settings.databasePath}:${configuredEmbeddingSignature(settings)}`;
+  if (vectorRepairJobs.has(key)) return;
+  const job = new Promise(resolve => setTimeout(resolve, 0)).then(async () => {
+    const store = openStore(settings);
+    try { await auditAndRepairVectorIndex(store, settings, { repair: true }); }
+    finally { store.close(); }
+  }).catch(() => {}).finally(() => vectorRepairJobs.delete(key));
+  vectorRepairJobs.set(key, job);
+}
+
 async function handleSearch(input) {
   const settings = normalizeSettings(input);
   if (settings.retrievalMode === 'off') return { success: true, notes: [] };
@@ -3368,7 +3399,8 @@ async function handleSearch(input) {
       )
     );
     if (vectorRepairNeeded) {
-      await auditAndRepairVectorIndex(db, settings, { repair: true });
+      if (settings.embeddingApiUrl) scheduleVectorRepair(settings);
+      else await auditAndRepairVectorIndex(db, settings, { repair: true });
     }
     const viewers = resolveViewerProfiles(db, input);
     const viewerIds = new Set(viewers.map((viewer) => viewer.id));
@@ -3378,46 +3410,38 @@ async function handleSearch(input) {
       notes = viewerScopedRows(db, viewerIds, false, MAX_MEMORY_ROWS);
     }
     const query = input.query || {};
+    if (query.excludeLegacyPersona) notes = notes.filter(note => !(['seed', 'persona'].includes(note.source) && ['profile', 'style', 'lore', 'policy', 'sample'].includes(note.type)));
     const queryText = String(query.text || '').trim();
-    const queryEmbedding = await embeddingForDetailed(queryText, settings);
+    const queryEmbedding = await embeddingForDetailed(queryText, { ...settings, embeddingTimeoutMs: 1200 });
     const milvusScores = settings.retrievalMode === 'vector' || settings.retrievalMode === 'hybrid' || settings.retrievalMode === 'index'
       ? (queryEmbedding.degraded
           ? new Map()
           : await searchMilvus(settings, queryEmbedding.vector, Math.max(settings.maxNotes * 4, 12)))
       : new Map();
-    const scored = notes
-      .map((note) => {
-        const vectorScore = settings.retrievalMode === 'tags' || !embeddingsCompatible(
-          queryEmbedding.signature,
-          note.embeddingSignature,
-          queryEmbedding.vector,
-          note.vector
-        ) ? 0 : cosine(queryEmbedding.vector, note.vector);
-        const score = scoreNote(note, query, {
-          vectorScore,
-          milvusScore: milvusScores.get(note.id)
-        });
-        const { vector, ...publicNote } = note;
-        return { ...publicNote, score };
-      })
-      .filter((note) => note.score > 0.08 || !queryText)
-      .sort((a, b) => b.score - a.score)
-      .slice(0, settings.maxNotes)
-      .map((note) => {
-        const { score, ...publicNote } = note;
-        return { ...publicNote, score: Number(score.toFixed(4)) };
-      });
+    const candidates = notes.map(note => {
+      const vectorScore = settings.retrievalMode === 'tags' || !embeddingsCompatible(
+        queryEmbedding.signature, note.embeddingSignature, queryEmbedding.vector, note.vector
+      ) ? 0 : cosine(queryEmbedding.vector, note.vector);
+      const { vector, ...publicNote } = note;
+      return { note: publicNote, lexicalScore: scoreNote(note, query), vectorScore, milvusScore: milvusScores.get(note.id) || 0 };
+    });
+    const scored = fuseRetrievalRanks(candidates)
+      .filter(note => note.score > 0.08 || !queryText)
+      .slice(0, Math.max(settings.maxNotes * 3, 24))
+      .map(note => ({ ...note, score: Number(note.score.toFixed(4)) }));
     await ensureLifecycleForNotes(db, notes, settings);
     const recollection = await buildRecollection(db, settings, input, scored, queryEmbedding);
-    const noteIds = new Set();
-    const merged = [...recollection.notesFromCells, ...scored]
-      .filter((note) => {
-        const key = note.id || note.path;
-        if (!key || noteIds.has(key)) return false;
-        noteIds.add(key);
-        return true;
-      })
-      .slice(0, settings.maxNotes);
+    // Rank both representations together. A lifecycle cell must not crowd out
+    // its original long document or another independently relevant source.
+    const originals = new Map(scored.map(note => [note.id, note]));
+    const reconstructed = recollection.notesFromCells.map(cell => {
+      const original = originals.get(cell.sourceMemoryId);
+      return original ? { ...cell, ...original, cellId: cell.cellId, score: Math.max(cell.score, original.score), facts: cell.facts, sceneTitle: cell.sceneTitle } : cell;
+    });
+    const merged = diverseMemoryResults([...scored, ...reconstructed]
+      .sort((a, b) => b.score - a.score), settings.maxNotes).map(note => ({
+        ...note, content: relevantExcerpt(note.content || note.summary, queryText, 4000)
+      }));
     const { notesFromCells, ...publicRecollection } = recollection;
     return {
       success: true,
@@ -3937,7 +3961,7 @@ const server = http.createServer(async (req, res) => {
         sqliteIntegrity: sqliteRuntimeHealth.integrity,
         databasePath: sqliteRuntimeHealth.databasePath,
         managedMilvus: {
-          autostart: asBoolean(process.env.YACHIYO_MEMORY_AUTOSTART_MANAGED_MILVUS),
+          autostart: managedMilvusAutostart,
           error: managedMilvusStartupError,
           ...managedMilvusStatus
         }
@@ -3960,8 +3984,11 @@ const server = http.createServer(async (req, res) => {
 });
 
 server.listen(port, '127.0.0.1', () => {
-  process.stdout.write(`Yachiyo memory data service listening on http://127.0.0.1:${port}\n`);
-  if (asBoolean(process.env.YACHIYO_MEMORY_AUTOSTART_MANAGED_MILVUS) && sqliteRuntimeHealth.ready) {
+  const actualPort = server.address().port;
+  process.stdout.write(`Yachiyo memory data service listening on http://127.0.0.1:${actualPort}\n`);
+  process.parentPort?.postMessage({ type: 'ready', port: actualPort, service: 'memory', ...sqliteRuntimeHealth });
+  process.send?.({ type: 'ready', port: actualPort, service: 'memory', ...sqliteRuntimeHealth });
+  if (managedMilvusAutostart && sqliteRuntimeHealth.ready) {
     scheduleManagedMilvusAutostart();
   } else if (!sqliteRuntimeHealth.ready) {
     managedMilvusStartupError = `SQLite runtime is unavailable: ${sqliteRuntimeHealth.error}`;

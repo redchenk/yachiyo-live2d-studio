@@ -66,17 +66,18 @@ import {
 import { readLive2DVisionContext } from '@frontend/services/room/live2dVision';
 
 defineEmits(['close']);
+const props = defineProps({ initialTab: { type: String, default: 'llm' } });
 
 const tabs = [
-  { id: 'llm', label: 'LLM' },
-  { id: 'tts', label: 'TTS' },
-  { id: 'asr', label: 'ASR' },
-  { id: 'model', label: 'Model' },
-  { id: 'vts', label: 'VTS' },
-  { id: 'vision', label: 'Vision' },
-  { id: 'music', label: 'Music' },
+  { id: 'llm', label: '对话模型' },
+  { id: 'tts', label: '语音合成' },
+  { id: 'asr', label: '语音识别' },
+  { id: 'model', label: 'Live2D 模型' },
+  { id: 'vts', label: 'VTube Studio' },
+  { id: 'vision', label: '屏幕感知' },
+  { id: 'music', label: '音乐' },
   { id: 'minecraft', label: 'Minecraft' },
-  { id: 'memory', label: 'Memory' }
+  { id: 'memory', label: '长记忆' }
 ];
 
 const providerOptions = [
@@ -88,9 +89,10 @@ const providerOptions = [
 ];
 
 const memoryProviderOptions = [
-  { value: 'obsidian', label: 'Obsidian Vault' },
-  { value: 'sqlite-milvus', label: 'SQLite + Milvus' }
-];
+  { value: 'sqlite', label: '内置 SQLite 记忆' },
+  { value: 'obsidian', label: 'Obsidian 知识库' },
+  { value: 'sqlite-milvus', label: '外部 Milvus（可选）' }
+].filter(option => !window.yachiyoDesktop?.embeddedMemory || option.value === 'sqlite');
 
 const renderDprOptions = [
   { value: 1, label: '1x' },
@@ -108,7 +110,7 @@ const renderDprOptions = [
 const languageOptions = [
   { value: 'auto', label: 'auto' },
   { value: 'zh', label: 'zh' },
-  { value: 'ja', label: 'ja' },
+  { value: 'ja', label: '日语 / ja' },
   { value: 'en', label: 'en' },
   { value: 'ko', label: 'ko' },
   { value: 'yue', label: 'yue' }
@@ -128,7 +130,7 @@ const retrievalModeOptions = [
   { value: 'vector', label: 'vector' }
 ];
 
-const activeTab = ref('llm');
+const activeTab = ref(props.initialTab);
 const status = ref('');
 const memoryBusy = ref('');
 const memoryManagePath = ref('');
@@ -188,10 +190,10 @@ const memoryWriteLabel = computed(() => (
 ));
 const memoryMilvusLabel = computed(() => {
   if (!sqliteMemory.value) return 'Obsidian only';
-  if (!memory.milvusEnabled) return 'Milvus off';
+  if (!memory.milvusEnabled) return '本地向量与关键词索引';
   return memory.milvusManaged ? 'Managed Milvus' : 'External Milvus';
 });
-const memoryStorageLabel = computed(() => (sqliteMemory.value ? 'SQLite primary' : 'Obsidian vault'));
+const memoryStorageLabel = computed(() => (sqliteMemory.value ? '本机应用数据目录' : 'Obsidian 知识库'));
 const selectedMemoryNote = computed(() => {
   const path = memoryManagePath.value.trim();
   if (!path) return null;
@@ -626,7 +628,7 @@ onUnmounted(() => {
     <header class="studio-settings-header">
       <div>
         <span>Yachiyo Studio</span>
-        <strong>Settings</strong>
+        <strong>工作室设置</strong>
       </div>
       <button class="studio-icon-btn" type="button" title="Close settings" aria-label="Close settings" @click="$emit('close')">
         <TsIcon name="x" :size="18" />
@@ -648,35 +650,38 @@ onUnmounted(() => {
     <form class="studio-settings-form" @submit.prevent="saveSettings">
       <section v-if="activeTab === 'llm'" class="studio-settings-section">
         <label>
-          <span>Provider</span>
+          <span>服务商</span>
           <select v-model="llm.provider" @change="applyLLMProvider">
             <option v-for="option in ROOM_LLM_PROVIDER_OPTIONS" :key="option.value" :value="option.value">{{ option.label }}</option>
           </select>
         </label>
         <label>
-          <span>API URL</span>
-          <input v-model="llm.apiUrl" type="text" spellcheck="false" placeholder="https://api.openai.com/v1/chat/completions">
+          <span>接口地址</span>
+          <input v-model="llm.apiUrl" type="text" spellcheck="false" placeholder="https://api.deepseek.com/v1/chat/completions">
         </label>
         <label>
-          <span>API Key</span>
+          <span>API 密钥</span>
           <input v-model="llm.apiKey" type="password" spellcheck="false" placeholder="sk-...">
         </label>
         <label>
-          <span>Model</span>
-          <input v-model="llm.model" type="text" spellcheck="false" placeholder="gpt-4o-mini">
+          <span>模型名称</span>
+          <input v-model="llm.model" type="text" spellcheck="false" placeholder="deepseek-flash">
         </label>
         <label class="studio-check-row">
           <input v-model="llm.useProxy" type="checkbox">
-          <span>Use local proxy</span>
+          <span>通过本地服务转发</span>
         </label>
         <label>
-          <span>Vision Images</span>
+          <span>图像输入</span>
           <select v-model="llm.visionImageMode">
             <option v-for="option in ROOM_LLM_VISION_IMAGE_MODE_OPTIONS" :key="option.value" :value="option.value">{{ option.label }}</option>
           </select>
         </label>
+        <div class="studio-persona-intro studio-wide-field"><TsIcon name="sparkles" :size="20" /><div><strong>八千代 · 月读空间人格</strong><p>轻快、俏皮，认真时直接说话。内置 101 条带来源的角色知识，按话题检索，默认不剧透。</p></div></div>
+        <label><span>近期对话轮数</span><input v-model.number="llm.historyMaxTurns" type="number" min="4" max="64"></label>
+        <label><span>对话上下文预算（字符）</span><input v-model.number="llm.historyMaxChars" type="number" min="4000" max="100000" step="1000"></label>
         <label class="studio-wide-field">
-          <span>System Prompt</span>
+          <span>补充人格与回复要求</span>
           <textarea v-model="llm.systemPrompt" rows="5" spellcheck="false" placeholder="Optional extra behavior for Yachiyo"></textarea>
         </label>
       </section>
@@ -684,24 +689,24 @@ onUnmounted(() => {
       <section v-else-if="activeTab === 'tts'" class="studio-settings-section">
         <label class="studio-check-row">
           <input v-model="tts.enabled" type="checkbox">
-          <span>Enable voice</span>
+          <span>启用语音</span>
         </label>
         <label>
-          <span>Provider</span>
+          <span>服务商</span>
           <select v-model="tts.provider" @change="applyTtsProvider">
             <option v-for="option in providerOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
           </select>
         </label>
         <label>
-          <span>API URL</span>
+          <span>接口地址</span>
           <input v-model="tts.apiUrl" type="text" spellcheck="false" :placeholder="ttsApiPlaceholder">
         </label>
         <label v-if="!localTts">
-          <span>API Key</span>
+          <span>API 密钥</span>
           <input v-model="tts.apiKey" type="password" spellcheck="false" placeholder="sk-...">
         </label>
         <label>
-          <span>{{ localTts ? 'Text Lang' : 'Model' }}</span>
+          <span>{{ localTts ? '合成语言' : '模型名称' }}</span>
           <select v-if="localTts" v-model="tts.textLang">
             <option v-for="option in languageOptions" :key="`text-${option.value}`" :value="option.value">{{ option.label }}</option>
           </select>
@@ -714,26 +719,26 @@ onUnmounted(() => {
 
         <template v-if="localTts">
           <label>
-            <span>Ref Audio</span>
+            <span>参考音频路径</span>
             <input v-model="tts.refAudioPath" type="text" spellcheck="false" placeholder="E:\visualstudio\tts\reference\yachiyo.wav">
           </label>
-          <label>
-            <span>Prompt Text</span>
-            <input v-model="tts.promptText" type="text" spellcheck="false" placeholder="Reference audio text">
+          <label class="studio-wide-field">
+            <span>参考音频文本</span>
+            <textarea v-model="tts.promptText" rows="2" spellcheck="false" placeholder="参考音频里的日语原文"></textarea>
           </label>
           <label>
-            <span>Prompt Lang</span>
+            <span>参考音频语言</span>
             <select v-model="tts.promptLang">
               <option v-for="option in languageOptions" :key="`prompt-${option.value}`" :value="option.value">{{ option.label }}</option>
             </select>
           </label>
-          <label>
-            <span>GPT Weight</span>
-            <input v-model="tts.gptWeightPath" type="text" spellcheck="false" placeholder="GPT_weights_v2ProPlus/yachiyo-v2pro-e15.ckpt">
+          <label class="studio-wide-field">
+            <span>GPT 权重路径</span>
+            <input v-model="tts.gptWeightPath" type="text" spellcheck="false" placeholder="GPT_weights_v2ProPlus/yachiyo-v2pro-e20.ckpt">
           </label>
-          <label>
-            <span>SoVITS Weight</span>
-            <input v-model="tts.sovitsWeightPath" type="text" spellcheck="false" placeholder="SoVITS_weights_v2ProPlus/yachiyo-v2pro_e8_s456.pth">
+          <label class="studio-wide-field">
+            <span>SoVITS 权重路径</span>
+            <input v-model="tts.sovitsWeightPath" type="text" spellcheck="false" placeholder="SoVITS_weights_v2ProPlus/yachiyo-v2pro_e12_s684.pth">
           </label>
         </template>
       </section>
@@ -744,7 +749,7 @@ onUnmounted(() => {
           <span>Enable ASR</span>
         </label>
         <label>
-          <span>Provider</span>
+          <span>服务商</span>
           <select v-model="asr.provider">
             <option value="vosk">Vosk local</option>
           </select>
@@ -878,7 +883,7 @@ onUnmounted(() => {
           <span>Enable music control</span>
         </label>
         <label>
-          <span>Provider</span>
+          <span>服务商</span>
           <select v-model="music.provider">
             <option value="local-library">Local Library</option>
             <option value="netease-cloud">NetEase Cloud</option>
@@ -1077,10 +1082,10 @@ onUnmounted(() => {
           <div class="studio-memory-overview">
             <label class="studio-check-row">
               <input v-model="memory.enabled" type="checkbox">
-              <span>Enable memory</span>
+              <span>启用长记忆</span>
             </label>
             <label class="studio-memory-provider-select">
-              <span>Provider</span>
+              <span>服务商</span>
               <select v-model="memory.provider">
                 <option v-for="option in memoryProviderOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
               </select>
@@ -1090,37 +1095,37 @@ onUnmounted(() => {
           <div class="studio-memory-status-grid" aria-label="Memory status">
             <article class="studio-memory-status-card">
               <TsIcon name="note" :size="16" />
-              <span>Provider</span>
+              <span>服务商</span>
               <strong>{{ memoryProviderLabel }}</strong>
             </article>
             <article class="studio-memory-status-card">
               <TsIcon name="package" :size="16" />
-              <span>Storage</span>
+              <span>存储位置</span>
               <strong>{{ memoryStorageLabel }}</strong>
             </article>
             <article class="studio-memory-status-card">
               <TsIcon name="search" :size="16" />
-              <span>Retrieval</span>
+              <span>检索方式</span>
               <strong>{{ memoryRetrievalLabel }}</strong>
             </article>
             <article class="studio-memory-status-card">
               <TsIcon name="wand" :size="16" />
-              <span>Write</span>
+              <span>写入</span>
               <strong>{{ memoryWriteLabel }}</strong>
             </article>
             <article class="studio-memory-status-card">
               <TsIcon name="radio" :size="16" />
-              <span>Milvus</span>
+              <span>Memory index</span>
               <strong>{{ memoryMilvusLabel }}</strong>
             </article>
             <article class="studio-memory-status-card">
               <TsIcon name="list" :size="16" />
-              <span>Notes</span>
+              <span>记忆条目</span>
               <strong>{{ memoryStats.active }} / {{ memoryStats.total }}</strong>
             </article>
             <article class="studio-memory-status-card">
               <TsIcon name="star" :size="16" />
-              <span>Anchors</span>
+              <span>重点记忆</span>
               <strong>{{ memoryStats.anchors }}</strong>
             </article>
           </div>
@@ -1128,34 +1133,38 @@ onUnmounted(() => {
           <div class="studio-memory-block">
             <header class="studio-memory-block-head">
               <TsIcon name="settings2" :size="16" />
-              <h3>Routing</h3>
+              <h3>检索与注入</h3>
             </header>
             <div class="studio-memory-grid">
               <label>
-                <span>Retrieval</span>
+                <span>检索方式</span>
                 <select v-model="memory.retrievalMode">
                   <option v-for="option in retrievalModeOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
                 </select>
               </label>
               <label>
-                <span>Write Mode</span>
+                <span>写入方式</span>
                 <select v-model="memory.writeMode">
                   <option v-for="option in writeModeOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
                 </select>
               </label>
               <label>
-                <span>Max Notes</span>
-                <input v-model.number="memory.maxNotesPerTurn" type="number" min="1" max="8">
+                <span>每轮检索条数</span>
+                <input v-model.number="memory.maxNotesPerTurn" type="number" min="1" max="16">
               </label>
+            </div>
+            <div class="studio-memory-grid studio-context-budgets">
+              <label><span>记忆注入预算（字符）</span><input v-model.number="memory.contextMaxChars" type="number" min="2000" max="32000" step="1000"></label>
+              <label><span>每条相关片段（字符）</span><input v-model.number="memory.snippetMaxChars" type="number" min="300" max="4000" step="100"></label>
             </div>
             <div class="studio-memory-switches">
               <label class="studio-check-row">
                 <input v-model="memory.allowViewerMemory" type="checkbox">
-                <span>Viewer memory</span>
+                <span>观众记忆</span>
               </label>
               <label class="studio-check-row">
                 <input v-model="memory.allowSessionMemory" type="checkbox">
-                <span>Session memory</span>
+                <span>会话记忆</span>
               </label>
             </div>
           </div>
@@ -1194,7 +1203,7 @@ onUnmounted(() => {
           <div class="studio-memory-block">
             <header class="studio-memory-block-head">
               <TsIcon name="folder" :size="16" />
-              <h3>Storage</h3>
+              <h3>存储位置</h3>
             </header>
             <label v-if="!sqliteMemory">
               <span>Vault Path</span>
@@ -1203,11 +1212,11 @@ onUnmounted(() => {
             <template v-else>
               <label>
                 <span>SQLite Path</span>
-                <input v-model="memory.databasePath" type="text" spellcheck="false" placeholder="%LOCALAPPDATA%\YachiyoLive2DStudio\MemoryData\yachiyo-memory.sqlite">
+                <input v-model="memory.databasePath" type="text" spellcheck="false" placeholder="Automatic: application data directory">
               </label>
               <label>
                 <span>Persona Corpus</span>
-                <input v-model="memory.personaCorpusPath" type="text" spellcheck="false" placeholder="E:\visualstudio\yachiyo_novel_detailed_corpus.txt">
+                <input v-model="memory.personaCorpusPath" type="text" spellcheck="false" placeholder="Optional corpus file; bundled memory seeds are included">
               </label>
               <label>
                 <span>Import Vault Path</span>
@@ -1216,10 +1225,10 @@ onUnmounted(() => {
             </template>
           </div>
 
-          <div v-if="sqliteMemory" class="studio-memory-block">
+          <div v-if="memory.provider === 'sqlite-milvus'" class="studio-memory-block">
             <header class="studio-memory-block-head">
               <TsIcon name="radio" :size="16" />
-              <h3>Milvus</h3>
+              <h3>Optional external index</h3>
             </header>
             <div class="studio-memory-switches">
               <label class="studio-check-row">
@@ -1263,34 +1272,37 @@ onUnmounted(() => {
           <div v-if="sqliteMemory" class="studio-memory-block">
             <header class="studio-memory-block-head">
               <TsIcon name="sparkles" :size="16" />
-              <h3>Embedding</h3>
+              <h3>语义向量</h3>
             </header>
             <div class="studio-memory-grid">
+              <label><span>向量维度</span><input v-model.number="memory.embeddingDimension" type="number" min="32" max="4096"></label>
               <label>
-                <span>Embedding URL</span>
+                <span>向量接口地址</span>
                 <input v-model="memory.embeddingApiUrl" type="text" spellcheck="false" placeholder="Optional OpenAI-compatible embeddings endpoint">
               </label>
               <label>
-                <span>Embedding Model</span>
+                <span>向量模型</span>
                 <input v-model="memory.embeddingModel" type="text" spellcheck="false" placeholder="text-embedding-3-small">
               </label>
               <label>
-                <span>Embedding Key</span>
+                <span>向量接口密钥</span>
                 <input v-model="memory.embeddingApiKey" type="password" spellcheck="false" placeholder="Optional API key">
               </label>
             </div>
           </div>
 
+          <p class="studio-settings-note">未配置向量接口时使用本地词项哈希与关键词检索。语义召回需填写兼容 embeddings 的接口；本地无鉴权服务可留空密钥。维度必须与返回向量一致。重建索引后新向量才会用于全部旧记忆。</p>
           <div class="studio-memory-block">
             <header class="studio-memory-block-head">
               <TsIcon name="refresh" :size="16" />
-              <h3>Tools</h3>
+              <h3>记忆管理</h3>
             </header>
             <div class="studio-memory-actions">
               <button
                 class="studio-secondary-btn"
                 type="button"
-                :disabled="Boolean(memoryBusy) || !sqliteMemory || !memory.milvusEnabled || !memory.milvusManaged"
+                v-if="memory.provider === 'sqlite-milvus'"
+                :disabled="Boolean(memoryBusy) || !memory.milvusEnabled || !memory.milvusManaged"
                 @click="startMemoryMilvus"
               >
                 <TsIcon name="radio" :size="15" />
@@ -1337,7 +1349,7 @@ onUnmounted(() => {
               </button>
               <button class="studio-secondary-btn" type="button" :disabled="Boolean(memoryBusy)" @click="loadMemoryAnchors">
                 <TsIcon name="star" :size="15" />
-                <span>Anchors</span>
+                <span>重点记忆</span>
               </button>
             </div>
           </div>
@@ -1345,7 +1357,7 @@ onUnmounted(() => {
           <div class="studio-memory-block studio-memory-note-manager">
             <header class="studio-memory-block-head">
               <TsIcon name="note" :size="16" />
-              <h3>Notes</h3>
+              <h3>记忆条目</h3>
               <div class="studio-memory-stats" aria-label="Memory note counts">
                 <span>{{ memoryStats.active }} Active</span>
                 <span>{{ memoryStats.disabled }} Disabled</span>
@@ -1465,11 +1477,11 @@ onUnmounted(() => {
 
       <footer class="studio-settings-actions">
         <span class="studio-settings-status" aria-live="polite">{{ status }}</span>
-        <button class="studio-secondary-btn" type="button" @click="reloadSettings">Reload</button>
+        <button class="studio-secondary-btn" type="button" @click="reloadSettings">重新读取</button>
         <button class="studio-secondary-btn" type="button" @click="resetCurrentTab">Defaults</button>
         <button class="studio-primary-btn" type="submit">
           <TsIcon name="save" :size="16" />
-          <span>Save</span>
+          <span>保存设置</span>
         </button>
       </footer>
     </form>
