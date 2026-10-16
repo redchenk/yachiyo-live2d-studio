@@ -1,0 +1,139 @@
+import { app, BrowserWindow } from 'electron';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import assert from 'node:assert/strict';
+import { startDesktopServer } from './server.mjs';
+
+const root = path.resolve(import.meta.dirname, '../..');
+const output = path.join(root, 'output/singing');
+const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'yachiyo-singing-'));
+fs.mkdirSync(output, { recursive: true });
+app.setPath('userData', path.join(temp, 'profile'));
+const wav = Buffer.alloc(44 + 16000 * 2 * 30);
+wav.write('RIFF'); wav.writeUInt32LE(wav.length - 8, 4); wav.write('WAVEfmt ', 8);
+wav.writeUInt32LE(16, 16); wav.writeUInt16LE(1, 20); wav.writeUInt16LE(1, 22);
+wav.writeUInt32LE(16000, 24); wav.writeUInt32LE(32000, 28); wav.writeUInt16LE(2, 32); wav.writeUInt16LE(16, 34);
+wav.write('data', 36); wav.writeUInt32LE(wav.length - 44, 40);
+for (let i = 0; i < 16000 * 30; i++) wav.writeInt16LE(Math.round(Math.sin(i / 16000 * Math.PI * 2 * 220) * 9000), 44 + i * 2);
+
+app.whenReady().then(async () => {
+  const runtime = await startDesktopServer({ resourceRoot: root, dataDir: temp, services: {}, port: 0 });
+  const win = new BrowserWindow({ width: 1440, height: 900, show: true, webPreferences: { preload: path.join(root, 'tools/desktop/preload.cjs'), sandbox: true, contextIsolation: true, nodeIntegration: false, backgroundThrottling: false } });
+  win.webContents.setAudioMuted(true);
+  win.webContents.session.webRequest.onBeforeRequest((details, callback) => callback({ cancel: /^https?:/.test(details.url) && new URL(details.url).origin !== runtime.origin }));
+  const errors = [];
+  win.webContents.on('console-message', event => { if (event.level === 'error') errors.push(event.message); });
+  const js = code => win.webContents.executeJavaScript(`{${code}\n}`, true);
+  const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+  async function waitFor(code, message, timeout = 10_000) {
+    const until = Date.now() + timeout;
+    while (Date.now() < until) { if (await js(code)) return; await delay(100); }
+    throw new Error(message);
+  }
+  const click = selector => js(`document.querySelector(${JSON.stringify(selector)}).click()`);
+  const scene = name => js(`document.querySelectorAll('.live2d-scene-switcher button')[${({ singing: 0, chat: 1, game: 2 })[name]}].click()`);
+  const shot = async name => { await delay(150); fs.writeFileSync(path.join(output, name + '.png'), (await win.webContents.capturePage()).toPNG()); };
+  const status = () => js(`document.querySelector('.rvc-stage-player')?.dataset.status`);
+  try {
+    await win.loadURL(runtime.origin + '/live2d-studio/');
+    await js(`localStorage.setItem('roomLLMSettings', JSON.stringify({ provider:'deepseek', apiKey:'fixture-only', model:'deepseek-flash', useProxy:true }));
+      localStorage.setItem('roomMemorySettings', JSON.stringify({enabled:false}));
+      localStorage.setItem('roomVisionSettings', JSON.stringify({enabled:false}));
+      localStorage.setItem('roomBilibiliDanmakuSettings', JSON.stringify({enabled:true, roomId:'123', autoConnect:false, autoForward:true, readAloud:true, autoStartDirector:true}));`);
+    await win.loadURL(runtime.origin + '/live2d-studio/');
+    await waitFor(`!!document.querySelector('#live2d-container canvas') && !document.querySelector('.live2d-loading')`, 'Cubism did not load', 25_000);
+    await js(`window.__sing = { calls: [], mouths: [], offset:0, stall:false };
+      const now = Date.now; Date.now = () => now() + __sing.offset;
+      window.addEventListener('tsukuyomi:live2d-mouth', e => { __sing.mouths.push(e.detail.value); if (__sing.mouths.length > 500) __sing.mouths.shift(); });
+      const nativeFetch = window.fetch.bind(window);
+      window.fetch = async (input, options={}) => {
+        const url = new URL(typeof input === 'string' ? input : input.url, location.href);
+        if (url.pathname.startsWith('/api/chat') || url.pathname === '/api/tts') {
+          const body = JSON.parse(options.body || '{}'); __sing.calls.push({ path:url.pathname, message:body.message || '' });
+          if (__sing.stall) return new Promise((resolve,reject) => options.signal.addEventListener('abort', () => reject(new DOMException('cancelled','AbortError')), {once:true}));
+          if (url.pathname === '/api/tts') throw new Error('Singing must not invoke TTS');
+          return Response.json({ success:true, data:{ reply:JSON.stringify({ reply:'こんにちは。',caption:'今天也一起开心聊聊吧。',emotion:'happy',actions:[],music:null,minecraft:null }) } });
+        }
+        return nativeFetch(input,options);
+      }; true;`);
+    if (await js(`!!document.querySelector('.studio-settings-panel')`)) await click('.studio-settings-header button');
+    await scene('singing');
+    await js(`const data = new DataTransfer(); const bytes = Uint8Array.from(atob(${JSON.stringify(wav.toString('base64'))}), c => c.charCodeAt(0));
+      data.items.add(new File([bytes],'八千代 · 星の歌.wav',{type:'audio/wav'})); data.items.add(new File([bytes],'春の歌.wav',{type:'audio/wav'}));
+      const input = document.querySelector('.rvc-file-input'); input.files = data.files; input.dispatchEvent(new Event('change',{bubbles:true}));`);
+    await waitFor(`document.querySelectorAll('.rvc-track-list li').length === 2`, 'multi-file import failed');
+    await click('.rvc-track-play');
+    await waitFor(`document.querySelector('.rvc-stage-player')?.dataset.status === 'playing'`, 'real WAV did not play');
+    await waitFor(`__sing.mouths.some(value => value > 0.1)`, 'audio analyser did not drive mouth');
+    await click('[aria-label="暂停演唱"]'); await delay(150);
+    assert.equal(await status(), 'paused'); assert.equal(await js('__sing.mouths.at(-1)'), 0);
+    await js(`const seek = document.querySelector('[aria-label="歌曲进度"]'); seek.value='10'; seek.dispatchEvent(new Event('input',{bubbles:true}));`);
+    await click('[aria-label="播放歌曲"]');
+    await waitFor(`document.querySelector('.rvc-stage-player')?.dataset.status === 'playing'`, 'resume failed');
+    assert.match(await js(`document.querySelector('.rvc-stage-song small').textContent`), /0:1\d/);
+    await shot('singing-expanded');
+    const initialWidth = await js(`document.querySelector('.live2d-stage').getBoundingClientRect().width`);
+    await click('.live2d-controls-toggle'); await delay(100);
+    assert.ok(await js(`document.querySelector('.live2d-stage').getBoundingClientRect().width`) > initialWidth + 250);
+    assert.equal(await js(`getComputedStyle(document.querySelector('.live2d-control-panel')).display`), 'none');
+    assert.equal(await status(), 'playing', 'folding must preserve playback');
+    await shot('singing-collapsed');
+    win.setContentSize(960, 720); await delay(150); await shot('singing-960');
+    win.setContentSize(720, 900); await delay(150);
+    assert.ok(await js(`innerHeight - document.querySelector('.live2d-stage').getBoundingClientRect().bottom < 20`));
+    await shot('singing-720');
+    win.setContentSize(1440, 900); await click('.live2d-controls-toggle');
+    await scene('chat'); assert.equal(await js('__sing.mouths.at(-1)'), 0);
+    await js(`document.querySelector('.live2d-switch input').checked=false; document.querySelector('.live2d-switch input').dispatchEvent(new Event('change',{bubbles:true}));
+      const input=document.querySelector('[aria-label="直播时长（分钟）"]'); input.value='1'; input.dispatchEvent(new Event('input',{bubbles:true})); input.dispatchEvent(new Event('change',{bubbles:true})); __sing.stall=true;`);
+    await click('.live2d-primary-actions .live2d-run-btn');
+    await waitFor(`__sing.calls.length > 0`, 'live director did not start');
+    await scene('singing'); await click('.rvc-track-play');
+    await waitFor(`document.querySelector('.rvc-stage-player')?.dataset.status === 'playing'`, 'live singing failed');
+    const count = await js('__sing.calls.length');
+    await js(`window.dispatchEvent(new CustomEvent('tsukuyomi:bilibili-danmaku',{detail:{id:'singing-message',type:'danmu',userName:'听众',text:'请点歌并回复我',timestamp:Date.now()}}));`);
+    await delay(500); assert.equal(await js('__sing.calls.length'), count, 'singing started LLM/TTS');
+    assert.equal(await js(`document.querySelector('.live2d-page').dataset.liveState`), 'on', 'song must preserve live clock');
+    await js('__sing.stall=false; __sing.offset += 40_000');
+    await waitFor(`document.querySelector('.live2d-stream-clock')?.dataset.phase === 'closing'`, 'clock paused while singing');
+    assert.equal(await status(), 'playing', 'closing interrupted the current song');
+    // End current song: no next song starts once it is time to close the stream.
+    await click('.rvc-auto-next input');
+    await js(`const seek=document.querySelector('[aria-label="歌曲进度"]'); seek.value='29.8'; seek.dispatchEvent(new Event('input',{bubbles:true}));`);
+    await waitFor(`document.querySelector('.live2d-page').dataset.broadcastScene === 'chat'`, 'song end did not begin closing');
+    await waitFor(`__sing.calls.some(x=>x.message.includes('Begin that transition now'))`, 'closing cue missing');
+    await scene('singing'); await click('.rvc-track-play');
+    await waitFor(`document.querySelector('.rvc-stage-player')?.dataset.status === 'playing'`, 'second song did not start');
+    await js('__sing.offset += 20_000');
+    await waitFor(`document.querySelector('.live2d-page').dataset.liveState === 'off'`, 'deadline did not stop show');
+    assert.equal(await js(`document.querySelector('.live2d-page').dataset.broadcastScene`), 'chat');
+    assert.ok(await js(`__sing.calls.some(x=>x.message.includes('final thank-you and goodbye'))`));
+    await scene('singing');
+    await js(`const input=document.querySelector('.rvc-auto-next input'); input.checked=true; input.dispatchEvent(new Event('change',{bubbles:true}));`);
+    await click('.rvc-track-play');
+    await waitFor(`document.querySelector('.rvc-stage-player')?.dataset.status === 'playing'`, 'playlist did not restart');
+    await js(`const seek=document.querySelector('[aria-label="歌曲进度"]'); seek.value='29.8'; seek.dispatchEvent(new Event('input',{bubbles:true}));`);
+    await waitFor(`document.querySelector('.rvc-stage-song strong')?.textContent === '春の歌.wav'`, 'sequential playback failed');
+    await waitFor(`Number(document.querySelector('[aria-label="歌曲进度"]').max) === 30`, 'second song metadata missing');
+    await js(`const seek=document.querySelector('[aria-label="歌曲进度"]'); seek.value='29.8'; seek.dispatchEvent(new Event('input',{bubbles:true}));`);
+    await waitFor(`document.querySelector('.rvc-stage-player')?.dataset.status === 'ended'`, 'playlist did not stop at last song');
+    assert.equal(await js('__sing.mouths.at(-1)'), 0);
+    await click('.live2d-controls-toggle');
+    await win.loadURL(runtime.origin + '/live2d-studio/');
+    await waitFor(`document.querySelectorAll('.rvc-track-list li').length === 2`, 'song library not restored');
+    assert.equal(await status(), 'idle', 'reload must not autoplay');
+    assert.equal(await js(`document.querySelector('.live2d-page').classList.contains('is-controls-collapsed')`), true);
+    await click('.live2d-controls-toggle');
+    await click('.rvc-track-list li .live2d-icon-btn');
+    await waitFor(`document.querySelectorAll('.rvc-track-list li').length === 1`, 'remove track failed');
+    const report = { passed:true, realCubism:true, realAudio:true, audibleOutputMuted:true, checks:['import two local files', 'analyser mouth movement', 'pause/seek/resume', 'fold preserves audio', '1440/960/720 layouts', 'mode switch cancels pending LLM', 'singing blocks danmaku/LLM/TTS', 'clock continues', 'finish song then closing cue', 'deadline stops song then farewell', 'sequential playback', 'library/collapse survive reload without autoplay', 'remove library copy'], consoleErrors:errors };
+    fs.writeFileSync(path.join(output,'verification.json'), JSON.stringify(report,null,2));
+    fs.rmSync(path.join(output,'error.json'), {force:true}); fs.rmSync(path.join(output,'failure.png'), {force:true});
+    console.log(JSON.stringify(report));
+  } catch (error) {
+    await shot('failure').catch(()=>{});
+    fs.writeFileSync(path.join(output,'error.json'),JSON.stringify({error:error.stack,errors,state:await js(`({text:document.body.innerText.slice(-5000),fixture:window.__sing})`).catch(()=>null)},null,2));
+    console.error(error); process.exitCode=1;
+  } finally { win.destroy(); await runtime.close(); fs.rmSync(temp,{recursive:true,force:true}); app.exit(process.exitCode || 0); }
+}).catch(error=>{console.error(error);app.exit(1);});

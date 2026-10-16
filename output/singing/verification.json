@@ -1,0 +1,22 @@
+{
+  "passed": true,
+  "realCubism": true,
+  "realAudio": true,
+  "audibleOutputMuted": true,
+  "checks": [
+    "import two local files",
+    "analyser mouth movement",
+    "pause/seek/resume",
+    "fold preserves audio",
+    "1440/960/720 layouts",
+    "mode switch cancels pending LLM",
+    "singing blocks danmaku/LLM/TTS",
+    "clock continues",
+    "finish song then closing cue",
+    "deadline stops song then farewell",
+    "sequential playback",
+    "library/collapse survive reload without autoplay",
+    "remove library copy"
+  ],
+  "consoleErrors": []
+}

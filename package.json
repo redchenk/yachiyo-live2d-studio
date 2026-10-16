@@ -1,6 +1,6 @@
 {
   "name": "yachiyo-live2d-studio",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "private": true,
   "description": "Standalone Live2D Studio for Yachiyo AI VTuber tests.",
   "type": "module",

@@ -33,6 +33,9 @@ try {
   assert.equal(writeLive2DBroadcastScene('chat', { storage, eventTarget }), 'chat');
   assert.equal(storage.getItem('yachiyo:live2d:broadcastScene'), 'chat');
   assert.equal(changedScene, 'chat');
+  assert.equal(writeLive2DBroadcastScene('singing', { storage, eventTarget }), 'singing');
+  assert.equal(readLive2DBroadcastScene(storage), 'singing');
+  assert.equal(changedScene, 'singing');
 
   const [pageSource, sceneStyles] = await Promise.all([
     readFile('src/frontend/pages/Live2DPage.vue', 'utf8'),

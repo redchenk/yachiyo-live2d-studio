@@ -1,7 +1,7 @@
 export const LIVE2D_BROADCAST_SCENE_STORAGE_KEY = 'yachiyo:live2d:broadcastScene';
 export const LIVE2D_BROADCAST_SCENE_EVENT = 'tsukuyomi:live2d-broadcast-scene';
 
-const BROADCAST_SCENES = new Set(['chat', 'game']);
+const BROADCAST_SCENES = new Set(['chat', 'game', 'singing']);
 
 function browserStorage() {
   try {

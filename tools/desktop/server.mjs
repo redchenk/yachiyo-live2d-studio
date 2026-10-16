@@ -5,6 +5,7 @@ import { studioAssetPlugin } from './studio-assets.mjs';
 import { buildChatRequest, chatReply } from './chat.mjs';
 import { json, readJson, requestSignal, serveFile, streamResponse } from './http.mjs';
 import { createMusicAdapter } from './music.mjs';
+import { createRvcLibrary } from './rvc.mjs';
 import { buildTtsRequest, audioBase64 } from './tts.mjs';
 
 export async function startDesktopServer({ resourceRoot, dataDir, services, port = 3289, vision = async () => ({ success: true, enabled: false }), fetchImpl = fetch }) {
@@ -23,6 +24,7 @@ export async function startDesktopServer({ resourceRoot, dataDir, services, port
   let assets;
   studioAssetPlugin({ repoRoot: resourceRoot, itemRoot }).configureServer({ middlewares: { use(fn) { assets = fn; } } });
   const music = createMusicAdapter(dataDir);
+  const rvc = createRvcLibrary(dataDir);
   let origin;
   const server = http.createServer(async (req, res) => {
     let cancellation;
@@ -34,6 +36,7 @@ export async function startDesktopServer({ resourceRoot, dataDir, services, port
       const url = new URL(req.url, origin);
       const route = decodeURIComponent(url.pathname);
       if (route === '/healthz') return json(res, 200, { success: true, service: 'yachiyo-desktop', memory: 'embedded-sqlite', platform: process.platform });
+      if (await rvc(req, res, url)) return;
       if (route.startsWith('/api/') && req.method !== 'GET' && !String(req.headers['content-type']).startsWith('application/json')) {
         return json(res, 415, { success: false, message: 'JSON is required' });
       }

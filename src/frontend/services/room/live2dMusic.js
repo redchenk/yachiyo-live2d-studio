@@ -63,6 +63,33 @@ let musicKitConfigurePromise = null;
 let musicKitConfigureKey = '';
 let playbackTimer = 0;
 let localAudio = null;
+let musicSuspended = false;
+let musicPlaybackEpoch = 0;
+
+export function setLive2DMusicSuspended(suspended) {
+  musicSuspended = Boolean(suspended);
+  musicPlaybackEpoch++;
+  if (!musicSuspended) return;
+  clearPlaybackTimer();
+  localAudio?.pause();
+  try { Promise.resolve(globalThis.window?.MusicKit?.getInstance?.()?.pause?.()).catch(() => {}); } catch { /* MusicKit may not be configured. */ }
+  const current = readLive2DMusicQueueState().current;
+  if (current?.status === 'playing') updateLive2DMusicCurrent({ status: 'paused', pausedAt: Date.now() });
+}
+
+function requireMusicPlayback() {
+  if (musicSuspended) throw new Error('唱歌模式已暂停音乐播放，请先切回聊天或游戏模式。');
+}
+
+async function playWithMusicFocus(audio) {
+  requireMusicPlayback();
+  const epoch = musicPlaybackEpoch;
+  await audio.play();
+  if (musicSuspended || epoch !== musicPlaybackEpoch) {
+    await audio.pause?.();
+    throw new Error('音乐播放已被唱歌模式暂停。');
+  }
+}
 let musicWarmupActive = false;
 let localAudioRecoveryPromise = null;
 let localAudioVolumeTimer = 0;
@@ -750,7 +777,7 @@ function browserPlaybackErrorMessage(error) {
 
 async function playBrowserAudio(audio, detail = {}, provider = '') {
   try {
-    await audio.play();
+    await playWithMusicFocus(audio);
   } catch (error) {
     const message = browserPlaybackErrorMessage(error);
     publishMusicDebug('music-error', {
@@ -1168,7 +1195,7 @@ function startLocalAudioRecovery(provider, failedCurrent) {
 }
 
 export async function warmupLive2DMusicPlayback() {
-  if (typeof window === 'undefined') return false;
+  if (typeof window === 'undefined' || musicSuspended) return false;
   const audio = ensureLocalAudio();
   if (audio.src && !audio.ended) return !audio.paused;
 
@@ -1256,6 +1283,7 @@ function schedulePlaybackTimer(settings) {
 }
 
 async function playAppleMusicCandidate(candidate, music, settings) {
+  requireMusicPlayback();
   const normalizedCandidate = normalizeMusicCandidate(candidate, {
     provider: 'apple-music',
     storefront: settings.storefront
@@ -1274,7 +1302,7 @@ async function playAppleMusicCandidate(candidate, music, settings) {
   } else {
     await music.setQueue({ song: normalizedCandidate.songId, startPlaying: false });
   }
-  await music.play();
+  await playWithMusicFocus(music);
 
   const state = setLive2DMusicCurrent(normalizedCandidate, {
     status: 'playing',
@@ -1298,6 +1326,7 @@ async function playAppleMusicCandidate(candidate, music, settings) {
 }
 
 async function playNextAppleMusic(settings) {
+  requireMusicPlayback();
   const { music, settings: normalizedSettings } = await configureAppleMusic(settings);
   await ensureAuthorized(music, normalizedSettings);
   const { candidate, state } = dequeueNextLive2DMusicCandidate();
@@ -1426,6 +1455,7 @@ async function requestAppleMusic(command, settings) {
 }
 
 async function playLocalMusicCandidate(candidate, settings) {
+  requireMusicPlayback();
   const sourceCandidate = normalizeMusicCandidate(candidate, {
     provider: LOCAL_MUSIC_PROVIDER
   });
@@ -1477,6 +1507,7 @@ async function playLocalMusicCandidate(candidate, settings) {
 }
 
 async function playNextLocalMusic(settings) {
+  requireMusicPlayback();
   resetLocalAudioSource();
   let state = clearLive2DMusicCurrent();
   while (true) {
@@ -1615,6 +1646,7 @@ async function requestLocalMusic(command, settings) {
 
 async function playNeteaseMusicCandidate(candidate, settings) {
   const normalizedCandidate = await resolveNeteasePlayableCandidate(candidate, settings);
+  requireMusicPlayback();
   if (!normalizedCandidate.url) {
     throw new Error('NetEase Cloud Music did not return a playable stream URL.');
   }
@@ -1659,6 +1691,7 @@ async function playNeteaseMusicCandidate(candidate, settings) {
 }
 
 async function playNextNeteaseMusic(settings) {
+  requireMusicPlayback();
   resetLocalAudioSource();
   let state = clearLive2DMusicCurrent();
   while (true) {
@@ -1804,6 +1837,7 @@ export async function unauthorizeLive2DMusic(settings = readRoomMusicSettings())
 export async function executeLive2DMusicCommand(rawCommand, settings = readRoomMusicSettings(), options = {}) {
   let command = normalizeLive2DMusicCommand(rawCommand);
   if (!command) return null;
+  if (musicSuspended && !['pause', 'stop', 'queue', 'clear', 'remove'].includes(command.action)) requireMusicPlayback();
   if (options.playRequestsImmediately && ['play', 'request'].includes(command.action)) {
     command = { ...command, action: 'play_now' };
   }
@@ -1973,7 +2007,7 @@ export async function executeLive2DMusicCommand(rawCommand, settings = readRoomM
     }
     if (command.action === 'resume') {
       await ensureAuthorized(music, normalizedSettings);
-      await music.play();
+      await playWithMusicFocus(music);
       const current = readLive2DMusicQueueState().current;
       if (current) {
         const pausedAt = Number(current.pausedAt) || Date.now();

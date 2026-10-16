@@ -195,6 +195,7 @@ try {
     executeLive2DMusicCommand,
     setLive2DMusicVolume,
     setLive2DMusicSpeechDucking,
+    setLive2DMusicSuspended,
     syncLive2DMusicSpeechDucking,
     warmupLive2DMusicPlayback
   } = await server.ssrLoadModule('/src/frontend/services/room/live2dMusic.js');
@@ -437,6 +438,16 @@ try {
   assert.equal(readLive2DMusicQueueState().current.title, 'Healthy After Search Error');
   assert.equal(playedUrls.at(-1), '/api/music/netease/stream?token=healthy-after-search-error');
   assert.ok(dispatchedEvents.some((event) => event.type === 'tsukuyomi:live2d-music-queue'));
+  const beforeSinging = playedUrls.length;
+  setLive2DMusicSuspended(true);
+  assert.equal(latestAudio.paused, true, 'singing pauses current background music');
+  assert.equal(readLive2DMusicQueueState().current.status, 'paused');
+  await assert.rejects(() => executeLive2DMusicCommand({ action: 'resume', provider: 'netease-cloud' }, settings), /唱歌模式/);
+  await assert.rejects(() => executeLive2DMusicCommand({ action: 'request', query: 'another song', provider: 'netease-cloud' }, settings), /唱歌模式/);
+  latestAudio.ended = true; latestAudio.emit('ended');
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(playedUrls.length, beforeSinging, 'late ended event cannot auto-play another song');
+  setLive2DMusicSuspended(false);
 } finally {
   await server.close();
 }

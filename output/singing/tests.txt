@@ -1,0 +1,42 @@
+✔ TTS adapters preserve streaming Japanese audio and provider-specific auth (1.029584ms)
+✔ chat adapters retain vision and history in both response formats (0.470375ms)
+✔ official DeepSeek Flash streams live replies without the default thinking delay (0.651042ms)
+✔ music resolver skips previews and keeps provider URL behind a local token (2.608916ms)
+✔ CRC agrees with the NSIS oracle and detects payload corruption (2.615709ms)
+✔ WriteUninstaller applies resource patches and retains the ORIGINAL embedded CRC (2.091708ms)
+✔ unknown patches and disabled integrity checks fail instead of rewriting CRC (1.778084ms)
+✔ real makensis fixture reproduces the omitted icon-patch failure (2.289416ms)
+✔ platform data paths are persistent and support explicit portable storage (0.343208ms)
+✔ bundled SQLite preserves records across service restarts without Docker (340.79575ms)
+✔ gateway streams chat before completion, cancels upstream and rejects foreign origins (19.514708ms)
+✔ RVC library persists imports, serves ranges and deletes only its own copy (68.8255ms)
+✔ RVC pause/stop cancels pending resume, releases mouth and keeps one animation loop (1.439291ms)
+✔ managed Milvus migrates once to built-in memory without changing the database (59.056ms)
+WebSocket server error: Port 24678 is already in use
+Broadcast scene switcher checks passed
+✔ tools/live2d-studio/test-broadcast-scene-switcher.mjs (195.662916ms)
+Cubism runtime cadence and single-owner motion checks passed
+Cubism expression hold and reset checks passed
+✔ tools/live2d-studio/test-cubism-runtime-cadence.mjs (49.412375ms)
+live director scheduler checks passed
+✔ tools/live2d-studio/test-live-director-scheduler.mjs (47.48525ms)
+live turn pipeline checks passed
+✔ tools/live2d-studio/test-live-turn-pipeline.mjs (45.570792ms)
+music browser playback checks passed
+✔ tools/live2d-studio/test-music-browser-playback.mjs (212.874208ms)
+✔ settings normalize duration, unlimited mode and closing bounds (1.80125ms)
+✔ closing and farewell fire once at absolute host deadlines (1.155041ms)
+✔ a suspended app resumes at the real deadline without a stale closing cue (0.679291ms)
+✔ unlimited mode cannot spontaneously close (0.083375ms)
+✔ short broadcasts leave time for the opening (0.070167ms)
+✔ stopping and restarting cancel timers and reset the session (0.058625ms)
+✔ trusted closing context guides rather than repeating goodbye or opening topics (0.161875ms)
+✔ clock formats boundaries and nonnegative countdowns (0.047625ms)
+ℹ tests 27
+ℹ suites 0
+ℹ pass 27
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 2847.920208

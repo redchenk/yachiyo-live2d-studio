@@ -2,6 +2,9 @@
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
 import TsIcon from '../components/TsIcon.vue';
 import YachiyoMusicPanel from '../components/music/YachiyoMusicPanel.vue';
+import RvcSingingPanel from '../components/music/RvcSingingPanel.vue';
+import { useRvcSongs } from '../composables/room/useRvcSongs';
+import { formatSongTime } from '../services/room/rvcSongPlayer';
 import { useLive2D } from '../composables/room/useLive2D';
 import {
   clearLive2DLLMHistory,
@@ -47,6 +50,7 @@ import {
   reconcileLive2DMusicCommandWithAudience,
   resolveLive2DMusicRequester as musicRequesterFromAudience,
   setLive2DMusicSpeechDucking,
+  setLive2DMusicSuspended,
   syncLive2DMusicSpeechDucking,
   warmupLive2DMusicPlayback
 } from '../services/room/live2dMusic';
@@ -127,6 +131,19 @@ const audienceQueue = ref([]);
 const showLog = ref([]);
 const messagesExpanded = ref(false);
 const broadcastScene = ref(readLive2DBroadcastScene());
+const isSinging = computed(() => broadcastScene.value === 'singing');
+const controlsCollapsed = ref((() => { try { return localStorage.getItem('yachiyo:studio:controlsCollapsed') === 'true'; } catch { return false; } })());
+function toggleControls() {
+  controlsCollapsed.value = !controlsCollapsed.value;
+  try { localStorage.setItem('yachiyo:studio:controlsCollapsed', String(controlsCollapsed.value)); } catch { /* Storage is optional. */ }
+}
+const songs = useRvcSongs({
+  canPlay: () => isSinging.value && streamScheduleState.value.phase !== 'ending',
+  onPlaybackChange: status => {
+    if (isSinging.value) dispatchCharacterState(status === 'playing' ? 'speaking' : 'idle', { holdMs: 2000, arousal: status === 'playing' ? 0.6 : 0.28 });
+    if (status === 'ended' && liveDirector.running && streamScheduleState.value.phase === 'closing') switchBroadcastScene('chat');
+  }
+});
 const activeControlSection = ref('interaction');
 const activeMotionTab = ref('expression');
 const muted = ref(false);
@@ -251,7 +268,7 @@ const minecraftAutonomyController = createLive2DMinecraftAutonomyController({
   readTaskStatus: readLive2DMinecraftTask,
   plan: requestLive2DMinecraftPlan,
   execute: executeLive2DMinecraftCommand,
-  shouldYield: () => llmState.value.loading || liveLlmRequestCount > 0 || liveTurnsInFlight > 0,
+  shouldYield: () => isSinging.value || llmState.value.loading || liveLlmRequestCount > 0 || liveTurnsInFlight > 0,
   onState: (state) => {
     minecraftAutonomyState.value = state;
     window.dispatchEvent(new CustomEvent('tsukuyomi:minecraft-autonomy-state', { detail: state }));
@@ -684,6 +701,7 @@ const statusLabel = computed(() => {
 
 const liveStateDisplay = computed(() => {
   if (liveDirector.error) return '异常';
+  if (isSinging.value) return songs.active.value ? '演唱中' : '唱歌待机';
   if (liveDirector.running && streamScheduleState.value.phase === 'ending') return '结束中';
   if (liveDirector.running && streamScheduleState.value.phase === 'closing') return '收尾中';
   if (liveDirector.running && liveDirector.status === 'speaking') return '发言中';
@@ -702,12 +720,21 @@ function saveStreamSettings() {
 }
 
 function canHandleLiveAudience() {
-  return liveDirector.running && streamScheduleState.value.phase !== 'ending';
+  return liveDirector.running && !isSinging.value && streamScheduleState.value.phase !== 'ending';
 }
 
 function requestStreamCue(cue) {
   if (!liveDirector.running) return;
   pendingStreamCue = cue;
+  // Keep the live clock running through songs. Hold the closing cue until the
+  // host returns to chat; the hard deadline stops audio before the farewell.
+  if (isSinging.value) {
+    if (cue !== 'farewell' && songs.active.value) return;
+    songs.stop();
+    broadcastScene.value = writeLive2DBroadcastScene('chat');
+    setLive2DMusicSuspended(false);
+    asrRecorder?.setSuppressed(false);
+  }
   liveDirectorScheduler.cancel();
   livePlaybackPrefetchConsumed = true;
   if (cue === 'farewell') {
@@ -1043,7 +1070,7 @@ async function init() {
     onState: (patch) => {
       speechState.value = { ...speechState.value, ...patch };
       syncLive2DMusicSpeechDucking(patch.status);
-      asrRecorder?.setSuppressed?.(patch.status === 'loading' || patch.status === 'playing');
+      asrRecorder?.setSuppressed?.(isSinging.value || patch.status === 'loading' || patch.status === 'playing');
       if (patch.status === 'playing') {
         if (liveDirector.running) liveDirector.status = 'speaking';
       } else if (patch.status === 'idle' || patch.status === 'disabled' || patch.status === 'error') {
@@ -1053,6 +1080,7 @@ async function init() {
         speechCaptionSynchronizer.clear();
       }
       if (streamingSpeechSession?.handleSpeechStatePatch(patch)) return;
+      if (isSinging.value) return;
       if (patch.status === 'loading') {
         dispatchCharacterState('thinking', { holdMs: 1800, attention: 0.78, arousal: 0.46 });
       } else if (patch.status === 'playing') {
@@ -1078,6 +1106,7 @@ async function init() {
     }
   });
   asrRecorder.setInputGain(micGain.value / 100, { persist: false });
+  asrRecorder.setSuppressed(isSinging.value);
   await live2d.init();
   setLocalItemEditorEnabled(true);
   if (itemPanelOpen.value) {
@@ -1199,7 +1228,7 @@ function syncMinecraftAutonomy() {
 }
 
 function speakMinecraftMilestone(decision) {
-  if (!speechPlayer || muted.value || !decision?.voice || !decision?.caption) return;
+  if (isSinging.value || !speechPlayer || muted.value || !decision?.voice || !decision?.caption) return;
   let captionToken = 0;
   speechPlayer.enqueue(decision.voice, {
     queueGroup: 'minecraft-milestone',
@@ -1257,7 +1286,13 @@ function memoryContextForAudience(audienceLines = []) {
 
 async function performLLMAct(message, source = 'manual', options = {}) {
   const value = String(message || '').trim();
-  if (!value || llmState.value.loading) return null;
+  if (isSinging.value || !value || llmState.value.loading) return null;
+  const sessionId = liveDirectorSessionId;
+  const current = options.isCurrent;
+  const controller = options.signal ? null : new AbortController();
+  if (controller) liveDirectorAbortControllers.add(controller);
+  options = { ...options, signal: options.signal || controller.signal,
+    isCurrent: () => !isSinging.value && sessionId === liveDirectorSessionId && (!current || current()) };
   throwIfLiveTurnOperationCancelled(options);
   dispatchCharacterState('thinking', { holdMs: 2400, attention: 0.82, arousal: 0.5 });
   llmState.value = {
@@ -1308,10 +1343,13 @@ async function performLLMAct(message, source = 'manual', options = {}) {
       };
     }
     throw error;
+  } finally {
+    if (controller) liveDirectorAbortControllers.delete(controller);
   }
 }
 
 async function performStreamingLiveTurn(message, options = {}) {
+  const requestSessionId = liveDirectorSessionId;
   const value = String(message || '').trim();
   if (
     !value ||
@@ -1709,7 +1747,7 @@ async function performStreamingLiveTurn(message, options = {}) {
     }
     throw error;
   } finally {
-    liveLlmRequestCount = Math.max(0, liveLlmRequestCount - 1);
+    if (requestSessionId === liveDirectorSessionId) liveLlmRequestCount = Math.max(0, liveLlmRequestCount - 1);
     if (isLiveTurnOperationCurrent(options)) {
       llmState.value = {
         ...llmState.value,
@@ -1786,6 +1824,7 @@ function buildLiveDirectorPrompt(audienceLines, options = {}) {
 
 function scheduleLivePlaybackPrefetch() {
   if (
+    isSinging.value ||
     livePlaybackPrefetchConsumed ||
     !livePlaybackPrefetchBarrier ||
     !liveDirector.running ||
@@ -1808,7 +1847,7 @@ function openLivePlaybackPrefetchWindow(enqueueAfter) {
 }
 
 function handleLivePlaybackIdle() {
-  if (!liveDirector.running || liveTurnsInFlight > 0 || liveTurnPipeline.pendingPlaybackCount() > 0) return;
+  if (isSinging.value || !liveDirector.running || liveTurnsInFlight > 0 || liveTurnPipeline.pendingPlaybackCount() > 0) return;
   if (pendingStreamCue) {
     liveDirectorScheduler.schedule(0);
     return;
@@ -1826,6 +1865,7 @@ async function runLiveTurn(trigger = {}) {
   streamSchedule.tick();
   const playbackPrefetch = trigger?.reason === 'playback-prefetch';
   if (
+    isSinging.value ||
     !liveDirector.running ||
     (streamScheduleState.value.phase === 'ending' && !pendingStreamCue) ||
     !liveTurnPipeline.canStartGeneration() ||
@@ -2004,7 +2044,7 @@ async function runLiveTurn(trigger = {}) {
     }
   } finally {
     settleGenerationBarrier?.();
-    liveTurnsInFlight = Math.max(0, liveTurnsInFlight - 1);
+    if (turnSessionId === liveDirectorSessionId) liveTurnsInFlight = Math.max(0, liveTurnsInFlight - 1);
     liveDirectorAbortControllers.delete(turnAbortController);
     if (streamCue === 'farewell' && isCurrentTurn() && !pendingStreamCue) {
       stopLiveDirector({ completed: true });
@@ -2026,7 +2066,7 @@ async function runLiveTurn(trigger = {}) {
 function startLiveDirector() {
   if (liveDirector.running) return;
   liveDirectorSessionId += 1;
-  speechPlayer?.warmup?.();
+  if (!isSinging.value) speechPlayer?.warmup?.();
   warmupLive2DMusicPlayback().catch(() => {});
   liveDirector.running = true;
   liveDirector.status = 'starting';
@@ -2051,6 +2091,14 @@ function stopLiveDirector({ completed = false } = {}) {
   pendingStreamCue = '';
   window.clearTimeout(streamEndingTimeout);
   streamEndingTimeout = 0;
+  songs.stop();
+  cancelLiveConversation();
+  dispatchCharacterState('idle', { holdMs: 1200, attention: 0.32, arousal: 0.28 });
+  if (wasRunning) emitLiveReplyTelemetry({ stage: 'director-stop', source: 'live' });
+  if (wasRunning) pushLog('system', completed ? '本场直播已按时收尾，AI 主播已停止。' : '直播已停止。');
+}
+
+function cancelLiveConversation() {
   window.clearTimeout(bilibiliBatchTimer);
   bilibiliBatchTimer = 0;
   bilibiliPendingMessages = [];
@@ -2072,9 +2120,6 @@ function stopLiveDirector({ completed = false } = {}) {
     loading: false,
     error: ''
   };
-  dispatchCharacterState('idle', { holdMs: 1200, attention: 0.32, arousal: 0.28 });
-  if (wasRunning) emitLiveReplyTelemetry({ stage: 'director-stop', source: 'live' });
-  if (wasRunning) pushLog('system', completed ? '本场直播已按时收尾，AI 主播已停止。' : '直播已停止。');
 }
 
 function routeAudienceMusicRequest(text, meta = {}, audienceEntry = null) {
@@ -2157,7 +2202,20 @@ async function toggleAudienceAsr() {
 }
 
 function switchBroadcastScene(scene) {
+  if (scene === broadcastScene.value || streamScheduleState.value.phase === 'ending') return;
   broadcastScene.value = writeLive2DBroadcastScene(scene);
+  setLive2DMusicSuspended(isSinging.value);
+  if (isSinging.value) {
+    liveDirectorSessionId++;
+    cancelLiveConversation();
+    liveDirector.status = 'idle';
+    asrRecorder?.setSuppressed(true);
+    pushLog('system', '已进入唱歌模式，自动互动暂停。直播计时继续，到时会停止歌曲并告别。');
+  } else {
+    songs.stop();
+    asrRecorder?.setSuppressed(false);
+    handleLivePlaybackIdle();
+  }
 }
 
 async function toggleContinuousAudienceAsr() {
@@ -2397,6 +2455,7 @@ watch(() => props.itemEditorOpen, (open) => {
 });
 
 onMounted(() => {
+  setLive2DMusicSuspended(isSinging.value);
   window.addEventListener(SETTINGS_SAVED_EVENT, handleStudioSettingsSaved);
   window.addEventListener(ROOM_LIVE2D_DEBUG_EVENT, handleLive2DDebugEvent);
   window.addEventListener(BILIBILI_DANMAKU_EVENT, handleBilibiliDanmakuEvent);
@@ -2410,6 +2469,7 @@ onMounted(() => {
 });
 
 onUnmounted(() => {
+  setLive2DMusicSuspended(false);
   window.removeEventListener(SETTINGS_SAVED_EVENT, handleStudioSettingsSaved);
   window.removeEventListener(ROOM_LIVE2D_DEBUG_EVENT, handleLive2DDebugEvent);
   window.removeEventListener(BILIBILI_DANMAKU_EVENT, handleBilibiliDanmakuEvent);
@@ -2437,7 +2497,7 @@ onUnmounted(() => {
 <template>
   <main
     class="live2d-page"
-    :class="{ 'model-hidden': modelHidden, 'model-locked': modelLocked }"
+    :class="{ 'model-hidden': modelHidden, 'model-locked': modelLocked, 'is-controls-collapsed': controlsCollapsed }"
     :data-live-state="liveDirector.running ? 'on' : 'off'"
     :data-broadcast-scene="broadcastScene"
     aria-label="Yachiyo Live2D Studio"
@@ -2448,11 +2508,14 @@ onUnmounted(() => {
         <div class="live2d-stage-title">
           <span class="live2d-stage-dot" :class="{ active: live2d.ready.value }"></span>
           <div>
-            <strong>{{ broadcastScene === 'game' ? '游戏舞台' : (liveDirector.running ? '直播中' : '八千代的春日舞台') }}</strong>
+            <strong>{{ isSinging ? '八千代的歌声' : broadcastScene === 'game' ? '游戏舞台' : (liveDirector.running ? '直播中' : '八千代的春日舞台') }}</strong>
             <small>{{ statusLabel }}</small>
           </div>
         </div>
         <nav class="live2d-scene-switcher" aria-label="直播场景">
+          <button type="button" :class="{ active: isSinging }" :aria-pressed="isSinging ? 'true' : 'false'" @click="switchBroadcastScene('singing')">
+            <TsIcon name="music" :size="15" /><span>唱歌模式</span>
+          </button>
           <button
             type="button"
             :class="{ active: broadcastScene === 'chat' }"
@@ -2473,6 +2536,9 @@ onUnmounted(() => {
           </button>
         </nav>
         <div class="live2d-stage-actions">
+          <button class="live2d-icon-btn live2d-controls-toggle" type="button" :title="controlsCollapsed ? '展开右侧控制栏' : '收起右侧控制栏'" :aria-label="controlsCollapsed ? '展开右侧控制栏' : '收起右侧控制栏'" :aria-expanded="!controlsCollapsed" aria-controls="live2d-controls" @click="toggleControls">
+            <TsIcon :name="controlsCollapsed ? 'chevron-left' : 'chevron-right'" :size="18" />
+          </button>
           <button class="live2d-icon-btn" type="button" title="刷新模型状态" aria-label="刷新模型状态" @click="runGreeting">
             <TsIcon name="refresh" :size="18" />
           </button>
@@ -2487,7 +2553,7 @@ onUnmounted(() => {
         class="live2d-model"
         :class="{ hidden: modelHidden, locked: modelLocked, dragging: modelViewport.dragging }"
         :data-item-editor="itemPanelOpen ? 'true' : undefined"
-        :data-speaking="speechState.status === 'playing' ? 'true' : undefined"
+        :data-speaking="speechState.status === 'playing' || songs.state.status === 'playing' ? 'true' : undefined"
         title="拖动模型，滚轮缩放"
         @dragover="dragOverLocalItem"
         @drop="dropLocalItemOnModel"
@@ -2502,7 +2568,15 @@ onUnmounted(() => {
       <div v-if="live2d.error.value" class="live2d-error" role="alert">{{ live2d.error.value }}</div>
 
       <section class="live2d-broadcast-hud" aria-label="Broadcast captions">
-        <div class="live2d-caption">
+        <div v-if="isSinging" class="rvc-stage-player" :data-status="songs.state.status">
+          <TsIcon name="music" :size="22" />
+          <div class="rvc-stage-song"><strong>{{ songs.state.track?.name || '八千代的歌单' }}</strong>
+            <small>{{ songs.state.error || (songs.state.track ? `${formatSongTime(songs.state.currentTime)} / ${formatSongTime(songs.state.duration)}` : '在右侧导入已完成 RVC 推理的歌曲') }}</small></div>
+          <button type="button" class="live2d-icon-btn" :disabled="!songs.tracks.value.length" :aria-label="songs.active.value ? '暂停演唱' : '播放歌曲'" @click="songs.toggle"><TsIcon :name="songs.active.value ? 'pause' : 'play'" :size="20" /></button>
+          <button type="button" class="live2d-mini-btn" :disabled="!songs.state.track" @click="songs.stop">停止</button>
+          <button type="button" class="live2d-mini-btn" :disabled="!songs.hasNext.value" @click="songs.next">下一首</button>
+        </div>
+        <div v-else class="live2d-caption">
           <header class="live2d-caption-head">
             <span>当前发言</span>
             <button
@@ -2663,11 +2737,11 @@ onUnmounted(() => {
       </section>
     </aside>
 
-    <aside class="live2d-control-panel" aria-label="Live controls">
+    <aside id="live2d-controls" v-show="!controlsCollapsed" class="live2d-control-panel" aria-label="Live controls">
       <header class="live2d-panel-header">
         <div class="live2d-status-orb" :class="{ ready: live2d.ready.value, error: live2d.error.value }"></div>
         <div class="live2d-status-copy" role="status" aria-live="polite" aria-atomic="true">
-          <span>AI 主播控制台</span>
+          <span>{{ isSinging ? 'RVC 演唱控制台' : 'AI 主播控制台' }}</span>
           <strong>{{ liveStateDisplay }}</strong>
           <small>{{ readinessDisplay }}</small>
         </div>
@@ -2699,6 +2773,9 @@ onUnmounted(() => {
             <span>自动语音</span>
           </label>
         </div>
+        <details class="live2d-session-options" :open="!isSinging">
+        <summary :hidden="!isSinging">直播时长与主题</summary>
+        <div>
         <label class="live2d-topic-field">
           <span>直播标题</span>
           <small>{{ liveTopic.length }}/80</small>
@@ -2726,6 +2803,8 @@ onUnmounted(() => {
         <p v-else class="live2d-stream-hint">{{ streamScheduleState.phase === 'ended'
           ? `本场已结束 · 共播 ${streamElapsedDisplay}`
           : '点击开始后才回应弹幕 · 时长 0 为不限时' }}</p>
+        </div>
+        </details>
         <p v-if="liveDirector.error || speechState.error || asrState.error" class="live2d-inline-error">
           {{ liveDirector.error || speechState.error || asrState.error }}
         </p>
@@ -2738,7 +2817,8 @@ onUnmounted(() => {
         </p>
       </section>
 
-      <nav class="live2d-workspace-tabs" aria-label="直播工具">
+      <div v-if="isSinging" class="rvc-mode-notice">{{ liveDirector.running ? '自动互动已暂停 · 直播计时继续' : '可直接播放歌曲 · 尚未开始直播计时' }}</div>
+      <nav v-else class="live2d-workspace-tabs" aria-label="直播工具">
         <button
           type="button"
           :class="{ active: activeControlSection === 'interaction' }"
@@ -2769,7 +2849,8 @@ onUnmounted(() => {
       </nav>
 
       <div class="live2d-workspace">
-        <section v-if="activeControlSection === 'interaction'" class="live2d-interaction-panel" aria-label="观众互动">
+        <RvcSingingPanel v-if="isSinging" :songs="songs" />
+        <section v-else-if="activeControlSection === 'interaction'" class="live2d-interaction-panel" aria-label="观众互动">
           <header class="live2d-section-heading">
             <div>
               <strong>实时互动</strong>

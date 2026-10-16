@@ -56,8 +56,8 @@ input, select, textarea { accent-color: var(--spring-rose); color-scheme: light;
 .live2d-stage-title strong { color: #493a53; font-size: 13px; letter-spacing: .02em; }
 .live2d-stage-title small { color: #626e84; }
 .live2d-stage-dot, .live2d-stage-dot.active { box-shadow: none; }
-.live2d-scene-switcher { gap: 3px; padding: 3px; border: 0; border-radius: 999px; background: #f6f0f5; }
-.live2d-scene-switcher button { color: #78647a; font-size: 11px; border: 0; border-radius: 999px; background: none; padding: 6px 9px; }
+.live2d-scene-switcher { position: static; transform: none; grid-template-columns: repeat(3, auto); gap: 3px; padding: 3px; border: 0; border-radius: 999px; background: #f6f0f5; }
+.live2d-scene-switcher button { min-width: 0; white-space: nowrap; color: #78647a; font-size: 11px; border: 0; border-radius: 999px; background: none; padding: 6px 9px; }
 .live2d-scene-switcher button.active { color: #923d5b; background: #fff; box-shadow: 0 2px 6px rgb(75 48 71 / 7%); }
 .live2d-model { left: 50%; bottom: -15px; width: min(90%, 720px); height: calc(100% - 68px); }
 .live2d-model::before { display: none; }
@@ -170,4 +170,38 @@ input, select, textarea { accent-color: var(--spring-rose); color-scheme: light;
 }
 @media (prefers-reduced-motion: reduce) {
   .studio-app-shell *, .studio-app-shell *::before, .studio-app-shell *::after { scroll-behavior: auto; transition-duration: 0s !important; }
+}
+.live2d-page.is-controls-collapsed .live2d-stage { right: 18px; }
+.rvc-panel { display: grid; gap: 12px; min-width: 0; padding: 12px; }
+.rvc-panel .live2d-section-heading { flex-wrap: wrap; gap: 8px; }
+.rvc-file-input { display: none; }
+.rvc-hint, .rvc-empty { margin: 0; color: #796b7c; font-size: 11px; line-height: 1.7; }
+.rvc-now-playing { display: grid; gap: 8px; padding: 14px; background: #fff5f8; border: 1px solid #f1dae4; border-radius: 14px; }
+.rvc-now-playing > span { font-size: 10px; color: #a57084; }
+.rvc-now-playing > strong { font-size: 13px; overflow-wrap: anywhere; }
+.rvc-panel input[type=range] { width: 100%; accent-color: #d76c94; margin: 0; }
+.rvc-times, .rvc-playback-actions, .rvc-stage-player { display: flex; align-items: center; gap: 10px; }
+.rvc-times { justify-content: space-between; color: #907684; font-size: 10px; font-variant-numeric: tabular-nums; }
+.rvc-playback-actions .live2d-action-btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 34px; padding: 6px 13px; border: 1px solid #e3b0c3; border-radius: 10px; color: #984461; background: #fff; font: inherit; font-size: 12px; cursor: pointer; }
+.rvc-panel button:disabled, .rvc-stage-player button:disabled { cursor: default; opacity: .45; }
+.rvc-volume { display: grid; grid-template-columns: 76px minmax(0, 1fr); align-items: center; gap: 8px; font-size: 11px; }
+.rvc-auto-next { display: flex; align-items: center; gap: 6px; font-size: 11px; color: #796b7c; }
+.rvc-track-list { display: grid; gap: 6px; list-style: none; padding: 0; margin: 0; }
+.rvc-track-list li { display: flex; align-items: center; gap: 4px; padding: 5px; border: 1px solid #eee6ed; border-radius: 11px; }
+.rvc-track-list li.active { border-color: #e9a7c0; background: #fff2f7; }
+.rvc-track-play { display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0; padding: 6px; border: 0; background: transparent; color: inherit; text-align: left; cursor: pointer; }
+.rvc-track-play span { min-width: 0; overflow-wrap: anywhere; font-size: 12px; }
+.rvc-track-play small { display: block; color: #9b8795; font-size: 10px; margin-top: 4px; }
+.rvc-stage-player { min-width: 0; padding: 14px 16px; border: 1px solid #f0dce6; border-radius: 16px; background: rgb(255 250 252 / 94%); box-shadow: 0 8px 28px rgb(114 62 86 / 8%); }
+.rvc-stage-song { flex: 1; min-width: 0; }
+.rvc-stage-song strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; }
+.rvc-stage-song small { display: block; margin-top: 4px; color: #987889; font-size: 11px; }
+.rvc-mode-notice { color: #9d5774; background: #fff2f7; border-radius: 9px; padding: 10px; font-size: 11px; }
+.live2d-session-options summary { color: #9d5774; cursor: pointer; font-size: 11px; }
+.live2d-session-options > div { display: grid; gap: 10px; }
+.live2d-session-options summary + div { margin-top: 8px; }
+.live2d-session-options summary[hidden] + div { margin-top: 0; }
+@media (max-width: 760px) {
+  .live2d-page.is-controls-collapsed .live2d-stage { right: 12px; bottom: 12px; }
+  .rvc-stage-player { gap: 6px; padding: 10px; }
 }
