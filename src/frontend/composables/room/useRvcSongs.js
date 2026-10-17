@@ -1,9 +1,11 @@
 import { computed, onMounted, onUnmounted, reactive, ref } from 'vue';
 import { createRvcSongPlayer } from '../../services/room/rvcSongPlayer';
+import { analyseVocalFile } from '../../services/room/rvcVocalTimeline';
 
 export function useRvcSongs({ canPlay, onPlaybackChange = () => {} }) {
   const tracks = ref([]), importing = ref(false), libraryError = ref('');
   const autoNext = ref(false);
+  const mouthBusy = ref('');
   const state = reactive({ status: 'idle', track: null, duration: 0, currentTime: 0, volume: 0.8, error: '' });
   const player = createRvcSongPlayer({
     onState(patch) {
@@ -40,12 +42,33 @@ export function useRvcSongs({ canPlay, onPlaybackChange = () => {} }) {
     await refresh(); libraryError.value = errors.join('；'); importing.value = false;
   }
   async function remove(track) {
+    if (mouthBusy.value) return;
     try {
       if (state.track?.id === track.id) player.clear();
       await request(`/api/rvc/tracks/${encodeURIComponent(track.id)}`, { method: 'DELETE' });
       await refresh();
     } catch (error) { libraryError.value = error.message; }
   }
+  async function changeMouth(track, method, input) {
+    const body = await request(`/api/rvc/tracks/${encodeURIComponent(track.id)}/mouth`, {
+      method, ...(input ? { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) } : {})
+    });
+    tracks.value = tracks.value.map(item => item.id === track.id ? body.track : item);
+    player.updateMouth(body.track, body.mouth);
+  }
+  async function withMouthUpdate(track, action) {
+    if (mouthBusy.value) return;
+    mouthBusy.value = track.id; libraryError.value = '';
+    try { await action(); } catch (error) { libraryError.value = error.message; }
+    finally { mouthBusy.value = ''; }
+  }
+  function associateVocal(track, file) {
+    return withMouthUpdate(track, async () => changeMouth(track, 'PUT', await analyseVocalFile(file)));
+  }
+  function updateMouthSettings(track, settings) {
+    return withMouthUpdate(track, () => changeMouth(track, 'PATCH', { ...track.mouth, ...settings }));
+  }
+  function clearMouth(track) { return withMouthUpdate(track, () => changeMouth(track, 'DELETE')); }
   function play(track = state.track || tracks.value[0]) { if (canPlay()) return player.play(track); }
   function toggle() { if (active.value) player.pause(); else play(); }
   function next() {
@@ -56,5 +79,6 @@ export function useRvcSongs({ canPlay, onPlaybackChange = () => {} }) {
   onMounted(refresh);
   onUnmounted(() => player.dispose());
   return { tracks, state, active, importing, libraryError, autoNext, hasNext, importFiles, remove, refresh, play, toggle, next,
+    mouthBusy, associateVocal, updateMouthSettings, clearMouth,
     pause: player.pause, stop: player.stop, seek: player.seek, setVolume: player.setVolume };
 }

@@ -197,6 +197,13 @@ input, select, textarea { accent-color: var(--spring-rose); color-scheme: light;
 .rvc-stage-song strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; }
 .rvc-stage-song small { display: block; margin-top: 4px; color: #987889; font-size: 11px; }
 .rvc-mode-notice { color: #9d5774; background: #fff2f7; border-radius: 9px; padding: 10px; font-size: 11px; }
+.rvc-mouth-settings { display: grid; gap: 8px; padding: 12px; border: 1px solid #eddce9; border-radius: 14px; background: #fffafd; }
+.rvc-mouth-heading { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 12px; }
+.rvc-vocal-name { overflow-wrap: anywhere; color: #9d5774; }
+.rvc-mouth-offset { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 11px; }
+.rvc-mouth-offset input { width: 84px; min-width: 0; padding: 6px 8px; border: 1px solid #e5dfeb; border-radius: 8px; background: white; color: inherit; }
+.rvc-mouth-gate { display: grid; gap: 8px; font-size: 11px; }
+.rvc-vocal-link { flex: none; white-space: nowrap; }
 .live2d-session-options summary { color: #9d5774; cursor: pointer; font-size: 11px; }
 .live2d-session-options > div { display: grid; gap: 10px; }
 .live2d-session-options summary + div { margin-top: 8px; }

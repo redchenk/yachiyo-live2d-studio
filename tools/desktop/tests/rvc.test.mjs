@@ -5,6 +5,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { startDesktopServer } from '../server.mjs';
 import { createRvcSongPlayer } from '../../../src/frontend/services/room/rvcSongPlayer.js';
+import { buildVocalTimeline } from '../../../src/frontend/services/room/rvcVocalTimeline.js';
+import { validateMouthTimeline, vocalMouthAt } from '../../../src/shared/rvc-mouth.mjs';
 
 test('RVC library persists imports, serves ranges and deletes only its own copy', async () => {
   const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), 'rvc-library-'));
@@ -50,40 +52,123 @@ test('RVC library persists imports, serves ranges and deletes only its own copy'
   } finally { await server.close(); await fs.rm(dataDir, { recursive: true, force: true }); }
 });
 
-function fixture() {
+function timeline() {
+  return { version: 1, stepMs: 10, duration: 4, vocalName: 'RVC vocals.wav', offsetMs: 0, gateDb: -38,
+    frames: Array.from({ length: 400 }, (_, i) => i >= 100 && i < 200 ? 2000 : 0) };
+}
+
+function fixture(loadMouth = async () => timeline()) {
   class Audio extends EventTarget {
-    paused = true; ended = false; duration = 120; currentTime = 0; plays = 0;
-    play() { this.plays++; this.paused = false; this.dispatchEvent(new Event('playing')); return Promise.resolve(); }
+    paused = true; ended = false; duration = 120; time = 0; plays = 0;
+    get currentTime() { return this.time; }
+    set currentTime(value) { this.dispatchEvent(new Event('seeking')); this.time = value; this.dispatchEvent(new Event('seeked')); }
+    play() { this.plays++; this.paused = false; this.ended = false; this.dispatchEvent(new Event('playing')); return Promise.resolve(); }
     pause() { this.paused = true; this.dispatchEvent(new Event('pause')); }
     removeAttribute() {} load() {}
   }
   const audio = new Audio(); const mouths = []; const frames = new Map(); let frameId = 0, state;
-  const analyser = { fftSize: 0, getFloatTimeDomainData: a => a.fill(0.1), connect() {}, disconnect() {} };
-  const context = { resume: async () => {}, close: async () => {}, createAnalyser: () => analyser, createMediaElementSource: () => ({ connect() {}, disconnect() {} }) };
-  const player = createRvcSongPlayer({ createAudio: () => audio, createContext: () => context, onState: s => { state = s; }, onMouth: n => mouths.push(n),
+  const player = createRvcSongPlayer({ createAudio: () => audio, loadMouth, onState: s => { state = s; }, onMouth: n => mouths.push(n),
     requestFrame: fn => { frames.set(++frameId, fn); return frameId; }, cancelFrame: id => frames.delete(id) });
-  return { audio, context, player, mouths, frames, state: () => state };
+  const tick = () => { const [id, fn] = frames.entries().next().value; frames.delete(id); fn(); };
+  return { audio, player, mouths, frames, tick, state: () => state };
 }
+const track = { id: 'first', name: 'loud mix.wav', mouth: { vocalName: 'RVC vocals.wav' } };
 
-test('RVC pause/stop cancels pending resume, releases mouth and keeps one animation loop', async () => {
-  const f = fixture(); let resume;
-  f.context.resume = () => new Promise(resolve => { resume = resolve; });
-  const pending = f.player.play({ id: 'first', name: 'one.wav' });
-  f.player.stop(); resume(); await pending;
-  assert.equal(f.audio.plays, 0, 'stopped pending context must never play');
-  f.context.resume = async () => {};
-  await f.player.play({ id: 'first', name: 'one.wav' });
-  f.audio.dispatchEvent(new Event('loadedmetadata'));
-  assert.equal(f.state().duration, 120);
-  assert.ok(f.mouths.at(-1) > 0);
+test('vocal envelope respects stereo energy, silent intervals, gate and offset', async () => {
+  const left = Float32Array.from({ length: 4000 }, (_, i) => i >= 1000 && i < 2000 ? 0.2 : 0);
+  const right = left.map(n => -n);
+  let yields = 0;
+  const result = await buildVocalTimeline({ duration: 4, length: 4000, sampleRate: 1000, numberOfChannels: 2,
+    getChannelData: i => i ? right : left }, 'vocals.wav', { yieldControl: async () => { yields++; } });
+  assert.equal(result.frames[120], 2000, 'opposite phase channels must not cancel');
+  assert.ok(yields > 0, 'large analysis yields to animation');
+  assert.equal(vocalMouthAt(result, 0.5), 0);
+  assert.equal(vocalMouthAt(result, 2.5), 0);
+  assert.ok(vocalMouthAt(result, 1.5) > 0.9);
+  assert.equal(vocalMouthAt({ ...result, offsetMs: 1000 }, 1.5), 0);
+  assert.ok(vocalMouthAt({ ...result, offsetMs: 1000 }, 2.5) > 0.9);
+  assert.ok(vocalMouthAt({ ...result, offsetMs: -1000 }, 0.5) > 0.9);
+  const quiet = { ...result, frames: result.frames.map(n => n / 10), gateDb: -20 };
+  assert.equal(vocalMouthAt(quiet, 1.5), 0);
+  assert.equal(vocalMouthAt(result, 4), 0);
+  assert.throws(() => validateMouthTimeline({ ...result, frames: [NaN] }));
+});
+
+test('mixed audio never drives mouth; vocal clock survives volume, seek, pause and switching', async () => {
+  const f = fixture();
+  await f.player.play(track); f.audio.dispatchEvent(new Event('loadedmetadata'));
+  assert.equal(f.mouths.at(-1), 0, 'instrumental intro stays closed');
+  f.player.seek(1.2); f.tick(); assert.ok(f.mouths.at(-1) > 0.9);
+  f.player.setVolume(0); f.tick(); assert.ok(f.mouths.at(-1) > 0.9, 'monitor volume cannot alter timing');
+  f.player.seek(2.5); f.tick(); assert.equal(f.mouths.at(-1), 0, 'instrumental break closes immediately');
+  f.player.seek(1.3); f.player.pause(); assert.equal(f.mouths.at(-1), 0); assert.equal(f.frames.size, 0);
+  await f.player.play(); assert.equal(f.audio.currentTime, 1.3); assert.ok(f.mouths.at(-1) > 0.9);
   assert.equal(f.frames.size, 1);
-  f.player.seek(23); f.player.pause();
-  assert.equal(f.state().currentTime, 23);
-  assert.equal(f.mouths.at(-1), 0); assert.equal(f.frames.size, 0);
-  await f.player.play(); assert.equal(f.audio.currentTime, 23);
-  await f.player.play({ id: 'second', name: 'two.mp3' });
+  await f.player.play(track); assert.equal(f.state().status, 'playing'); assert.equal(f.frames.size, 1);
+  f.audio.dispatchEvent(new Event('waiting'));
+  f.player.updateMouth(track, timeline()); assert.equal(f.mouths.at(-1), 0, 'buffering keeps mouth closed');
+  f.audio.dispatchEvent(new Event('playing')); assert.ok(f.mouths.at(-1) > 0.9);
+  f.player.updateMouth({ ...track, mouth: null }, null); assert.equal(f.mouths.at(-1), 0);
+  await f.player.play({ id: 'second', name: 'instrumental only.wav' }); f.tick();
+  assert.equal(f.mouths.at(-1), 0, 'unconfigured accompaniment must never open mouth');
   assert.match(f.audio.src, /second\/audio$/); assert.equal(f.frames.size, 1);
-  f.player.stop(); assert.equal(f.audio.currentTime, 0);
-  f.player.dispose(); assert.equal(f.frames.size, 0); assert.equal(f.mouths.at(-1), 0);
-  const plays = f.audio.plays; await f.player.play({ id: 'third' }); assert.equal(f.audio.plays, plays);
+  f.player.stop(); assert.equal(f.audio.currentTime, 0); assert.equal(f.frames.size, 0);
+  f.player.dispose(); assert.equal(f.mouths.at(-1), 0);
+  const plays = f.audio.plays; await f.player.play(track); assert.equal(f.audio.plays, plays);
+});
+
+test('stale vocal loads cannot start a stopped song or replace the next song', async () => {
+  const pending = [];
+  const f = fixture(() => new Promise(resolve => pending.push(resolve)));
+  const first = f.player.play(track);
+  f.player.stop(); pending.shift()(timeline()); await first;
+  assert.equal(f.audio.plays, 0);
+  const old = f.player.play(track);
+  await f.player.play({ id: 'second', name: 'accompaniment.wav' });
+  pending.shift()(timeline()); await old;
+  f.audio.currentTime = 1.2; f.tick();
+  assert.equal(f.audio.plays, 1); assert.equal(f.mouths.at(-1), 0);
+  f.player.dispose();
+});
+
+test('corrupt or unavailable mouth data plays safely closed with an actionable error', async () => {
+  for (const load of [async () => { throw new Error('missing'); }, async () => ({ frames: [] })]) {
+    const f = fixture(load); await f.player.play(track);
+    f.audio.currentTime = 1.2; f.tick();
+    assert.equal(f.state().status, 'playing'); assert.equal(f.mouths.at(-1), 0);
+    assert.match(f.state().mouthError, /重新关联/); f.player.dispose();
+  }
+});
+
+test('vocal mouth association persists, validates input and deletes only its own timeline', async () => {
+  const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), 'rvc-mouth-'));
+  const options = { resourceRoot: path.resolve(import.meta.dirname, '../../..'), dataDir, services: {}, port: 0 };
+  let server = await startDesktopServer(options);
+  const request = (route, method = 'GET', body, extra = {}) => fetch(server.origin + route, { method,
+    headers: { 'Content-Type': 'application/json', ...extra }, ...(body ? { body: JSON.stringify(body) } : {}) });
+  try {
+    const imported = await fetch(server.origin + '/api/rvc/tracks?name=mix.wav', { method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: 'fixture' });
+    const { track } = await imported.json(); const route = `/api/rvc/tracks/${track.id}/mouth`;
+    assert.equal((await request(route, 'PUT', timeline(), { Origin: 'https://foreign.example' })).status, 403);
+    for (const bad of [{ ...timeline(), frames: [0] }, { ...timeline(), offsetMs: 5001 }, { ...timeline(), gateDb: -100 }, { ...timeline(), duration: 2000 }]) {
+      assert.equal((await request(route, 'PUT', bad)).status, 400);
+    }
+    assert.equal((await request(route, 'PUT', timeline())).status, 200);
+    assert.equal((await request(route, 'PATCH', { offsetMs: 200, gateDb: -32 })).status, 200);
+    await server.close(); server = await startDesktopServer(options);
+    const restored = await (await request(route)).json();
+    assert.deepEqual(restored.mouth, { ...timeline(), offsetMs: 200, gateDb: -32 });
+    const listed = (await (await request('/api/rvc/tracks')).json()).tracks;
+    assert.equal(listed.length, 1); assert.equal(listed[0].mouth.offsetMs, 200);
+    const mouthFile = path.join(dataDir, 'rvc-songs', `${track.id}.mouth.json`);
+    const original = path.join(dataDir, 'original.json'); await fs.writeFile(original, JSON.stringify(timeline()));
+    await fs.unlink(mouthFile); await fs.symlink(original, mouthFile);
+    assert.equal((await request(route)).status, 400, 'timeline symlink must not expose arbitrary files');
+    assert.equal((await request(route, 'DELETE')).status, 200);
+    assert.deepEqual(JSON.parse(await fs.readFile(original)), timeline());
+    assert.equal((await (await request('/api/rvc/tracks')).json()).tracks[0].mouth, null);
+    await request(route, 'PUT', timeline());
+    assert.equal((await request(`/api/rvc/tracks/${track.id}`, 'DELETE')).status, 200);
+    assert.deepEqual(await fs.readdir(path.join(dataDir, 'rvc-songs')), []);
+  } finally { await server.close(); await fs.rm(dataDir, { recursive: true, force: true }); }
 });

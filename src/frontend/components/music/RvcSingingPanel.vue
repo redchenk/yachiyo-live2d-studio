@@ -4,6 +4,14 @@ import TsIcon from '../TsIcon.vue';
 import { formatSongTime } from '../../services/room/rvcSongPlayer';
 const props = defineProps({ songs: { type: Object, required: true } });
 const fileInput = ref(null);
+const vocalInput = ref(null);
+let vocalTrack;
+function chooseVocal(track) { vocalTrack = track; vocalInput.value.click(); }
+async function importVocal(event) {
+  const file = event.target.files[0], track = vocalTrack;
+  event.target.value = '';
+  if (file && track) await props.songs.associateVocal(track, file);
+}
 async function importSongs(event) {
   const files = [...event.target.files];
   event.target.value = '';
@@ -21,6 +29,7 @@ async function importSongs(event) {
       <input ref="fileInput" class="rvc-file-input" type="file" multiple accept=".wav,.mp3,.flac,.ogg,.m4a" aria-label="导入 RVC 歌曲" @change="importSongs">
     </header>
     <p class="rvc-hint">歌曲复制到本机歌曲库，重启后保留。支持 WAV / MP3 / FLAC / OGG / M4A，单首上限 512 MB。</p>
+    <input ref="vocalInput" class="rvc-file-input" type="file" accept=".wav,.mp3,.flac,.ogg,.m4a" aria-label="关联纯人声轨" @change="importVocal">
     <div class="rvc-now-playing">
       <span>当前歌曲</span><strong>{{ songs.state.track?.name || '还没有选择歌曲' }}</strong>
       <input type="range" min="0" :max="songs.state.duration || 1" step="0.1" :value="songs.state.currentTime"
@@ -36,14 +45,31 @@ async function importSongs(event) {
       <label class="rvc-volume">音量 {{ Math.round(songs.state.volume * 100) }}%<input type="range" min="0" max="1" step="0.01" :value="songs.state.volume" aria-label="唱歌音量" @input="songs.setVolume($event.target.value)"></label>
       <label class="rvc-auto-next"><input v-model="songs.autoNext.value" type="checkbox">顺序播放（播完歌单后停止）</label>
     </div>
-    <p class="rvc-hint">唱歌模式暂停自动互动及语音。口型跟随音频音量；含伴奏的音频也会受伴奏影响。切回聊天或游戏即可恢复互动。</p>
+    <div v-if="songs.state.track" class="rvc-mouth-settings" :data-configured="!!songs.state.track.mouth">
+      <div class="rvc-mouth-heading"><strong>人声口型</strong>
+        <button type="button" class="live2d-mini-btn" :disabled="!!songs.mouthBusy.value" @click="chooseVocal(songs.state.track)">{{ songs.mouthBusy.value === songs.state.track.id ? '分析中…' : songs.state.track.mouth ? '更换人声轨' : '关联人声轨' }}</button>
+      </div>
+      <template v-if="songs.state.track.mouth">
+        <p class="rvc-hint rvc-vocal-name">{{ songs.state.track.mouth.vocalName }}</p>
+        <label class="rvc-mouth-offset">口型偏移（ms）<input type="number" min="-5000" max="5000" step="20" :value="songs.state.track.mouth.offsetMs" :disabled="!!songs.mouthBusy.value" aria-label="口型偏移（毫秒）" @change="songs.updateMouthSettings(songs.state.track, { offsetMs: Number($event.target.value) })"></label>
+        <p class="rvc-hint">负值让口型提前，正值让口型延后。人声轨应保留与成品相同的开头空白。</p>
+        <label class="rvc-mouth-gate">静音门限 {{ songs.state.track.mouth.gateDb }} dB<input type="range" min="-60" max="-20" step="1" :value="songs.state.track.mouth.gateDb" :disabled="!!songs.mouthBusy.value" aria-label="人声静音门限" @change="songs.updateMouthSettings(songs.state.track, { gateDb: Number($event.target.value) })"></label>
+        <p class="rvc-hint">间奏有残音时向右调高；轻声漏字时向左调低。</p>
+        <button type="button" class="live2d-mini-btn" :disabled="!!songs.mouthBusy.value" @click="songs.clearMouth(songs.state.track)">移除口型关联</button>
+      </template>
+      <p v-else class="rvc-hint">未关联纯人声，播放时保持闭嘴，避免伴奏误触发。</p>
+      <p class="rvc-hint">请选择 RVC 混音前的纯人声（最大 256 MB、20 分钟）。仅在本机生成并保存口型数据，不会重复播放人声；请勿选择伴奏或混音成品。</p>
+      <p v-if="songs.state.mouthError" class="live2d-inline-error" role="alert">{{ songs.state.mouthError }}</p>
+    </div>
+    <p class="rvc-hint">唱歌模式暂停自动互动及语音。切回聊天或游戏即可恢复互动。</p>
     <p v-if="songs.state.error || songs.libraryError.value" class="live2d-inline-error" role="alert">{{ songs.state.error || songs.libraryError.value }}</p>
     <ol class="rvc-track-list" aria-label="RVC 歌单">
       <li v-for="track in songs.tracks.value" :key="track.id" :class="{ active: songs.state.track?.id === track.id }">
         <button type="button" class="rvc-track-play" :aria-label="`播放 ${track.name}`" @click="songs.play(track)">
-          <TsIcon name="music" :size="17" /><span>{{ track.name }}<small>{{ (track.size / 1024 / 1024).toFixed(1) }} MB</small></span>
+          <TsIcon name="music" :size="17" /><span>{{ track.name }}<small>{{ (track.size / 1024 / 1024).toFixed(1) }} MB · {{ track.mouth ? '人声口型已关联' : '未关联人声 · 保持闭嘴' }}</small></span>
         </button>
-        <button type="button" class="live2d-icon-btn" :aria-label="`移出歌单 ${track.name}`" title="删除歌曲库副本，原文件不受影响" @click="songs.remove(track)"><TsIcon name="trash" :size="15" /></button>
+        <button type="button" class="live2d-mini-btn rvc-vocal-link" :disabled="!!songs.mouthBusy.value" :aria-label="`关联人声 ${track.name}`" @click="chooseVocal(track)">{{ songs.mouthBusy.value === track.id ? '分析中…' : '人声' }}</button>
+        <button type="button" class="live2d-icon-btn" :disabled="!!songs.mouthBusy.value" :aria-label="`移出歌单 ${track.name}`" title="删除歌曲库副本，原文件不受影响" @click="songs.remove(track)"><TsIcon name="trash" :size="15" /></button>
       </li>
     </ol>
     <p v-if="!songs.tracks.value.length" class="rvc-empty">导入八千代演唱的第一首歌吧。</p>

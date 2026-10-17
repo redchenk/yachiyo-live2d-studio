@@ -1,0 +1,47 @@
+✔ TTS adapters preserve streaming Japanese audio and provider-specific auth (1.767208ms)
+✔ chat adapters retain vision and history in both response formats (1.654209ms)
+✔ official DeepSeek Flash streams live replies without the default thinking delay (2.148583ms)
+✔ music resolver skips previews and keeps provider URL behind a local token (9.080292ms)
+✔ CRC agrees with the NSIS oracle and detects payload corruption (7.47125ms)
+✔ WriteUninstaller applies resource patches and retains the ORIGINAL embedded CRC (5.549542ms)
+✔ unknown patches and disabled integrity checks fail instead of rewriting CRC (3.493333ms)
+✔ real makensis fixture reproduces the omitted icon-patch failure (3.93925ms)
+✔ platform data paths are persistent and support explicit portable storage (1.506583ms)
+✔ bundled SQLite preserves records across service restarts without Docker (409.722167ms)
+✔ gateway streams chat before completion, cancels upstream and rejects foreign origins (29.1635ms)
+✔ RVC library persists imports, serves ranges and deletes only its own copy (94.82275ms)
+✔ vocal envelope respects stereo energy, silent intervals, gate and offset (1.6555ms)
+✔ mixed audio never drives mouth; vocal clock survives volume, seek, pause and switching (0.689584ms)
+✔ stale vocal loads cannot start a stopped song or replace the next song (0.173875ms)
+✔ corrupt or unavailable mouth data plays safely closed with an actionable error (0.168917ms)
+✔ vocal mouth association persists, validates input and deletes only its own timeline (57.024334ms)
+✔ managed Milvus migrates once to built-in memory without changing the database (78.063042ms)
+WebSocket server error: Port 24678 is already in use
+Broadcast scene switcher checks passed
+✔ tools/live2d-studio/test-broadcast-scene-switcher.mjs (333.495291ms)
+Cubism runtime cadence and single-owner motion checks passed
+Cubism expression hold and reset checks passed
+✔ tools/live2d-studio/test-cubism-runtime-cadence.mjs (151.2345ms)
+live director scheduler checks passed
+✔ tools/live2d-studio/test-live-director-scheduler.mjs (147.579584ms)
+live turn pipeline checks passed
+✔ tools/live2d-studio/test-live-turn-pipeline.mjs (134.814208ms)
+WebSocket server error: Port 24678 is already in use
+music browser playback checks passed
+✔ tools/live2d-studio/test-music-browser-playback.mjs (259.402416ms)
+✔ settings normalize duration, unlimited mode and closing bounds (0.641042ms)
+✔ closing and farewell fire once at absolute host deadlines (0.198834ms)
+✔ a suspended app resumes at the real deadline without a stale closing cue (0.992583ms)
+✔ unlimited mode cannot spontaneously close (0.078125ms)
+✔ short broadcasts leave time for the opening (0.061584ms)
+✔ stopping and restarting cancel timers and reset the session (0.095959ms)
+✔ trusted closing context guides rather than repeating goodbye or opening topics (0.3495ms)
+✔ clock formats boundaries and nonnegative countdowns (0.046333ms)
+ℹ tests 31
+ℹ suites 0
+ℹ pass 31
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 3004.823041

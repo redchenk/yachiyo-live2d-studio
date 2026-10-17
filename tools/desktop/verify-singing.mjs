@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { startDesktopServer } from './server.mjs';
 
 const root = path.resolve(import.meta.dirname, '../..');
-const output = path.join(root, 'output/singing');
+const output = path.join(root, 'output/singing-vocal-sync');
 const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'yachiyo-singing-'));
 fs.mkdirSync(output, { recursive: true });
 app.setPath('userData', path.join(temp, 'profile'));
@@ -16,6 +16,12 @@ wav.writeUInt32LE(16, 16); wav.writeUInt16LE(1, 20); wav.writeUInt16LE(1, 22);
 wav.writeUInt32LE(16000, 24); wav.writeUInt32LE(32000, 28); wav.writeUInt16LE(2, 32); wav.writeUInt16LE(16, 34);
 wav.write('data', 36); wav.writeUInt32LE(wav.length - 44, 40);
 for (let i = 0; i < 16000 * 30; i++) wav.writeInt16LE(Math.round(Math.sin(i / 16000 * Math.PI * 2 * 220) * 9000), 44 + i * 2);
+
+const vocals = Buffer.from(wav);
+for (let i = 0; i < 16000 * 30; i++) {
+  const t = i / 16000;
+  if (!(t >= 1 && t < 3 || t >= 8 && t < 20)) vocals.writeInt16LE(0, 44 + i * 2);
+}
 
 app.whenReady().then(async () => {
   const runtime = await startDesktopServer({ resourceRoot: root, dataDir: temp, services: {}, port: 0 });
@@ -65,7 +71,27 @@ app.whenReady().then(async () => {
     await waitFor(`document.querySelectorAll('.rvc-track-list li').length === 2`, 'multi-file import failed');
     await click('.rvc-track-play');
     await waitFor(`document.querySelector('.rvc-stage-player')?.dataset.status === 'playing'`, 'real WAV did not play');
-    await waitFor(`__sing.mouths.some(value => value > 0.1)`, 'audio analyser did not drive mouth');
+    await delay(350);
+    assert.equal(await js('__sing.mouths.every(value => value === 0)'), true, 'mix without vocals must stay closed');
+    await js(`const input = document.querySelector('[aria-label="关联纯人声轨"]');
+      input.addEventListener('click', e => e.preventDefault(), {once:true}); document.querySelector('.rvc-vocal-link').click();
+      const bytes = Uint8Array.from(atob(${JSON.stringify(vocals.toString('base64'))}), c => c.charCodeAt(0));
+      const data = new DataTransfer(); data.items.add(new File([bytes], '星の歌 RVC纯人声.wav', {type:'audio/wav'}));
+      input.files=data.files; input.dispatchEvent(new Event('change',{bubbles:true}));`);
+    await waitFor(`document.querySelector('.rvc-mouth-settings')?.dataset.configured === 'true'`, 'vocal analysis/association failed');
+    await js(`const seek=document.querySelector('[aria-label="歌曲进度"]'); seek.value='1.2'; seek.dispatchEvent(new Event('input',{bubbles:true}));`);
+    await waitFor(`__sing.mouths.at(-1) > 0.1`, 'vocal timeline did not drive mouth');
+    await js(`const volume=document.querySelector('[aria-label="唱歌音量"]'); volume.value='0'; volume.dispatchEvent(new Event('input',{bubbles:true}));`);
+    await delay(120); assert.ok(await js('__sing.mouths.at(-1)') > 0.1, 'monitor mute must not affect mouth');
+    await js(`const seek=document.querySelector('[aria-label="歌曲进度"]'); seek.value='4'; seek.dispatchEvent(new Event('input',{bubbles:true}));`);
+    await delay(120); await js('__sing.mouths=[]'); await delay(200);
+    assert.equal(await js('__sing.mouths.length > 2 && __sing.mouths.every(n => n === 0)'), true, 'loud accompaniment over silent vocals opened mouth');
+    await js(`const offset=document.querySelector('[aria-label="口型偏移（毫秒）"]'); offset.value='2000'; offset.dispatchEvent(new Event('change',{bubbles:true}));`);
+    await waitFor(`!document.querySelector('[aria-label="口型偏移（毫秒）"]').disabled`, 'offset not saved');
+    await js(`const seek=document.querySelector('[aria-label="歌曲进度"]'); seek.value='3.2'; seek.dispatchEvent(new Event('input',{bubbles:true}));`);
+    await waitFor(`__sing.mouths.at(-1) > 0.1`, 'positive mouth offset did not delay vocal timeline');
+    await js(`const offset=document.querySelector('[aria-label="口型偏移（毫秒）"]'); offset.value='0'; offset.dispatchEvent(new Event('change',{bubbles:true}));`);
+    await waitFor(`!document.querySelector('[aria-label="口型偏移（毫秒）"]').disabled`, 'offset reset not saved');
     await click('[aria-label="暂停演唱"]'); await delay(150);
     assert.equal(await status(), 'paused'); assert.equal(await js('__sing.mouths.at(-1)'), 0);
     await js(`const seek = document.querySelector('[aria-label="歌曲进度"]'); seek.value='10'; seek.dispatchEvent(new Event('input',{bubbles:true}));`);
@@ -73,6 +99,8 @@ app.whenReady().then(async () => {
     await waitFor(`document.querySelector('.rvc-stage-player')?.dataset.status === 'playing'`, 'resume failed');
     assert.match(await js(`document.querySelector('.rvc-stage-song small').textContent`), /0:1\d/);
     await shot('singing-expanded');
+    await js(`document.querySelector('.rvc-mouth-settings').scrollIntoView({block:'start'});`);
+    await shot('singing-vocal-settings');
     const initialWidth = await js(`document.querySelector('.live2d-stage').getBoundingClientRect().width`);
     await click('.live2d-controls-toggle'); await delay(100);
     assert.ok(await js(`document.querySelector('.live2d-stage').getBoundingClientRect().width`) > initialWidth + 250);
@@ -125,9 +153,13 @@ app.whenReady().then(async () => {
     assert.equal(await status(), 'idle', 'reload must not autoplay');
     assert.equal(await js(`document.querySelector('.live2d-page').classList.contains('is-controls-collapsed')`), true);
     await click('.live2d-controls-toggle');
+    assert.equal(await js(`document.querySelector('.rvc-track-play small').textContent.includes('人声口型已关联')`), true, 'mouth association lost after reload');
+    await click('.rvc-track-play');
+    await waitFor(`document.querySelector('.rvc-stage-player')?.dataset.status === 'playing'`, 'persisted vocals failed to load');
+    assert.equal(await js(`document.querySelector('.rvc-vocal-name').textContent`), '星の歌 RVC纯人声.wav');
     await click('.rvc-track-list li .live2d-icon-btn');
     await waitFor(`document.querySelectorAll('.rvc-track-list li').length === 1`, 'remove track failed');
-    const report = { passed:true, realCubism:true, realAudio:true, audibleOutputMuted:true, checks:['import two local files', 'analyser mouth movement', 'pause/seek/resume', 'fold preserves audio', '1440/960/720 layouts', 'mode switch cancels pending LLM', 'singing blocks danmaku/LLM/TTS', 'clock continues', 'finish song then closing cue', 'deadline stops song then farewell', 'sequential playback', 'library/collapse survive reload without autoplay', 'remove library copy'], consoleErrors:errors };
+    const report = { passed:true, realCubism:true, realAudio:true, audibleOutputMuted:true, checks:['import two local files', 'unassociated mix stays closed', 'decode/associate pure vocal WAV', 'silent vocal intervals stay closed over loud accompaniment', 'vocal timeline follows seek/resume', 'mouth independent of monitor volume', 'positive timing offset', 'mouth association persists across reload', 'pause/seek/resume', 'fold preserves audio', '1440/960/720 layouts', 'mode switch cancels pending LLM', 'singing blocks danmaku/LLM/TTS', 'clock continues', 'finish song then closing cue', 'deadline stops song then farewell', 'sequential playback', 'library/collapse survive reload without autoplay', 'remove library copy'], consoleErrors:errors };
     fs.writeFileSync(path.join(output,'verification.json'), JSON.stringify(report,null,2));
     fs.rmSync(path.join(output,'error.json'), {force:true}); fs.rmSync(path.join(output,'failure.png'), {force:true});
     console.log(JSON.stringify(report));
