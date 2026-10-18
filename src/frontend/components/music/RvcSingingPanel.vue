@@ -2,7 +2,8 @@
 import { ref } from 'vue';
 import TsIcon from '../TsIcon.vue';
 import { formatSongTime } from '../../services/room/rvcSongPlayer';
-const props = defineProps({ songs: { type: Object, required: true } });
+const props = defineProps({ songs: { type: Object, required: true }, concertEnabled: Boolean, concertState: { type: Object, default: () => ({}) } });
+const emit = defineEmits(['concert-enabled', 'resume-concert']);
 const fileInput = ref(null);
 const vocalInput = ref(null);
 let vocalTrack;
@@ -43,7 +44,8 @@ async function importSongs(event) {
         <button type="button" class="live2d-mini-btn" :disabled="!songs.hasNext.value" @click="songs.next">下一首</button>
       </div>
       <label class="rvc-volume">音量 {{ Math.round(songs.state.volume * 100) }}%<input type="range" min="0" max="1" step="0.01" :value="songs.state.volume" aria-label="唱歌音量" @input="songs.setVolume($event.target.value)"></label>
-      <label class="rvc-auto-next"><input v-model="songs.autoNext.value" type="checkbox">顺序播放（播完歌单后停止）</label>
+      <label class="rvc-auto-next"><input :checked="concertEnabled" type="checkbox" aria-label="八千代自主接歌" @change="emit('concert-enabled', $event.target.checked)">八千代自主选曲与歌间互动</label>
+      <button v-if="concertEnabled && concertState.phase === 'paused'" type="button" class="live2d-mini-btn" @click="emit('resume-concert')">恢复自主接歌</button>
     </div>
     <div v-if="songs.state.track" class="rvc-mouth-settings" :data-configured="!!songs.state.track.mouth">
       <div class="rvc-mouth-heading"><strong>人声口型</strong>
@@ -61,7 +63,7 @@ async function importSongs(event) {
       <p class="rvc-hint">请选择 RVC 混音前的纯人声（最大 256 MB、20 分钟）。仅在本机生成并保存口型数据，不会重复播放人声；请勿选择伴奏或混音成品。</p>
       <p v-if="songs.state.mouthError" class="live2d-inline-error" role="alert">{{ songs.state.mouthError }}</p>
     </div>
-    <p class="rvc-hint">唱歌模式暂停自动互动及语音。切回聊天或游戏即可恢复互动。</p>
+    <p class="rvc-hint">开始直播后，唱歌时暂存弹幕，歌间回应观众、介绍下一首并自动开唱。优先歌单内的点歌，避免连续重复；手动暂停或停止会暂停自主接歌。</p>
     <p v-if="songs.state.error || songs.libraryError.value" class="live2d-inline-error" role="alert">{{ songs.state.error || songs.libraryError.value }}</p>
     <ol class="rvc-track-list" aria-label="RVC 歌单">
       <li v-for="track in songs.tracks.value" :key="track.id" :class="{ active: songs.state.track?.id === track.id }">

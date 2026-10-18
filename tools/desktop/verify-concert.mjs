@@ -1,0 +1,111 @@
+import { app, BrowserWindow } from 'electron';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import assert from 'node:assert/strict';
+import { startDesktopServer } from './server.mjs';
+const root=path.resolve(import.meta.dirname,'../..'), output=path.join(root,'output/singing-concert');
+const temp=fs.mkdtempSync(path.join(os.tmpdir(),'yachiyo-concert-'));
+fs.mkdirSync(output,{recursive:true});app.setPath('userData',path.join(temp,'profile'));
+function wav(seconds) {
+ const b=Buffer.alloc(44+16000*2*seconds);b.write('RIFF');b.writeUInt32LE(b.length-8,4);b.write('WAVEfmt ',8);
+ b.writeUInt32LE(16,16);b.writeUInt16LE(1,20);b.writeUInt16LE(1,22);b.writeUInt32LE(16000,24);b.writeUInt32LE(32000,28);b.writeUInt16LE(2,32);b.writeUInt16LE(16,34);b.write('data',36);b.writeUInt32LE(b.length-44,40);
+ for(let i=0;i<16000*seconds;i++)b.writeInt16LE(Math.round(Math.sin(i/16000*Math.PI*440)*5000),44+i*2);return b;
+}
+app.whenReady().then(async()=>{
+ const runtime=await startDesktopServer({resourceRoot:root,dataDir:temp,services:{},port:0});
+ const win=new BrowserWindow({width:1440,height:900,show:true,webPreferences:{preload:path.join(root,'tools/desktop/preload.cjs'),sandbox:true,contextIsolation:true,nodeIntegration:false,backgroundThrottling:false}});
+ win.webContents.setAudioMuted(true);
+ win.webContents.session.webRequest.onBeforeRequest((d,cb)=>cb({cancel:/^https?:/.test(d.url)&&new URL(d.url).origin!==runtime.origin}));
+ const errors=[];win.webContents.on('console-message',e=>{if(e.level==='error')errors.push(e.message);});
+ const js=code=>win.webContents.executeJavaScript(`{${code}\n}`,true);
+ const delay=ms=>new Promise(r=>setTimeout(r,ms));
+ const wait=async(code,msg,timeout=18000)=>{const end=Date.now()+timeout;while(Date.now()<end){if(await js(code))return;await delay(100);}throw new Error(msg);};
+ const click=s=>js(`document.querySelector(${JSON.stringify(s)}).click()`);
+ const emit=(text,type='danmu',user='小樱')=>js(`window.dispatchEvent(new CustomEvent('tsukuyomi:bilibili-danmaku',{detail:{id:Math.random().toString(),type:${JSON.stringify(type)},userName:${JSON.stringify(user)},userId:${JSON.stringify(user)},text:${JSON.stringify(text)},timestamp:Date.now()}}));`);
+ const phase=()=>js(`document.querySelector('.live2d-page').dataset.concertPhase`);
+ const finishSong=async()=>{await js(`const el=document.querySelector('[aria-label="歌曲进度"]');el.value='29.8';el.dispatchEvent(new Event('input',{bubbles:true}));`);await wait(`document.querySelector('.rvc-stage-player').dataset.status==='ended'`,'song did not end');};
+ const shot=async name=>{await delay(150);fs.writeFileSync(path.join(output,name+'.png'),(await win.webContents.capturePage()).toPNG());};
+ try {
+  await win.loadURL(runtime.origin+'/live2d-studio/');
+  await js(`localStorage.setItem('roomLLMSettings',JSON.stringify({provider:'deepseek',apiKey:'fixture-only',model:'deepseek-flash',useProxy:true}));
+    localStorage.setItem('roomTTSSettings',JSON.stringify({enabled:true,provider:'openai',apiUrl:'http://127.0.0.1:1/audio/speech',apiKey:'fixture-only',useProxy:true}));
+    localStorage.setItem('roomMemorySettings',JSON.stringify({enabled:false}));localStorage.setItem('roomVisionSettings',JSON.stringify({enabled:false}));
+    localStorage.setItem('roomBilibiliDanmakuSettings',JSON.stringify({enabled:true,roomId:'123',autoConnect:false,autoForward:true,readAloud:true,autoStartDirector:true}));`);
+  await win.loadURL(runtime.origin+'/live2d-studio/');
+  await wait(`!!document.querySelector('#live2d-container canvas')&&!document.querySelector('.live2d-loading')`,'Cubism missing',25000);
+  await js(`window.__concert={calls:[],offset:0,audios:[],events:[],overlap:[],stallIntro:false};
+    const realNow=Date.now;Date.now=()=>realNow()+__concert.offset;
+    const NativeAudio=window.Audio;
+    window.Audio=function(...args){const a=new NativeAudio(...args);__concert.audios.push(a);
+      for(const event of ['playing','ended'])a.addEventListener(event,()=>{
+        const kind=a.src.includes('/api/rvc/')?'song':'speech';
+        __concert.events.push({event,kind,at:performance.now(),src:a.src});
+        if(event==='playing'&&__concert.audios.some(other=>other!==a&&!other.paused&&!other.ended&&(other.src.includes('/api/rvc/')?'song':'speech')!==kind))__concert.overlap.push(kind);
+      });return a;};window.Audio.prototype=NativeAudio.prototype;
+    const nativeFetch=window.fetch.bind(window);let counter=0;
+    window.fetch=async(input,options={})=>{
+      const url=new URL(typeof input==='string'?input:input.url,location.href);
+      const body=typeof options.body==='string'&&options.body.startsWith('{')?JSON.parse(options.body):{};
+      if(url.pathname.startsWith('/api/chat')||url.pathname==='/api/tts'||/music|netease/.test(url.pathname))__concert.calls.push({path:url.pathname,message:body.message||'',phase:document.querySelector('.live2d-page').dataset.concertPhase,at:performance.now()});
+      if(url.pathname.startsWith('/api/chat')){
+        const intro=body.message?.includes('INTRODUCE_NEXT_RVC_SONG');
+        if(intro&&__concert.stallIntro)return new Promise((resolve,reject)=>options.signal.addEventListener('abort',()=>reject(new DOMException('cancelled','AbortError')),{once:true}));
+        counter++;
+        const voice=(intro?'次の歌を一緒に楽しみましょう。':body.message?.includes('小樱')?'小樱さん、応援ありがとうございます。':'今日は素敵な歌を届けますね。')+['嬉しいですね。','心が温まります。','いい時間ですね。','楽しみにしていてね。'][counter%4];
+        const control={reply:voice,caption:(intro?'下一首已经准备好了，一起听吧。':body.message?.includes('小樱')?'小樱，谢谢你的应援，我记住点歌啦。':'刚才的歌好听吗？我们聊一会儿吧。')+counter,emotion:'happy',actions:[],acknowledgedIndexes:body.message?.includes('小樱')?[1,2]:[],music:null,minecraft:null};
+        if(url.pathname==='/api/chat/stream')return new Response('data: '+JSON.stringify({choices:[{delta:{content:'VOICE: '+voice+'\\nCAPTION: '+control.caption+'\\nCONTROL: '+JSON.stringify(control)}}]})+'\\n\\ndata: [DONE]\\n\\n',{headers:{'Content-Type':'text/event-stream'}});
+        return Response.json({success:true,data:{reply:body.message?.startsWith('LIVE_DIRECTOR_TICK')?JSON.stringify(control):control.caption}});
+      }
+      if(url.pathname==='/api/tts')return new Response(Uint8Array.from(atob(${JSON.stringify(wav(2).toString('base64'))}),c=>c.charCodeAt(0)),{headers:{'Content-Type':'audio/wav'}});
+      return nativeFetch(input,options);
+    };true;`);
+  if(await js(`!!document.querySelector('.studio-settings-panel')`))await click('.studio-settings-header button');
+  await js(`document.querySelectorAll('.live2d-scene-switcher button')[0].click();const input=document.querySelector('[aria-label="直播时长（分钟）"]');input.value='0';input.dispatchEvent(new Event('input',{bubbles:true}));input.dispatchEvent(new Event('change',{bubbles:true}));`);
+  await js(`const data=new DataTransfer();const bytes=Uint8Array.from(atob(${JSON.stringify(wav(30).toString('base64'))}),c=>c.charCodeAt(0));for(const name of ['星の歌.wav','春の歌.wav','夏の歌.wav'])data.items.add(new File([bytes],name,{type:'audio/wav'}));const input=document.querySelector('[aria-label="导入 RVC 歌曲"]');input.files=data.files;input.dispatchEvent(new Event('change',{bubbles:true}));`);
+  await wait(`document.querySelectorAll('.rvc-track-list li').length===3`,'imports missing');
+  await emit('待机时想听夏の歌');await js('__concert.offset+=120000');await delay(600);
+  assert.equal(await js('__concert.calls.length'),0,'must not start before explicit live start');
+  await click('.live2d-run-btn');
+  await wait(`__concert.events.some(e=>e.kind==='speech'&&e.event==='ended')`,'opening speech missing');
+  await js('__concert.offset+=30000');
+  await wait(`document.querySelector('.rvc-stage-player').dataset.status==='playing'`,'autonomous opening song missing');
+  const first=await js(`document.querySelector('.rvc-stage-song strong').textContent`);
+  const requested=first==='夏の歌.wav'?'春の歌':'夏の歌';
+  const before=await js('__concert.calls.length');
+  await emit('唱得真好，想听'+requested);await emit('小樱送来的鲜花','gift','小樱礼物');
+  await wait(`/暂存 [1-9]/.test(document.querySelector('.rvc-mode-notice').textContent)`,'song-time messages were not queued');
+  await js('__concert.offset+=200000');await delay(600);
+  assert.equal(await js('__concert.calls.length'),before,'singing invoked LLM/TTS/music');
+  assert.match(await js(`document.querySelector('.rvc-mode-notice').textContent`),/暂存 [1-9]/);
+  await finishSong();
+  await wait(`__concert.calls.some(c=>c.message.includes('想听${requested}'))`,'song-time audience lost or expired');
+  await wait(`__concert.events.filter(e=>e.kind==='speech'&&e.event==='ended').length>=3`,'between-song reply did not finish');
+  assert.equal(await phase(),'interacting');
+  assert.ok((await js(`document.querySelector('.rvc-mode-notice').textContent`)).includes(requested));
+  assert.equal(await js(`!!document.querySelector('.live2d-caption')`),true,'break captions hidden');
+  await shot('between-songs');
+  await click('.live2d-controls-toggle');await shot('between-songs-collapsed');await click('.live2d-controls-toggle');
+  await js('__concert.offset+=95000');
+  await wait(`document.querySelector('.rvc-stage-player').dataset.status==='playing'`,'next song not automatic');
+  assert.equal(await js(`document.querySelector('.rvc-stage-song strong').textContent`),requested+'.wav');
+  assert.deepEqual(await js('__concert.overlap'),[],'speech overlapped song');
+  await click('[aria-label="暂停演唱"]');assert.equal(await phase(),'paused');
+  const playCount=await js(`__concert.events.filter(e=>e.kind==='song'&&e.event==='playing').length`);
+  await emit('休息时也聊聊吧','danmu','新观众');
+  await wait(`__concert.calls.some(c=>c.message.includes('休息时也聊聊吧'))`,'paused singer did not interact');
+  await js('__concert.offset+=200000');await delay(600);
+  assert.equal(await js(`__concert.events.filter(e=>e.kind==='song'&&e.event==='playing').length`),playCount,'pause restarted automatically');
+  await click('[aria-label="播放歌曲"]');await wait(`document.querySelector('.rvc-stage-player').dataset.status==='playing'`,'manual resume failed');
+  await finishSong();await js('__concert.stallIntro=true;__concert.offset+=95000');
+  await wait(`document.querySelector('.live2d-page').dataset.concertPhase==='announcing'`,'intro not started');
+  await click('.live2d-run-btn');await js('__concert.offset+=200000');await delay(700);
+  assert.equal(await js(`document.querySelector('.live2d-page').dataset.liveState`),'off');assert.equal(await phase(),'off');
+  const stopped=await js('__concert.calls.length');await emit('停止后不能开播');await delay(400);assert.equal(await js('__concert.calls.length'),stopped);
+  await win.loadURL(runtime.origin+'/live2d-studio/');await wait(`document.querySelectorAll('.rvc-track-list li').length===3`,'reload failed');
+  assert.equal(await phase(),'off');assert.equal(await js(`document.querySelector('.rvc-stage-player').dataset.status`),'idle');
+  const report={passed:true,realCubism:true,realAudio:true,audibleOutputMuted:true,checks:['explicit start gate','autonomous first song','no LLM/TTS during singing','song-time danmaku retained beyond normal TTL','between-song audience replies and captions','requested next local song','no adjacent repeat','actual speech completion before song','collapsed controls preserve break','manual pause keeps interaction without auto resume','stop cancels pending introduction','reload never autostarts'],consoleErrors:errors};
+  fs.writeFileSync(path.join(output,'verification.json'),JSON.stringify(report,null,2));fs.rmSync(path.join(output,'error.json'),{force:true});fs.rmSync(path.join(output,'failure.png'),{force:true});console.log(JSON.stringify(report));
+ }catch(error){await shot('failure').catch(()=>{});fs.writeFileSync(path.join(output,'error.json'),JSON.stringify({error:error.stack,errors,state:await js(`({text:document.body.innerText,calls:window.__concert?.calls,events:window.__concert?.events,overlap:window.__concert?.overlap})`).catch(()=>null)},null,2));console.error(error);process.exitCode=1;}
+ finally{win.destroy();await runtime.close();fs.rmSync(temp,{recursive:true,force:true});app.exit(process.exitCode||0);}
+});

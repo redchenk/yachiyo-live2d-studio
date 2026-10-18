@@ -1,0 +1,21 @@
+{
+  "passed": true,
+  "realCubism": true,
+  "realAudio": true,
+  "audibleOutputMuted": true,
+  "checks": [
+    "explicit start gate",
+    "autonomous first song",
+    "no LLM/TTS during singing",
+    "song-time danmaku retained beyond normal TTL",
+    "between-song audience replies and captions",
+    "requested next local song",
+    "no adjacent repeat",
+    "actual speech completion before song",
+    "collapsed controls preserve break",
+    "manual pause keeps interaction without auto resume",
+    "stop cancels pending introduction",
+    "reload never autostarts"
+  ],
+  "consoleErrors": []
+}

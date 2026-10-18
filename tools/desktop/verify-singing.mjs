@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { startDesktopServer } from './server.mjs';
 
 const root = path.resolve(import.meta.dirname, '../..');
-const output = path.join(root, 'output/singing-vocal-sync');
+const output = path.join(root, 'output/singing-concert-regression');
 const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'yachiyo-singing-'));
 fs.mkdirSync(output, { recursive: true });
 app.setPath('userData', path.join(temp, 'profile'));
@@ -43,7 +43,7 @@ app.whenReady().then(async () => {
   const status = () => js(`document.querySelector('.rvc-stage-player')?.dataset.status`);
   try {
     await win.loadURL(runtime.origin + '/live2d-studio/');
-    await js(`localStorage.setItem('roomLLMSettings', JSON.stringify({ provider:'deepseek', apiKey:'fixture-only', model:'deepseek-flash', useProxy:true }));
+    await js(`localStorage.setItem('yachiyo:concert:enabled','false');localStorage.setItem('roomLLMSettings', JSON.stringify({ provider:'deepseek', apiKey:'fixture-only', model:'deepseek-flash', useProxy:true }));
       localStorage.setItem('roomMemorySettings', JSON.stringify({enabled:false}));
       localStorage.setItem('roomVisionSettings', JSON.stringify({enabled:false}));
       localStorage.setItem('roomBilibiliDanmakuSettings', JSON.stringify({enabled:true, roomId:'123', autoConnect:false, autoForward:true, readAloud:true, autoStartDirector:true}));`);
@@ -127,7 +127,6 @@ app.whenReady().then(async () => {
     await waitFor(`document.querySelector('.live2d-stream-clock')?.dataset.phase === 'closing'`, 'clock paused while singing');
     assert.equal(await status(), 'playing', 'closing interrupted the current song');
     // End current song: no next song starts once it is time to close the stream.
-    await click('.rvc-auto-next input');
     await js(`const seek=document.querySelector('[aria-label="歌曲进度"]'); seek.value='29.8'; seek.dispatchEvent(new Event('input',{bubbles:true}));`);
     await waitFor(`document.querySelector('.live2d-page').dataset.broadcastScene === 'chat'`, 'song end did not begin closing');
     await waitFor(`__sing.calls.some(x=>x.message.includes('Begin that transition now'))`, 'closing cue missing');
@@ -138,11 +137,12 @@ app.whenReady().then(async () => {
     assert.equal(await js(`document.querySelector('.live2d-page').dataset.broadcastScene`), 'chat');
     assert.ok(await js(`__sing.calls.some(x=>x.message.includes('final thank-you and goodbye'))`));
     await scene('singing');
-    await js(`const input=document.querySelector('.rvc-auto-next input'); input.checked=true; input.dispatchEvent(new Event('change',{bubbles:true}));`);
     await click('.rvc-track-play');
     await waitFor(`document.querySelector('.rvc-stage-player')?.dataset.status === 'playing'`, 'playlist did not restart');
     await js(`const seek=document.querySelector('[aria-label="歌曲进度"]'); seek.value='29.8'; seek.dispatchEvent(new Event('input',{bubbles:true}));`);
-    await waitFor(`document.querySelector('.rvc-stage-song strong')?.textContent === '春の歌.wav'`, 'sequential playback failed');
+    await waitFor(`document.querySelector('.rvc-stage-player')?.dataset.status === 'ended'`, 'first song did not end');
+    await js(`document.querySelectorAll('.rvc-track-play')[1].click()`);
+    await waitFor(`document.querySelector('.rvc-stage-song strong')?.textContent === '春の歌.wav'`, 'manual next song failed');
     await waitFor(`Number(document.querySelector('[aria-label="歌曲进度"]').max) === 30`, 'second song metadata missing');
     await js(`const seek=document.querySelector('[aria-label="歌曲进度"]'); seek.value='29.8'; seek.dispatchEvent(new Event('input',{bubbles:true}));`);
     await waitFor(`document.querySelector('.rvc-stage-player')?.dataset.status === 'ended'`, 'playlist did not stop at last song');
@@ -159,7 +159,7 @@ app.whenReady().then(async () => {
     assert.equal(await js(`document.querySelector('.rvc-vocal-name').textContent`), '星の歌 RVC纯人声.wav');
     await click('.rvc-track-list li .live2d-icon-btn');
     await waitFor(`document.querySelectorAll('.rvc-track-list li').length === 1`, 'remove track failed');
-    const report = { passed:true, realCubism:true, realAudio:true, audibleOutputMuted:true, checks:['import two local files', 'unassociated mix stays closed', 'decode/associate pure vocal WAV', 'silent vocal intervals stay closed over loud accompaniment', 'vocal timeline follows seek/resume', 'mouth independent of monitor volume', 'positive timing offset', 'mouth association persists across reload', 'pause/seek/resume', 'fold preserves audio', '1440/960/720 layouts', 'mode switch cancels pending LLM', 'singing blocks danmaku/LLM/TTS', 'clock continues', 'finish song then closing cue', 'deadline stops song then farewell', 'sequential playback', 'library/collapse survive reload without autoplay', 'remove library copy'], consoleErrors:errors };
+    const report = { passed:true, realCubism:true, realAudio:true, audibleOutputMuted:true, checks:['import two local files', 'unassociated mix stays closed', 'decode/associate pure vocal WAV', 'silent vocal intervals stay closed over loud accompaniment', 'vocal timeline follows seek/resume', 'mouth independent of monitor volume', 'positive timing offset', 'mouth association persists across reload', 'pause/seek/resume', 'fold preserves audio', '1440/960/720 layouts', 'mode switch cancels pending LLM', 'singing blocks danmaku/LLM/TTS', 'clock continues', 'finish song then closing cue', 'deadline stops song then farewell', 'manual next song', 'library/collapse survive reload without autoplay', 'remove library copy'], consoleErrors:errors };
     fs.writeFileSync(path.join(output,'verification.json'), JSON.stringify(report,null,2));
     fs.rmSync(path.join(output,'error.json'), {force:true}); fs.rmSync(path.join(output,'failure.png'), {force:true});
     console.log(JSON.stringify(report));

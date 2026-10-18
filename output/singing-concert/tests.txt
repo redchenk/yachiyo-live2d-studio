@@ -1,0 +1,53 @@
+✔ TTS adapters preserve streaming Japanese audio and provider-specific auth (0.396292ms)
+✔ chat adapters retain vision and history in both response formats (0.221167ms)
+✔ official DeepSeek Flash streams live replies without the default thinking delay (0.315042ms)
+✔ music resolver skips previews and keeps provider URL behind a local token (2.63875ms)
+✔ CRC agrees with the NSIS oracle and detects payload corruption (1.473875ms)
+✔ WriteUninstaller applies resource patches and retains the ORIGINAL embedded CRC (0.633917ms)
+✔ unknown patches and disabled integrity checks fail instead of rewriting CRC (1.76375ms)
+✔ real makensis fixture reproduces the omitted icon-patch failure (1.597375ms)
+✔ platform data paths are persistent and support explicit portable storage (0.339875ms)
+✔ bundled SQLite preserves records across service restarts without Docker (341.46975ms)
+✔ gateway streams chat before completion, cancels upstream and rejects foreign origins (22.007625ms)
+✔ local song selection respects requests, unique voters, variety and unavailable songs (2.846916ms)
+✔ break duration adapts to audience activity and stays bounded (0.105ms)
+✔ concert requires explicit live start; silence does not implicitly start streaming (0.473292ms)
+✔ song finish opens interaction, requests pick next song, announcement waits for TTS (0.93375ms)
+✔ ongoing chat holds the next song and message floods cannot stretch the gap indefinitely (1.607ms)
+✔ manual pause, stop and disable revoke an outstanding introduction (0.512458ms)
+✔ closing and deleted/failed songs cannot be automatically started (0.303542ms)
+✔ RVC library persists imports, serves ranges and deletes only its own copy (65.4365ms)
+✔ vocal envelope respects stereo energy, silent intervals, gate and offset (2.3185ms)
+✔ mixed audio never drives mouth; vocal clock survives volume, seek, pause and switching (1.452042ms)
+✔ stale vocal loads cannot start a stopped song or replace the next song (0.36325ms)
+✔ corrupt or unavailable mouth data plays safely closed with an actionable error (0.468667ms)
+✔ vocal mouth association persists, validates input and deletes only its own timeline (42.908042ms)
+WebSocket server error: Port 24678 is already in use
+✔ managed Milvus migrates once to built-in memory without changing the database (54.074209ms)
+Broadcast scene switcher checks passed
+✔ tools/live2d-studio/test-broadcast-scene-switcher.mjs (195.460042ms)
+Cubism runtime cadence and single-owner motion checks passed
+Cubism expression hold and reset checks passed
+✔ tools/live2d-studio/test-cubism-runtime-cadence.mjs (48.621125ms)
+live director scheduler checks passed
+✔ tools/live2d-studio/test-live-director-scheduler.mjs (45.420334ms)
+live turn pipeline checks passed
+✔ tools/live2d-studio/test-live-turn-pipeline.mjs (32.130208ms)
+music browser playback checks passed
+✔ tools/live2d-studio/test-music-browser-playback.mjs (208.131333ms)
+✔ settings normalize duration, unlimited mode and closing bounds (0.743959ms)
+✔ closing and farewell fire once at absolute host deadlines (0.213833ms)
+✔ a suspended app resumes at the real deadline without a stale closing cue (0.554459ms)
+✔ unlimited mode cannot spontaneously close (0.127583ms)
+✔ short broadcasts leave time for the opening (0.1125ms)
+✔ stopping and restarting cancel timers and reset the session (0.095334ms)
+✔ trusted closing context guides rather than repeating goodbye or opening topics (0.303167ms)
+✔ clock formats boundaries and nonnegative countdowns (0.100958ms)
+ℹ tests 38
+ℹ suites 0
+ℹ pass 38
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 2860.928667
