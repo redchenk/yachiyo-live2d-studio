@@ -37,4 +37,3 @@ export async function buildVocalTimeline(buffer, vocalName, { yieldControl = () 
   return validateMouthTimeline({ version: 2, vowels, vowelStepMs: 20, stepMs: MOUTH_STEP_MS, duration: buffer.duration,
     vocalName: vocalName.slice(0, 240), offsetMs: 0, gateDb: DEFAULT_GATE_DB, frames });
 }
-
