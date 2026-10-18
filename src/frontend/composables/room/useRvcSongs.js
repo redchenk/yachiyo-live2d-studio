@@ -12,7 +12,7 @@ export function useRvcSongs({ canPlay, onPlaybackChange = () => {}, onBeforePlay
       Object.assign(state, patch);
       if (changed) onPlaybackChange(patch.status, patch);
     },
-    onMouth: value => window.dispatchEvent(new CustomEvent('tsukuyomi:live2d-mouth', { detail: { value } })),
+    onMouth: (value, detail) => window.dispatchEvent(new CustomEvent('tsukuyomi:live2d-mouth', { detail: { ...detail, value, source: 'singing' } })),
     onEnded: () => onEnded(state.track)
   });
   const active = computed(() => ['playing', 'loading'].includes(state.status));

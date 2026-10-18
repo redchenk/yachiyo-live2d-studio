@@ -1,4 +1,5 @@
-﻿import { readRoomVTubeStudioSettings } from './roomSettings';
+import { mouthTrackingFrame } from '../../../shared/audio-lipsync.mjs';
+import { readRoomVTubeStudioSettings } from './roomSettings';
 import {
   behaviorActionBlocksAutoBlink,
   behaviorActionPriority,
@@ -1852,6 +1853,9 @@ export function mountVTubeStudioBridge() {
       .catch(() => {});
     }
 
+  let audioMouth = null;
+  let audioMouthAt = -Infinity;
+
   function queueInjection(values) {
     if (!settings.enabled || !Array.isArray(values) || !values.length) return;
     const suppressEyes = activeExpressionOwnsEyeOpen();
@@ -1877,7 +1881,13 @@ export function mountVTubeStudioBridge() {
     pendingInjection.clear();
     if (!values.length) return;
     const now = performance.now();
-    const smoothedValues = smoothInjectionValues(values, smoothedInjection, lastInjectionAt ? now - lastInjectionAt : 32);
+    let smoothedValues = smoothInjectionValues(values, smoothedInjection, lastInjectionAt ? now - lastInjectionAt : 32);
+    if (settings.injectMouth && audioMouth && now - audioMouthAt < 350) {
+      const mouth = mouthTrackingFrame(audioMouth);
+      if (yachiyoDirectInputsReady) mouth.push(...mapTrackingFrameToYachiyoCubismParameters(mouth).filter(item => YACHIYO_MODEL_PARAMETER_RANGES[item.id]));
+      const owned = new Set(mouth.map(item => item.id));
+      smoothedValues = [...smoothedValues.filter(item => !owned.has(item.id)), ...mouth.map(item => ({ id: item.id, value: item.value, weight: 1 }))];
+    }
     lastInjectionAt = now;
     publishRoomLive2DDebugState({
       vtsParameters: summarizeDebugParameters(smoothedValues),
@@ -2054,11 +2064,8 @@ export function mountVTubeStudioBridge() {
     if (!settings.injectMouth) return;
     const value = clamp(Number(event.detail?.value), 0, 1);
     performanceBrain.onMouth(value);
-    queueInjection([
-      { id: 'MouthOpen', value, weight: 0.92 },
-      { id: 'VoiceVolumePlusMouthOpen', value, weight: 0.72 },
-      { id: 'VoiceVolume', value, weight: 0.38 }
-    ]);
+    audioMouth = { ...event.detail, value }; audioMouthAt = performance.now();
+    queueInjection(mouthTrackingFrame(audioMouth));
   }
 
   function onCharacterState(event) {

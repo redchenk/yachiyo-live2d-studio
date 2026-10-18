@@ -1,0 +1,94 @@
+import { app, BrowserWindow } from 'electron';
+import { build } from 'vite';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import assert from 'node:assert/strict';
+import { startDesktopServer } from './server.mjs';
+import { lipsyncFixture, names, wav, vowelSamples } from './lipsync-fixtures.mjs';
+const root = path.resolve(import.meta.dirname, '../..'), temp = fs.mkdtempSync(path.join(os.tmpdir(), 'yachiyo-lipsync-'));
+const output = path.join(root, 'output/lipsync-026'); fs.mkdirSync(output, { recursive: true });
+const fixture = lipsyncFixture();
+app.setPath('userData', path.join(temp, 'electron'));
+app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
+app.on('window-all-closed', () => {});
+app.whenReady().then(async () => {
+  let upstreamCalls = 0;
+  const runtime = await startDesktopServer({ resourceRoot: root, dataDir: temp, services: {}, port: 0, fetchImpl: async () => {
+    upstreamCalls++;
+    return new Response(fixture.wav, { headers: { 'Content-Type': 'audio/wav' } });
+  } });
+  const win = new BrowserWindow({ width: 1440, height: 1000, show: true, webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, backgroundThrottling: false } });
+  win.webContents.setAudioMuted(true);
+  win.webContents.session.webRequest.onBeforeRequest((d, cb) => cb({ cancel: /^https?:/.test(d.url) && new URL(d.url).origin !== runtime.origin }));
+  const errors = []; win.webContents.on('console-message', e => { if (e.level === 'error') errors.push(e.message); });
+  const js = code => win.webContents.executeJavaScript(`{${code}\n}`, true).catch(error => { console.error('Renderer step failed:', code.slice(0, 180), errors); throw error; });
+  const delay = ms => new Promise(r => setTimeout(r, ms));
+  const wait = async (code, label, timeout = 15000) => { const end = Date.now() + timeout; while (Date.now() < end) { if (await js(code)) return; await delay(80); } throw new Error(label); };
+  try {
+    await win.loadURL(runtime.origin + '/live2d-studio/');
+    await js(`localStorage.setItem('roomTTSSettings',JSON.stringify({enabled:true,provider:'fixture',useProxy:true})); localStorage.setItem('roomMemorySettings',JSON.stringify({enabled:false}));`);
+    await win.loadURL(runtime.origin + '/live2d-studio/');
+    await wait(`!!window.TSUKUYOMI_LIVE2D_READY && !document.querySelector('.live2d-loading')`, 'Cubism not ready');
+    await js(`const create=Live2DCubismCore.Model.fromMoc;Live2DCubismCore.Model.fromMoc=function(...args){const model=create.apply(this,args);const update=model.update;model.update=function(...args){window.__coreModel=this;window.__coreUpdates=(window.__coreUpdates||0)+1;return update.apply(this,args);};return model;};window.initTsukuyomiLive2DRoom();`);
+    await wait(`!!window.__coreModel && !!window.TSUKUYOMI_LOCAL_CUBISM_BRIDGE`, 'core capture failed');
+    const built = await build({ configFile: false, logLevel: 'error', build: { write: false, lib: { entry: path.join(root, 'tools/desktop/lipsync-browser-entry.mjs'), formats: ['iife'], name: 'LipsyncFixture' } } });
+    await js((Array.isArray(built) ? built[0] : built).output.find(x => x.type === 'chunk').code);
+    await js(`__lipsyncTools.saveLipsyncSettings({profile:${JSON.stringify(fixture.profile)}});
+      window.__lip={events:[],audios:[],done:false,error:''};
+      const nativeAudio=Audio;window.Audio=function(...args){const audio=new nativeAudio(...args);__lip.audios.push(audio);return audio;};window.Audio.prototype=nativeAudio.prototype;
+      const nativeFetch=fetch;window.fetch=async(url,options)=>String(url)==='/api/tts'?new Response(Uint8Array.from(atob('${fixture.wav.toString('base64')}'),c=>c.charCodeAt(0)),{headers:{'Content-Type':'audio/wav'}}):String(url).includes('set_gpt_weights')||String(url).includes('set_sovits_weights')?Response.json({success:true}):nativeFetch(url,options);
+      window.addEventListener('tsukuyomi:live2d-mouth',e=>{const a=__lip.audios.at(-1);if(e.detail.source!=='speech')return;const p=__coreModel.parameters;__lip.events.push({time:a?.currentTime||0,...e.detail,coreOpen:p.values[p.ids.indexOf('ParamMouthOpenY')],corePucker:p.values[p.ids.indexOf('ParamMouthPuckerWiden')]});});
+      window.__speech=__lipsyncTools.createLive2DSpeechPlayer();
+      __speech.enqueue('今日は楽しいですね。').then(()=>__lip.done=true).catch(e=>__lip.error=e.message);true;`);
+    await wait(`__lip.done || __lip.error`, 'speech did not finish');
+    assert.equal(await js('__lip.error'), '');
+    const speech = await js('__lip.events');
+    fs.writeFileSync(path.join(output,'speech-debug.json'),JSON.stringify({speech,errors,core:await js('({ids:__coreModel.parameters.ids,minimum:__coreModel.parameters.minimumValues,maximum:__coreModel.parameters.maximumValues,bridge:window.__TSUKUYOMI_LOCAL_CUBISM_BRIDGE_STATE__,updates:window.__coreUpdates})')},null,2));
+    const windows = names.map((name, i) => {
+      const center = 0.75 + i * 0.8, rows = speech.filter(r => Math.abs(r.time - center) < 0.10);
+      assert.ok(rows.length >= 3 && rows.some(r => r.value > 0.1), `speech vowel ${name} missing`);
+      const correct = rows.filter(r => r.vowels.indexOf(Math.max(...r.vowels)) === i).length / rows.length;
+      assert.ok(correct > 0.7, `speech vowel ${name}: ${correct}`);
+      assert.ok(rows.some(r => r.coreOpen > 0.1), 'actual Cubism mouth did not open');
+      return { name, correct, samples: rows.length, opening: Math.max(...rows.map(r => r.coreOpen)), pucker: rows.reduce((s,r)=>s+r.corePucker,0)/rows.length };
+    });
+    const silence = speech.filter(r => r.time > 0.1 && r.time < 0.4 || r.time > 4.4);
+    assert.ok(silence.length > 5 && silence.every(r => r.value === 0), 'silent audio opened mouth');
+    assert.ok(windows[2].pucker > windows[1].pucker + 0.15, 'actual rig does not distinguish U from I');
+    // The direct GPT-SoVITS path exercises the real same-origin streaming relay.
+    await js(`localStorage.setItem('roomTTSSettings',JSON.stringify({enabled:true,provider:'gpt-sovits',useProxy:false,apiUrl:'http://127.0.0.1:9880/tts'}));__lip.events=[];__lip.done=false;__speech.enqueue('こんにちは。').then(()=>__lip.done=true).catch(e=>__lip.error=e.message);true;`);
+    await wait(`__lip.events.some(e=>e.value>0.1)||__lip.error`, 'streaming meter missing');
+    assert.equal(await js('__lip.error'), ''); assert.equal(upstreamCalls, 1, 'do not synthesize twice for lip analysis');
+    await js('__speech.stop()'); await delay(150);
+    assert.equal(await js('__lip.events.at(-1).value'), 0, 'stop must close mouth');
+    // Actual UI worker path, old cache migration hint, seek, loud mix/silent stem.
+    if (await js(`!!document.querySelector('.studio-settings-panel')`)) await js(`document.querySelector('.studio-settings-header button').click()`);
+    await js(`document.querySelectorAll('.live2d-scene-switcher button')[0].click()`);
+    await wait(`!!document.querySelector('[aria-label="导入 RVC 歌曲"]')`, 'singing UI missing');
+    const mix = wav(vowelSamples(0, 5)).toString('base64');
+    await js(`const data=new DataTransfer();data.items.add(new File([Uint8Array.from(atob('${mix}'),c=>c.charCodeAt(0))],'口型测试.wav',{type:'audio/wav'}));const input=document.querySelector('[aria-label="导入 RVC 歌曲"]');input.files=data.files;input.dispatchEvent(new Event('change',{bubbles:true}));`);
+    await wait(`document.querySelectorAll('.rvc-track-list li').length===1`, 'song import missing');
+    await js(`document.querySelector('.rvc-track-play').click()`); await delay(150);
+    await js(`document.querySelector('.rvc-vocal-link').click();const data=new DataTransfer();data.items.add(new File([Uint8Array.from(atob('${fixture.wav.toString('base64')}'),c=>c.charCodeAt(0))],'纯人声.wav',{type:'audio/wav'}));const input=document.querySelector('[aria-label="关联纯人声轨"]');input.files=data.files;input.dispatchEvent(new Event('change',{bubbles:true}));`);
+    await wait(`document.querySelector('.rvc-mouth-settings[data-configured="true"]')`, 'worker vowel import failed');
+    const tracks = await (await fetch(runtime.origin + '/api/rvc/tracks')).json();
+    const cached = await (await fetch(runtime.origin + '/api/rvc/tracks/' + tracks.tracks[0].id + '/mouth')).json();
+    assert.equal(cached.mouth.version, 2); assert.equal(cached.mouth.vowels.length, 1250);
+    await js(`window.__songEvents=[];window.addEventListener('tsukuyomi:live2d-mouth',e=>{if(e.detail.source==='singing')__songEvents.push(e.detail);});document.querySelector('.rvc-track-play').click();`);
+    await wait(`__songEvents.some(e=>e.value>0.1)`, 'vowel song did not open');
+    await js(`const el=document.querySelector('[aria-label="歌曲进度"]');el.value='4.5';el.dispatchEvent(new Event('input',{bubbles:true}));`);await delay(150);
+    assert.equal(await js('__songEvents.at(-1).value'), 0, 'loud mix at silent vocals must close');
+    await js(`document.querySelector('.lipsync-calibration').open=true;document.querySelector('.lipsync-calibration').scrollIntoView({block:'center'});`);
+    await js(`document.querySelector('.lipsync-calibration button').click();const data=new DataTransfer();data.items.add(new File([Uint8Array.from(atob('${wav(vowelSamples(0)).toString('base64')}'),c=>c.charCodeAt(0))],'A.wav',{type:'audio/wav'}));const input=document.querySelector('[aria-label="口型元音校准音频"]');input.files=data.files;input.dispatchEvent(new Event('change',{bubbles:true}));`);
+    await wait(`document.querySelector('.lipsync-calibration [role="status"]')?.textContent.includes('已校准')`, 'calibration UI failed');
+    assert.ok(await js(`JSON.parse(localStorage.getItem('roomAudioLipsyncSettings')).calibrated.includes('A')`));
+    await delay(100);
+    fs.writeFileSync(path.join(output, 'settings.png'), (await win.webContents.capturePage()).toPNG());
+    fs.writeFileSync(path.join(output, 'verification.json'), JSON.stringify({ passed: true, speechVowels: windows, silentSamples: silence.length, streamingSynthesisCalls: upstreamCalls, songCacheVersion: cached.mouth.version, workerVowelFrames: cached.mouth.vowels.length / 5, errors, boundary: 'Synthetic calibrated stereo fixtures on macOS Electron/Cubism; real GPT-SoVITS/RVC voice and Windows/Linux still need listening/visual acceptance.' }, null, 2));
+    console.log(JSON.stringify({ passed: true, output, windows, errors }));
+  } catch (error) {
+    fs.writeFileSync(path.join(output, 'failure.png'), (await win.webContents.capturePage()).toPNG());
+    console.error(error); process.exitCode = 1;
+  } finally { win.destroy(); await runtime.close(); await fs.promises.rm(temp, { recursive: true, force: true }); app.exit(process.exitCode || 0); }
+});

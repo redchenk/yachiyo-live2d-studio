@@ -1,0 +1,46 @@
+{
+  "passed": true,
+  "speechVowels": [
+    {
+      "name": "A",
+      "correct": 1,
+      "samples": 12,
+      "opening": 0.4669108986854553,
+      "pucker": 2.6431791345617324e-23
+    },
+    {
+      "name": "I",
+      "correct": 1,
+      "samples": 12,
+      "opening": 0.5103429555892944,
+      "pucker": -0.44961895048618317
+    },
+    {
+      "name": "U",
+      "correct": 1,
+      "samples": 12,
+      "opening": 0.47686687111854553,
+      "pucker": 0.6497034033139547
+    },
+    {
+      "name": "E",
+      "correct": 1,
+      "samples": 12,
+      "opening": 0.4942742586135864,
+      "pucker": -0.29975328346093494
+    },
+    {
+      "name": "O",
+      "correct": 1,
+      "samples": 12,
+      "opening": 0.4749332666397095,
+      "pucker": 0.44977890451749164
+    }
+  ],
+  "silentSamples": 56,
+  "streamingSynthesisCalls": 1,
+  "songCacheVersion": 2,
+  "workerVowelFrames": 250,
+  "errors": [],
+  "boundary": "Synthetic calibrated stereo fixtures on macOS Electron/Cubism; real GPT-SoVITS/RVC voice and Windows/Linux still need listening/visual acceptance."
+}

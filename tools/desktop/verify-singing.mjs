@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { startDesktopServer } from './server.mjs';
 
 const root = path.resolve(import.meta.dirname, '../..');
-const output = path.join(root, 'output/singing-concert-regression');
+const output = process.env.YACHIYO_VERIFY_OUTPUT || path.join(root, 'output/singing-concert-regression');
 const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'yachiyo-singing-'));
 fs.mkdirSync(output, { recursive: true });
 app.setPath('userData', path.join(temp, 'profile'));

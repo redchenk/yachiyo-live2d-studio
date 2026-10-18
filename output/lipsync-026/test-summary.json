@@ -1,0 +1,18 @@
+{
+  "desktopUnitTests": {
+    "passed": 29,
+    "failed": 0,
+    "skipped": 0,
+    "nsisFixture": "Fresh real makensis fixture with different install/uninstall icons"
+  },
+  "studioRegressions": {
+    "passed": 90,
+    "unavailable": 1,
+    "unavailableTest": "test-netease-vip-full-track.mjs requires Windows powershell.exe"
+  },
+  "electronScenarios": [
+    "verification.json",
+    "concert/verification.json",
+    "singing/verification.json"
+  ]
+}

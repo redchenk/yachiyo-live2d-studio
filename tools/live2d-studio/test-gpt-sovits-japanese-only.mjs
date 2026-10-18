@@ -54,7 +54,8 @@ globalThis.window = {
     return true;
   }
 };
-globalThis.fetch = async (url) => {
+globalThis.fetch = async (url, options) => {
+  if (String(url) === '/api/tts/prepare') return Response.json({ url: JSON.parse(options.body).url });
   assert.equal(String(url), '/api/chat');
   translationCalls += 1;
   return new Response(JSON.stringify({ success: true, data: { reply: translationReply } }), {

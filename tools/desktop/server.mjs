@@ -1,3 +1,4 @@
+import { createTtsStreamRelay } from './tts-stream.mjs';
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -25,6 +26,7 @@ export async function startDesktopServer({ resourceRoot, dataDir, services, port
   studioAssetPlugin({ repoRoot: resourceRoot, itemRoot }).configureServer({ middlewares: { use(fn) { assets = fn; } } });
   const music = createMusicAdapter(dataDir);
   const rvc = createRvcLibrary(dataDir);
+  const ttsStream = createTtsStreamRelay(fetchImpl);
   let origin;
   const server = http.createServer(async (req, res) => {
     let cancellation;
@@ -37,6 +39,7 @@ export async function startDesktopServer({ resourceRoot, dataDir, services, port
       const route = decodeURIComponent(url.pathname);
       if (route === '/healthz') return json(res, 200, { success: true, service: 'yachiyo-desktop', memory: 'embedded-sqlite', platform: process.platform });
       if (await rvc(req, res, url)) return;
+      if (await ttsStream(req, res, url)) return;
       if (route.startsWith('/api/') && req.method !== 'GET' && !String(req.headers['content-type']).startsWith('application/json')) {
         return json(res, 415, { success: false, message: 'JSON is required' });
       }

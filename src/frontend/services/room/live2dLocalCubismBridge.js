@@ -260,6 +260,12 @@ function writeLocalCubismFrame(parameters, now) {
   // The behavior bridge already runs in requestAnimationFrame before Cubism.
   // Write this sample now, so rendering does not use the previous frame's pose.
   const frameParameters = smoothLocalCubismFrame(parameters, now);
+  // Audio already has time-based smoothing. Do not add animation lag to lips.
+  const audioValues = new Map(parameters.filter(item => item.audioMouth).map(item => [item.id, item]));
+  for (let index = 0; index < frameParameters.length; index++) {
+    const audio = audioValues.get(frameParameters[index].id);
+    if (audio) frameParameters[index] = { id: audio.id, value: audio.value, weight: 1 };
+  }
   if (!frameParameters.length) return;
 
   const bridge = runtimeLocalBridge();

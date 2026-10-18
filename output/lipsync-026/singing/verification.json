@@ -1,0 +1,28 @@
+{
+  "passed": true,
+  "realCubism": true,
+  "realAudio": true,
+  "audibleOutputMuted": true,
+  "checks": [
+    "import two local files",
+    "unassociated mix stays closed",
+    "decode/associate pure vocal WAV",
+    "silent vocal intervals stay closed over loud accompaniment",
+    "vocal timeline follows seek/resume",
+    "mouth independent of monitor volume",
+    "positive timing offset",
+    "mouth association persists across reload",
+    "pause/seek/resume",
+    "fold preserves audio",
+    "1440/960/720 layouts",
+    "mode switch cancels pending LLM",
+    "singing blocks danmaku/LLM/TTS",
+    "clock continues",
+    "finish song then closing cue",
+    "deadline stops song then farewell",
+    "manual next song",
+    "library/collapse survive reload without autoplay",
+    "remove library copy"
+  ],
+  "consoleErrors": []
+}

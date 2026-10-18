@@ -1,3 +1,6 @@
+import { attachAudioMouthAnalyser } from './audioMouthAnalyser.js';
+import { readLipsyncSettings } from './lipsyncSettings.js';
+import { CLOSED_MOUTH } from '../../../shared/audio-lipsync.mjs';
 import { normalizeLLMApiUrl, readRoomLLMSettings, readRoomTTSSettings } from './roomSettings';
 import { cleanLive2DReply } from './live2dText';
 
@@ -384,9 +387,8 @@ function buildGptSovitsAudioUrl(text, settings) {
 }
 
 function dispatchMouth(value) {
-  window.dispatchEvent(new CustomEvent('tsukuyomi:live2d-mouth', {
-    detail: { value: Math.min(Math.max(Number(value) || 0, 0), 1) }
-  }));
+  const detail = typeof value === 'object' ? value : { ...CLOSED_MOUTH, value: Math.min(Math.max(Number(value) || 0, 0), 1) };
+  window.dispatchEvent(new CustomEvent('tsukuyomi:live2d-mouth', { detail: { ...detail, source: 'speech' } }));
 }
 
 function stopAnimationFrame(id) {
@@ -403,7 +405,10 @@ export function createLive2DSpeechPlayer({ onState } = {}) {
   let queueSequence = 0;
   let lastPlaybackEndedAt = 0;
   const speechQueue = [];
-  const audioEnvelopes = new WeakMap();
+  const audioMeters = new WeakMap();
+  let lipsyncSettings = readLipsyncSettings();
+  const refreshLipsync = () => { lipsyncSettings = readLipsyncSettings(); };
+  window.addEventListener?.('tsukuyomi:lipsync-settings', refreshLipsync);
 
   function setState(patch) {
     onState?.(patch);
@@ -412,6 +417,7 @@ export function createLive2DSpeechPlayer({ onState } = {}) {
   function stopMouth() {
     stopAnimationFrame(frameId);
     frameId = 0;
+    if (currentAudio) audioMeters.get(currentAudio)?.reset();
     dispatchMouth(0);
   }
 
@@ -478,6 +484,11 @@ export function createLive2DSpeechPlayer({ onState } = {}) {
   }
 
   function releaseAudio(audio) {
+    audioMeters.get(audio)?.dispose();
+    audioMeters.delete(audio);
+    audio?.pause?.();
+    audio?.removeAttribute?.('src');
+    audio?.load?.();
     const url = audio?.dataset?.objectUrl || '';
     if (url) {
       URL.revokeObjectURL(url);
@@ -571,122 +582,48 @@ export function createLive2DSpeechPlayer({ onState } = {}) {
     setState({ status: 'idle', error: '' });
   }
 
-  function startSyntheticMouth(text, audio) {
-    const seed = Math.max(4, compactSpeechText(text).length);
-    const tick = () => {
-      if (!currentAudio || currentAudio !== audio || audio.paused || audio.ended) {
-        stopMouth();
-        return;
-      }
-      if (audioEnvelopes.get(audio)?.values?.length) {
-        startEnvelopeMouth(text, audio);
-        return;
-      }
-      const t = audio.currentTime || 0;
-      const pulse = Math.max(0, Math.sin(t * 18 + seed * 0.07));
-      const accent = Math.max(0, Math.sin(t * 7.3 + seed * 0.13));
-      dispatchMouth(Math.min(0.44, 0.02 + pulse * 0.3 + accent * 0.1));
-      frameId = window.requestAnimationFrame(tick);
-    };
-    tick();
-  }
-
-  function startEnvelopeMouth(text, audio) {
-    const envelope = audioEnvelopes.get(audio);
-    if (!envelope?.values?.length) {
-      startSyntheticMouth(text, audio);
-      return;
-    }
-    let smoothedMouth = 0;
-    const tick = () => {
-      if (!currentAudio || currentAudio !== audio || audio.paused || audio.ended) {
-        stopMouth();
-        return;
-      }
-      const index = Math.min(
-        envelope.values.length - 1,
-        Math.max(0, Math.floor((audio.currentTime || 0) * envelope.fps))
-      );
-      const target = envelope.values[index] || 0;
-      smoothedMouth = smoothedMouth * 0.58 + target * 0.42;
-      dispatchMouth(smoothedMouth < 0.025 ? 0 : smoothedMouth);
-      frameId = window.requestAnimationFrame(tick);
-    };
-    tick();
-  }
-
-  async function buildMouthEnvelope(blob) {
+  async function prepareAudioMeter(audio) {
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContextClass) return;
+    audioContext ||= new AudioContextClass({ sampleRate: 16000, latencyHint: 'interactive' });
+    let timer;
     try {
-      const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-      if (!AudioContextClass) return null;
-      audioContext ||= new AudioContextClass();
-      const decoded = await audioContext.decodeAudioData(await blob.arrayBuffer());
-      const fps = 60;
-      const channel = decoded.getChannelData(0);
-      const sampleRate = decoded.sampleRate || 44100;
-      const hopSize = Math.max(1, Math.floor(sampleRate / fps));
-      const windowSize = Math.max(hopSize, Math.floor(sampleRate * 0.032));
-      const raw = [];
-      for (let start = 0; start < channel.length; start += hopSize) {
-        let sum = 0;
-        let count = 0;
-        const end = Math.min(channel.length, start + windowSize);
-        for (let index = start; index < end; index += 1) {
-          const sample = channel[index] || 0;
-          sum += sample * sample;
-          count += 1;
-        }
-        raw.push(Math.sqrt(sum / Math.max(count, 1)));
-      }
-      const sorted = [...raw].sort((left, right) => left - right);
-      const reference = Math.max(sorted[Math.floor(sorted.length * 0.92)] || 0, 0.035);
-      return {
-        fps,
-        values: raw.map((value) => {
-          const gated = Math.max(0, value - 0.01);
-          return Math.min(0.48, Math.pow(Math.min(gated / reference, 1), 0.74) * 0.48);
-        })
-      };
-    } catch (_) {
-      return null;
-    }
+      await waitForCancellablePlaybackGate(Promise.race([
+        audioContext.resume(),
+        new Promise((_, reject) => { timer = window.setTimeout(() => reject(timeoutError('Audio output did not start; click playback to enable audio')), 4000); })
+      ]));
+    } finally { window.clearTimeout(timer); }
+    if (!audioMeters.has(audio)) audioMeters.set(audio, attachAudioMouthAnalyser(audioContext, audio, () => lipsyncSettings));
+  }
+
+  function startAudioMouth(audio) {
+    const tick = () => {
+      if (currentAudio !== audio || audio.paused || audio.ended) { stopMouth(); return; }
+      dispatchMouth(audioMeters.get(audio)?.sample() || CLOSED_MOUTH);
+      frameId = window.requestAnimationFrame(tick);
+    };
+    tick();
   }
 
   async function createAudioFromBlob(blob) {
     const url = URL.createObjectURL(blob);
     const audio = new Audio(url);
     audio.dataset.objectUrl = url;
-    audio.dataset.mouthMode = 'synthetic';
-    buildMouthEnvelope(blob)
-      .then((envelope) => {
-        if (!envelope?.values?.length || !audio.dataset.objectUrl) return;
-        audioEnvelopes.set(audio, envelope);
-        audio.dataset.mouthMode = 'envelope';
-      })
-      .catch(() => {});
     return audio;
   }
 
-  function createFastAudioFromUrl(url, speechText = '') {
-    const audio = new Audio(url);
+  async function createFastAudioFromUrl(url, speechText = '') {
+    const response = await fetchWithTimeout('/api/tts/prepare', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url })
+    }, 10000, 'TTS stream preparation');
+    if (!response.ok) throw new Error(`TTS stream ${response.status}`);
+    const data = await response.json();
+    const audio = new Audio(data.url);
     audio.preload = 'auto';
-    audio.dataset.mouthMode = 'synthetic';
     audio.dataset.fastStart = 'true';
     audio.dataset.speechText = speechText;
     audio.load?.();
     return audio;
-  }
-
-  async function createAnalysableAudioFromUrl(url) {
-    try {
-      const response = await fetchWithTimeout(url, {}, TTS_FETCH_TIMEOUT_MS, 'TTS audio fetch');
-      if (!response.ok) throw new Error(`TTS ${response.status}`);
-      return createAudioFromBlob(await response.blob());
-    } catch (_) {
-      const audio = new Audio(url);
-      audio.dataset.mouthMode = 'synthetic';
-      return audio;
-    }
   }
 
   async function makeAudio(text, settings, options = {}) {
@@ -696,7 +633,7 @@ export function createLive2DSpeechPlayer({ onState } = {}) {
     const directLocalGptSovits = isDirectLocalGptSovits(settings);
     if (directLocalGptSovits) {
       await ensureGptSovitsWeights(settings);
-      const audio = createFastAudioFromUrl(buildGptSovitsAudioUrl(ttsText, {
+      const audio = await createFastAudioFromUrl(buildGptSovitsAudioUrl(ttsText, {
         ...settings,
         textLang: FORCED_TTS_LANGUAGE,
         promptLang: FORCED_TTS_LANGUAGE
@@ -810,6 +747,8 @@ export function createLive2DSpeechPlayer({ onState } = {}) {
           throw makeStopError();
         }
       }
+      await prepareAudioMeter(audio);
+      if (token !== queueToken) { releaseAudio(audio); throw makeStopError(); }
       currentAudio = audio;
       audio.preload = 'auto';
       let playbackStarted = false;
@@ -836,8 +775,7 @@ export function createLive2DSpeechPlayer({ onState } = {}) {
         }
         if (mouthLoopStarted) return;
         mouthLoopStarted = true;
-        if (audio.dataset.mouthMode === 'envelope') startEnvelopeMouth(mouthText, audio);
-        else startSyntheticMouth(mouthText, audio);
+        startAudioMouth(audio);
       };
       await new Promise((resolve, reject) => {
         let settled = false;
@@ -1029,6 +967,7 @@ export function createLive2DSpeechPlayer({ onState } = {}) {
 
   function destroy() {
     stop();
+    window.removeEventListener?.('tsukuyomi:lipsync-settings', refreshLipsync);
     if (audioContext) {
       audioContext.close?.().catch(() => {});
       audioContext = null;

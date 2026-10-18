@@ -1,4 +1,5 @@
-import { validateMouthTimeline, vocalMouthAt } from '../../../shared/rvc-mouth.mjs';
+import { CLOSED_MOUTH, createMouthSmoother } from '../../../shared/audio-lipsync.mjs';
+import { validateMouthTimeline, vocalMouthFrameAt } from '../../../shared/rvc-mouth.mjs';
 
 const clamp = (n, low, high) => Math.min(high, Math.max(low, Number(n) || 0));
 
@@ -21,14 +22,16 @@ export function createRvcSongPlayer({ onState = () => {}, onMouth = () => {}, on
   let audio, timeline = null, controller, frame = 0, mouthRevision = 0;
   let generation = 0, disposed = false, loadedTrackId = '';
   const listeners = [];
+  const smooth = createMouthSmoother();
+  function emitMouth(detail, time = 0) { const next = timeline?.version === 1 ? detail : smooth(detail, time); onMouth(next.value, next); }
   const state = { status: 'idle', track: null, currentTime: 0, duration: 0, volume: 0.8, error: '', mouthError: '' };
   const patch = value => { Object.assign(state, value); onState({ ...state }); };
   function mouthOff() {
-    cancelFrame(frame); frame = 0; onMouth(0);
+    cancelFrame(frame); frame = 0; emitMouth(CLOSED_MOUTH);
   }
   function meter() {
     if (disposed || !audio || audio.paused || audio.ended || state.status !== 'playing') return mouthOff();
-    onMouth(vocalMouthAt(timeline, audio.currentTime));
+    emitMouth(vocalMouthFrameAt(timeline, audio.currentTime), audio.currentTime);
     frame = requestFrame(meter);
   }
   function fail(error) {
@@ -103,7 +106,7 @@ export function createRvcSongPlayer({ onState = () => {}, onMouth = () => {}, on
       mouthRevision++; timeline = mouth ? validateMouthTimeline(mouth) : null;
       patch({ track, mouthError: '' });
       // Updating a reference or gate must not leave the last vowel held open.
-      onMouth(state.status === 'playing' && audio && !audio.paused && !audio.ended ? vocalMouthAt(timeline, audio.currentTime) : 0);
+      emitMouth(state.status === 'playing' && audio && !audio.paused && !audio.ended ? vocalMouthFrameAt(timeline, audio.currentTime) : CLOSED_MOUTH, audio?.currentTime || 0);
     },
     setVolume(value) { const volume = clamp(value, 0, 1); if (audio) audio.volume = volume; patch({ volume }); },
     dispose() {

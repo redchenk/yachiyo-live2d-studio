@@ -1,0 +1,459 @@
+[
+  {
+    "test": "test-action-queue-handoff.mjs",
+    "passed": true,
+    "output": "action queue handoff checks passed\n"
+  },
+  {
+    "test": "test-action-transition-continuity.mjs",
+    "passed": true,
+    "output": "action transition continuity checks passed\n"
+  },
+  {
+    "test": "test-asr-continuous-input.mjs",
+    "passed": true,
+    "output": "Continuous ASR input checks passed\n"
+  },
+  {
+    "test": "test-asr-input-quality.mjs",
+    "passed": true,
+    "output": "ASR input quality checks passed\n"
+  },
+  {
+    "test": "test-audience-music-request.mjs",
+    "passed": true,
+    "output": "audience music request routing checks passed\n"
+  },
+  {
+    "test": "test-audience-safety-filter.mjs",
+    "passed": true,
+    "output": "audience safety filter checks passed\n"
+  },
+  {
+    "test": "test-audience-turn-selector.mjs",
+    "passed": true,
+    "output": "audience turn selector checks passed\n"
+  },
+  {
+    "test": "test-audience-viewer-state.mjs",
+    "passed": true,
+    "output": "audience viewer state checks passed\n"
+  },
+  {
+    "test": "test-auto-monitor-lifecycle.mjs",
+    "passed": true,
+    "output": "Automatic monitor lifecycle checks passed\n"
+  },
+  {
+    "test": "test-bilibili-audience-safety-integration.mjs",
+    "passed": true,
+    "output": "Bilibili audience safety integration checks passed\n"
+  },
+  {
+    "test": "test-bilibili-danmaku-burst.mjs",
+    "passed": true,
+    "output": "Bilibili danmaku burst checks passed: 2000 messages, 1 UI state event(s), 32.71ms publish time\n"
+  },
+  {
+    "test": "test-bilibili-danmaku-connection.mjs",
+    "passed": true,
+    "output": "Bilibili danmaku connection checks passed\n"
+  },
+  {
+    "test": "test-bilibili-danmaku-speech.mjs",
+    "passed": true,
+    "output": "Bilibili danmaku speech checks passed\n"
+  },
+  {
+    "test": "test-bilibili-gift-ack-gate.mjs",
+    "passed": true,
+    "output": "Bilibili gift acknowledgement gate checks passed\n"
+  },
+  {
+    "test": "test-bilibili-paid-events.mjs",
+    "passed": true,
+    "output": "Bilibili paid event checks passed\n"
+  },
+  {
+    "test": "test-bilibili-rate-gate.mjs",
+    "passed": true,
+    "output": "Bilibili rate gate checks passed\n"
+  },
+  {
+    "test": "test-bilibili-reply-policy.mjs",
+    "passed": true,
+    "output": "Bilibili reply policy checks passed\n"
+  },
+  {
+    "test": "test-bilibili-wbi.mjs",
+    "passed": true,
+    "output": "Bilibili WBI signing checks passed\n"
+  },
+  {
+    "test": "test-bilingual-streaming-caption-fast-path.mjs",
+    "passed": true,
+    "output": "✔ Japanese VOICE is emitted before its Chinese CAPTION and carries a caption promise (10.692125ms)\nℹ tests 1\nℹ suites 0\nℹ pass 1\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 154.541584\n"
+  },
+  {
+    "test": "test-broadcast-scene-switcher.mjs",
+    "passed": true,
+    "output": "Broadcast scene switcher checks passed\n"
+  },
+  {
+    "test": "test-character-state-speaking-hold.mjs",
+    "passed": true,
+    "output": "character state speaking hold checks passed\n"
+  },
+  {
+    "test": "test-cubism-action-handoff-posture.mjs",
+    "passed": true,
+    "output": "cubism action handoff posture checks passed\n"
+  },
+  {
+    "test": "test-cubism-runtime-cadence.mjs",
+    "passed": true,
+    "output": "Cubism runtime cadence and single-owner motion checks passed\nCubism expression hold and reset checks passed\n"
+  },
+  {
+    "test": "test-cubism-smile-expression-separation.mjs",
+    "passed": true,
+    "output": "cubism smile expression separation checks passed\n"
+  },
+  {
+    "test": "test-gpt-sovits-japanese-only.mjs",
+    "passed": true,
+    "output": "GPT-SoVITS Japanese-only realtime checks passed; relay fixture updated and rerun."
+  },
+  {
+    "test": "test-launcher-client-disconnect-safety.mjs",
+    "passed": true,
+    "output": "launcher client disconnect safety checks passed\n"
+  },
+  {
+    "test": "test-launcher-live-reply-telemetry.mjs",
+    "passed": true,
+    "output": "Launcher live reply telemetry checks passed\n"
+  },
+  {
+    "test": "test-launcher-webview-runtime-fallback.mjs",
+    "passed": true,
+    "output": "launcher WebView2 runtime fallback checks passed\n"
+  },
+  {
+    "test": "test-launcher-window-aspect-ratio.mjs",
+    "passed": true,
+    "output": "launcher 16:9 window checks passed\n"
+  },
+  {
+    "test": "test-live-caption-nonblocking-playback.mjs",
+    "passed": true,
+    "output": "live caption nonblocking playback checks passed\n"
+  },
+  {
+    "test": "test-live-caption-synchronizer.mjs",
+    "passed": true,
+    "output": "live caption synchronizer checks passed\n"
+  },
+  {
+    "test": "test-live-director-scheduler.mjs",
+    "passed": true,
+    "output": "live director scheduler checks passed\n"
+  },
+  {
+    "test": "test-live-reply-monitor-policy.mjs",
+    "passed": true,
+    "output": "Live reply monitor policy checks passed\n"
+  },
+  {
+    "test": "test-live-reply-repetition-guard.mjs",
+    "passed": true,
+    "output": "live reply repetition guard checks passed\n"
+  },
+  {
+    "test": "test-live-reply-telemetry.mjs",
+    "passed": true,
+    "output": "Live reply telemetry checks passed\n"
+  },
+  {
+    "test": "test-live-turn-pipeline.mjs",
+    "passed": true,
+    "output": "live turn pipeline checks passed\n"
+  },
+  {
+    "test": "test-live2d-prefetch-trigger.mjs",
+    "passed": true,
+    "output": "Live2D prefetch trigger checks passed\n"
+  },
+  {
+    "test": "test-llm-concurrent-history.mjs",
+    "passed": true,
+    "output": "concurrent LLM history checks passed\n"
+  },
+  {
+    "test": "test-llm-live-recovery.mjs",
+    "passed": true,
+    "output": "LLM live recovery checks passed\n"
+  },
+  {
+    "test": "test-llm-provider-switch.mjs",
+    "passed": true,
+    "output": "llm provider switch checks passed\n"
+  },
+  {
+    "test": "test-llm-request-abort.mjs",
+    "passed": true,
+    "output": "LLM request abort checks passed\n"
+  },
+  {
+    "test": "test-llm-stream-timeout-recovery.mjs",
+    "passed": true,
+    "output": "LLM stream timeout recovery checks passed\n"
+  },
+  {
+    "test": "test-local-cubism-frame-delivery.mjs",
+    "passed": true,
+    "output": "Local Cubism frame delivery and shared-character checks passed\n"
+  },
+  {
+    "test": "test-local-cubism-smoothing.mjs",
+    "passed": true,
+    "output": "local cubism smoothing checks passed\n"
+  },
+  {
+    "test": "test-local-vts-item-overlay.mjs",
+    "passed": true,
+    "output": "local VTS item overlay checks passed\n"
+  },
+  {
+    "test": "test-managed-milvus-policy.mjs",
+    "passed": true,
+    "output": "managed Milvus startup policy checks passed\n"
+  },
+  {
+    "test": "test-managed-milvus-recovery.mjs",
+    "passed": true,
+    "output": "managed Milvus recovery integration checks passed\n"
+  },
+  {
+    "test": "test-memory-durable-outbox.mjs",
+    "passed": true,
+    "output": "memory durable outbox checks passed\n"
+  },
+  {
+    "test": "test-memory-indexeddb-outbox.mjs",
+    "passed": true,
+    "output": "memory IndexedDB outbox burst elapsed: 67ms\nmemory IndexedDB outbox capacity checks passed\n"
+  },
+  {
+    "test": "test-memory-large-scale-viewer-isolation.mjs",
+    "passed": true,
+    "output": "large-scale viewer isolation checks passed: 50025 global memories\n"
+  },
+  {
+    "test": "test-memory-lifecycle.mjs",
+    "passed": true,
+    "output": "Memory lifecycle test passed\n"
+  },
+  {
+    "test": "test-memory-long-run-stability.mjs",
+    "passed": true,
+    "output": "memory long-run stability checks passed: 600 turns, 3 restarts, 60 segments, 108 rollups, record p95=10.5ms, total=1.3s\n"
+  },
+  {
+    "test": "test-memory-outbox-localstorage-fallback.mjs",
+    "passed": true,
+    "output": "memory outbox localStorage fallback checks passed\n"
+  },
+  {
+    "test": "test-memory-outbox-quota-fallback.mjs",
+    "passed": true,
+    "output": "memory outbox quota fallback checks passed\n"
+  },
+  {
+    "test": "test-memory-outbox-reload.mjs",
+    "passed": true,
+    "output": "memory outbox reload checks passed\n"
+  },
+  {
+    "test": "test-memory-outbox-timeout-recovery.mjs",
+    "passed": true,
+    "output": "memory outbox timeout recovery checks passed\n"
+  },
+  {
+    "test": "test-memory-retrieval-nonblocking-outbox.mjs",
+    "passed": true,
+    "output": "memory retrieval nonblocking outbox checks passed\n"
+  },
+  {
+    "test": "test-memory-segment-stability.mjs",
+    "passed": true,
+    "output": "memory segment stability checks passed\n"
+  },
+  {
+    "test": "test-memory-session-restart-boundary.mjs",
+    "passed": true,
+    "output": "memory session restart boundary checks passed\n"
+  },
+  {
+    "test": "test-memory-session-summary-backlog.mjs",
+    "passed": true,
+    "output": "memory session summary backlog checks passed\n"
+  },
+  {
+    "test": "test-memory-session-summary-cadence.mjs",
+    "passed": true,
+    "output": "memory session summary cadence checks passed\n"
+  },
+  {
+    "test": "test-memory-session-summary-timeout.mjs",
+    "passed": true,
+    "output": "memory session summary timeout checks passed\n"
+  },
+  {
+    "test": "test-memory-synthetic-recovery-filter.mjs",
+    "passed": true,
+    "output": "Synthetic recovery memory filter checks passed\n"
+  },
+  {
+    "test": "test-minecraft-action-pipeline.mjs",
+    "passed": true,
+    "output": "Minecraft action pipeline checks passed\n"
+  },
+  {
+    "test": "test-minecraft-agent-integration.mjs",
+    "passed": true,
+    "output": "Minecraft agent integration checks passed\n"
+  },
+  {
+    "test": "test-minecraft-agent-runtime.mjs",
+    "passed": true,
+    "output": "Minecraft agent runtime checks passed\n"
+  },
+  {
+    "test": "test-minecraft-autonomy-controller.mjs",
+    "passed": true,
+    "output": "Minecraft autonomy controller checks passed\n"
+  },
+  {
+    "test": "test-minecraft-llm-control.mjs",
+    "passed": true,
+    "output": "Minecraft LLM control checks passed\n"
+  },
+  {
+    "test": "test-minecraft-movement-primitives.mjs",
+    "passed": true,
+    "output": "Minecraft movement primitive checks passed\n"
+  },
+  {
+    "test": "test-minecraft-safety.mjs",
+    "passed": true,
+    "output": "Minecraft safety checks passed\n"
+  },
+  {
+    "test": "test-minecraft-survival-planner.mjs",
+    "passed": true,
+    "output": "Minecraft survival planner checks passed\n"
+  },
+  {
+    "test": "test-minecraft-survival-skills.mjs",
+    "passed": true,
+    "output": "Minecraft survival skill checks passed\n"
+  },
+  {
+    "test": "test-music-browser-playback.mjs",
+    "passed": true,
+    "output": "music browser playback checks passed\n"
+  },
+  {
+    "test": "test-music-control-payload.mjs",
+    "passed": true,
+    "output": "music control payload checks passed\n"
+  },
+  {
+    "test": "test-music-request-engine.mjs",
+    "passed": true,
+    "output": "music request engine checks passed\n"
+  },
+  {
+    "test": "test-music-volume-persistence.mjs",
+    "passed": true,
+    "output": "Music volume persistence checks passed\n"
+  },
+  {
+    "test": "test-natural-blink-timing.mjs",
+    "passed": true,
+    "output": "natural blink timing checks passed\n"
+  },
+  {
+    "test": "test-natural-gaze-motion.mjs",
+    "passed": true,
+    "output": "natural gaze motion checks passed\n"
+  },
+  {
+    "test": "test-netease-account.mjs",
+    "passed": true,
+    "output": "netease account and managed sidecar checks passed\n"
+  },
+  {
+    "test": "test-netease-vip-full-track.mjs",
+    "passed": false,
+    "output": "node:internal/modules/run_main:107\n    triggerUncaughtException(\n    ^\n\nAssertionError [ERR_ASSERTION]: Error: spawnSync powershell.exe ENOENT\n\nnull !== 0\n\n    at file:///Users/yxy/Desktop/codex/yachiyo-live2d-studio/tools/live2d-studio/test-netease-vip-full-track.mjs:40:8\n    at ModuleJob.run (node:internal/modules/esm/module_job:439:25)\n    at async node:internal/modules/esm/loader:643:26\n    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:101:5) {\n  generatedMessage: false,\n  code: 'ERR_ASSERTION',\n  actual: null,\n  expected: 0,\n  operator: 'strictEqual',\n  diff: 'simple'\n}\n\nNode.js v24.19.0\n",
+    "status": "unavailable-on-macOS",
+    "reason": "This existing test requires powershell.exe; not modified by lipsync work."
+  },
+  {
+    "test": "test-semantic-retrieval.mjs",
+    "passed": true,
+    "output": "Semantic cross-language fixture, long-document chunking, cache and strict vector dimension checks passed\n"
+  },
+  {
+    "test": "test-smile-expression-file.mjs",
+    "passed": true,
+    "output": "closed-eye smile expression file checks passed\n"
+  },
+  {
+    "test": "test-speech-queue-backpressure.mjs",
+    "passed": true,
+    "output": "speech queue backpressure checks passed\n"
+  },
+  {
+    "test": "test-spring-context.mjs",
+    "passed": true,
+    "output": "Spring defaults, canon, follow-up, long history and query-focused memory checks passed\n"
+  },
+  {
+    "test": "test-stream-schedule.mjs",
+    "passed": true,
+    "output": "✔ settings normalize duration, unlimited mode and closing bounds (0.596ms)\n✔ closing and farewell fire once at absolute host deadlines (0.216208ms)\n✔ a suspended app resumes at the real deadline without a stale closing cue (0.051875ms)\n✔ unlimited mode cannot spontaneously close (0.302917ms)\n✔ short broadcasts leave time for the opening (0.050208ms)\n✔ stopping and restarting cancel timers and reset the session (0.043875ms)\n✔ trusted closing context guides rather than repeating goodbye or opening topics (0.131709ms)\n✔ clock formats boundaries and nonnegative countdowns (0.044584ms)\nℹ tests 8\nℹ suites 0\nℹ pass 8\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 3.96275\n"
+  },
+  {
+    "test": "test-streaming-behavior-plan-speaking-mode.mjs",
+    "passed": true,
+    "output": "streaming behavior plan speaking mode checks passed\n"
+  },
+  {
+    "test": "test-streaming-settle-and-eye-timing.mjs",
+    "passed": true,
+    "output": "streaming settle and eye timing checks passed\n"
+  },
+  {
+    "test": "test-streaming-speech-motion-continuity.mjs",
+    "passed": true,
+    "output": "streaming speech motion continuity checks passed\n"
+  },
+  {
+    "test": "test-streaming-speech-session.mjs",
+    "passed": true,
+    "output": "streaming speech session checks passed\n"
+  },
+  {
+    "test": "test-viewer-memory-persistence.mjs",
+    "passed": true,
+    "output": "viewer memory persistence checks passed\n"
+  },
+  {
+    "test": "test-yachiyo-music-adapter.mjs",
+    "passed": true,
+    "output": "Yachiyo music adapter checks passed\n"
+  }
+]

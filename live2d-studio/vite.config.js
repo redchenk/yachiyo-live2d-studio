@@ -1,3 +1,4 @@
+import { createTtsStreamRelay } from '../tools/desktop/tts-stream.mjs';
 import { defineConfig } from 'vite';
 import vue from '@vitejs/plugin-vue';
 import { fileURLToPath, URL } from 'node:url';
@@ -12,14 +13,16 @@ const rvcLibrary = {
   name: 'rvc-song-library',
   configureServer(server) {
     const handle = createRvcLibrary(studioDataDirectory());
+    const ttsStream = createTtsStreamRelay();
     server.middlewares.use(async (req, res, next) => {
-      if (!req.url.startsWith('/api/rvc/')) return next();
+      if (!req.url.startsWith('/api/rvc/') && !req.url.startsWith('/api/tts/prepare') && !req.url.startsWith('/api/tts/stream')) return next();
       try {
         const origin = `http://${req.headers.host}`;
         const url = new URL(req.url, origin);
         if (!['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname) || (req.headers.origin && req.headers.origin !== origin)) {
           return json(res, 403, { success: false, message: 'Local studio origin required' });
         }
+        if (await ttsStream(req, res, url)) return;
         await handle(req, res, url);
       } catch (error) {
         json(res, error.status || (error.code === 'ENOENT' ? 404 : 500), { success: false, message: error.message });

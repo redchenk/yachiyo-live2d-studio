@@ -1,3 +1,4 @@
+import { mouthTrackingFrame } from '../../../shared/audio-lipsync.mjs';
 import { behaviorActionBlocksAutoBlink } from '../../constants/room/behaviorActionRegistry';
 import {
   normalizeSemanticExpressionId,
@@ -726,6 +727,8 @@ export function mountCubismBehaviorBridge(options = {}) {
   const frameSource = String(options.source || 'cubism-behavior');
   let frameId = 0;
   let momentaryPulse = null;
+  let audioMouth = null;
+  let audioMouthAt = -Infinity;
 
   function dispatchFrame(parameters, now) {
     if (frameSink) {
@@ -743,7 +746,13 @@ export function mountCubismBehaviorBridge(options = {}) {
       momentaryPulse = null;
     }
 
-    return sampleCubismBehaviorFrame(performanceFrame, now, { momentaryPulse });
+    const parameters = sampleCubismBehaviorFrame(performanceFrame, now, { momentaryPulse });
+    if (audioMouth && now - audioMouthAt < 350) {
+      const overlay = mapTrackingFrameToYachiyoCubismParameters(mouthTrackingFrame(audioMouth));
+      const owned = new Set(overlay.map(item => item.id));
+      return [...parameters.filter(item => !owned.has(item.id)), ...overlay.map(item => ({ ...item, weight: 1, audioMouth: true }))];
+    }
+    return parameters;
   }
 
   function tick(now = performance.now()) {
@@ -764,6 +773,7 @@ export function mountCubismBehaviorBridge(options = {}) {
 
   function onMouth(event) {
     performanceBrain.onMouth(event.detail?.value);
+    audioMouth = event.detail; audioMouthAt = performance.now();
   }
 
   function onCharacterState(event) {

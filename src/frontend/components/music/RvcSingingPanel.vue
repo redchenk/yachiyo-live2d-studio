@@ -1,5 +1,6 @@
 <script setup>
 import { ref } from 'vue';
+import LipsyncSettings from './LipsyncSettings.vue';
 import TsIcon from '../TsIcon.vue';
 import { formatSongTime } from '../../services/room/rvcSongPlayer';
 const props = defineProps({ songs: { type: Object, required: true }, concertEnabled: Boolean, concertState: { type: Object, default: () => ({}) } });
@@ -48,11 +49,12 @@ async function importSongs(event) {
       <button v-if="concertEnabled && concertState.phase === 'paused'" type="button" class="live2d-mini-btn" @click="emit('resume-concert')">恢复自主接歌</button>
     </div>
     <div v-if="songs.state.track" class="rvc-mouth-settings" :data-configured="!!songs.state.track.mouth">
-      <div class="rvc-mouth-heading"><strong>人声口型</strong>
+      <div class="rvc-mouth-heading"><strong>人声口型 · 音量与元音</strong>
         <button type="button" class="live2d-mini-btn" :disabled="!!songs.mouthBusy.value" @click="chooseVocal(songs.state.track)">{{ songs.mouthBusy.value === songs.state.track.id ? '分析中…' : songs.state.track.mouth ? '更换人声轨' : '关联人声轨' }}</button>
       </div>
       <template v-if="songs.state.track.mouth">
         <p class="rvc-hint rvc-vocal-name">{{ songs.state.track.mouth.vocalName }}</p>
+        <p v-if="songs.state.track.mouth.version !== 2" class="rvc-hint">这首歌使用旧版音量口型。重新关联纯人声即可加入元音嘴型。</p>
         <label class="rvc-mouth-offset">口型偏移（ms）<input type="number" min="-5000" max="5000" step="20" :value="songs.state.track.mouth.offsetMs" :disabled="!!songs.mouthBusy.value" aria-label="口型偏移（毫秒）" @change="songs.updateMouthSettings(songs.state.track, { offsetMs: Number($event.target.value) })"></label>
         <p class="rvc-hint">负值让口型提前，正值让口型延后。人声轨应保留与成品相同的开头空白。</p>
         <label class="rvc-mouth-gate">静音门限 {{ songs.state.track.mouth.gateDb }} dB<input type="range" min="-60" max="-20" step="1" :value="songs.state.track.mouth.gateDb" :disabled="!!songs.mouthBusy.value" aria-label="人声静音门限" @change="songs.updateMouthSettings(songs.state.track, { gateDb: Number($event.target.value) })"></label>
@@ -65,6 +67,7 @@ async function importSongs(event) {
     </div>
     <p class="rvc-hint">开始直播后，唱歌时暂存弹幕，歌间回应观众、介绍下一首并自动开唱。优先歌单内的点歌，避免连续重复；手动暂停或停止会暂停自主接歌。</p>
     <p v-if="songs.state.error || songs.libraryError.value" class="live2d-inline-error" role="alert">{{ songs.state.error || songs.libraryError.value }}</p>
+    <LipsyncSettings />
     <ol class="rvc-track-list" aria-label="RVC 歌单">
       <li v-for="track in songs.tracks.value" :key="track.id" :class="{ active: songs.state.track?.id === track.id }">
         <button type="button" class="rvc-track-play" :aria-label="`播放 ${track.name}`" @click="songs.play(track)">

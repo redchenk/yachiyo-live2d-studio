@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import assert from 'node:assert/strict';
 import { startDesktopServer } from './server.mjs';
-const root=path.resolve(import.meta.dirname,'../..'), output=path.join(root,'output/singing-concert');
+const root=path.resolve(import.meta.dirname,'../..'), output=process.env.YACHIYO_VERIFY_OUTPUT || path.join(root,'output/singing-concert');
 const temp=fs.mkdtempSync(path.join(os.tmpdir(),'yachiyo-concert-'));
 fs.mkdirSync(output,{recursive:true});app.setPath('userData',path.join(temp,'profile'));
 function wav(seconds) {
